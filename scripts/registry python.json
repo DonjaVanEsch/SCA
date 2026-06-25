@@ -1,0 +1,1046 @@
+{
+  "version": "1.0",
+  "description": "Core set registry for python PQC API reference",
+  "python_image_build_schema": {
+    "compatibility_semantics": "compatibility values are minimum Python requirements unless a closed range is explicitly provided",
+    "default_base_image_pattern": "python:{python_version}-slim",
+    "base_image_overrides": {
+      "2.7": "python:2.7-slim"
+    },
+    "install": {
+      "python_package_manager": "pip",
+      "python_flags": [
+        "--no-cache-dir"
+      ],
+      "upgrade_before_install": [
+        "pip",
+        "setuptools",
+        "wheel"
+      ]
+    },
+    "system_dependencies": {
+      "common": [
+        "build-essential",
+        "gcc",
+        "libffi-dev",
+        "libssl-dev"
+      ],
+      "by_library": {
+        "PyNaCl": [
+          "libsodium-dev"
+        ],
+        "M2Crypto": [
+          "swig",
+          "libssl-dev"
+        ]
+      }
+    },
+    "selection_rules": {
+      "only_include_python_versions_with_include_true": true,
+      "skip_library_versions_with_empty_compatibility": true,
+      "framework_dimension_optional": true
+    },
+    "validation": {
+      "import_smoke_test": true,
+      "minimum_runtime_healthcheck": "python -c \"import importlib; print('ok')\""
+    }
+  },
+  "discovery_service": {
+    "id": "pqc-discovery",
+    "name": "PQC Discovery Service",
+    "port": 4000,
+    "description": "Master discovery service listing all available API endpoints"
+  },
+  "languages": [
+    {
+      "id": "python",
+      "name": "Python",
+      "port_base": 5100,
+      "versions": [
+        {
+          "nr": "1.4",
+          "release_date": "1996-10-25",
+          "include": false
+        },
+        {
+          "nr": "1.5",
+          "release_date": "1998-02-17",
+          "include": false
+        },
+        {
+          "nr": "1.6",
+          "release_date": "2000-09-05",
+          "include": false
+        },
+        {
+          "nr": "2.0",
+          "release_date": "2000-10-16",
+          "include": false
+        },
+        {
+          "nr": "2.1",
+          "release_date": "2001-04-15",
+          "include": false
+        },
+        {
+          "nr": "2.2",
+          "release_date": "2001-12-21",
+          "include": false
+        },
+        {
+          "nr": "2.3",
+          "release_date": "2003-07-29",
+          "include": false
+        },
+        {
+          "nr": "2.4",
+          "release_date": "2004-11-30",
+          "include": false
+        },
+        {
+          "nr": "2.5",
+          "release_date": "2006-09-19",
+          "include": false
+        },
+        {
+          "nr": "2.6",
+          "release_date": "2008-10-02",
+          "include": false
+        },
+        {
+          "nr": "2.7",
+          "release_date": "2010-07-03",
+          "include": false
+        },
+        {
+          "nr": "3.0",
+          "release_date": "2008-12-03",
+          "include": false
+        },
+        {
+          "nr": "3.1",
+          "release_date": "2009-06-26",
+          "include": false
+        },
+        {
+          "nr": "3.2",
+          "release_date": "2011-02-20",
+          "include": false
+        },
+        {
+          "nr": "3.3",
+          "release_date": "2012-11-29",
+          "include": false
+        },
+        {
+          "nr": "3.4",
+          "release_date": "2014-03-17",
+          "include": false
+        },
+        {
+          "nr": "3.5",
+          "release_date": "2015-11-13",
+          "include": false
+        },
+        {
+          "nr": "3.6",
+          "release_date": "2016-12-23",
+          "include": false
+        },
+        {
+          "nr": "3.7",
+          "release_date": "2018-06-27",
+          "include": false
+        },
+        {
+          "nr": "3.8",
+          "release_date": "2019-10-14",
+          "include": false
+        },
+        {
+          "nr": "3.9",
+          "release_date": "2020-10-05",
+          "include": true
+        },
+        {
+          "nr": "3.10",
+          "release_date": "2021-10-04",
+          "include": true
+        },
+        {
+          "nr": "3.11",
+          "release_date": "2022-10-24",
+          "include": true
+        },
+        {
+          "nr": "3.12",
+          "release_date": "2023-10-02",
+          "include": true
+        },
+        {
+          "nr": "3.13",
+          "release_date": "2024-10-07",
+          "include": true
+        },
+        {
+          "nr": "3.14",
+          "release_date": "2025-10-07",
+          "include": true
+        }
+      ],
+      "frameworks": [
+        {
+          "name": "Flask",
+          "version": [
+            {
+              "nr": "0",
+              "release_date": "2010-04-01",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "1",
+              "release_date": "2018-04-26",
+              "compatibility": [
+                "2.7+",
+                "3.4+"
+              ]
+            },
+            {
+              "nr": "2",
+              "release_date": "2021-05-11",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "3",
+              "release_date": "2023-09-30",
+              "compatibility": [
+                "3.8+"
+              ]
+            }
+          ],
+          "notes": "Compatibility is the minimum Python requirement for the major line; later minor releases in the same major may require newer Python versions."
+        },
+        {
+          "name": "Django",
+          "version": [
+            {
+              "nr": "1",
+              "release_date": "2008-09-03",
+              "compatibility": [
+                "2.7+",
+                "3.2+"
+              ]
+            },
+            {
+              "nr": "2",
+              "release_date": "2017-12-02",
+              "compatibility": [
+                "3.5+"
+              ]
+            },
+            {
+              "nr": "3",
+              "release_date": "2019-12-02",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "4",
+              "release_date": "2021-12-07",
+              "compatibility": [
+                "3.8+"
+              ]
+            },
+            {
+              "nr": "5",
+              "release_date": "2023-12-04",
+              "compatibility": [
+                "3.10+"
+              ]
+            }
+          ],
+          "notes": "Compatibility is the minimum Python requirement for the major line; later minor releases in the same major may require newer Python versions."
+        },
+        {
+          "name": "FastAPI",
+          "version": [
+            {
+              "nr": "0",
+              "release_date": "2018-12-16",
+              "compatibility": [
+                "3.6+"
+              ]
+            }
+          ],
+          "notes": "FastAPI currently uses the 0.x major line. Compatibility is minimum by major line; newer 0.x minors can raise the minimum Python requirement."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "PyNaCl",
+          "version": [
+            {
+              "nr": "0.3",
+              "release_date": "2015-03-04",
+              "compatibility": [
+                "2.6",
+                "2.7",
+                "3.2"
+              ]
+            },
+            {
+              "nr": "1.0.1",
+              "release_date": "2016-01-24",
+              "compatibility": [
+                "2.6",
+                "2.7",
+                "3.3-3.5"
+              ]
+            },
+            {
+              "nr": "1.1.0",
+              "release_date": "2017-03-14",
+              "compatibility": [
+                "2.7",
+                "3.3-3.6"
+              ]
+            },
+            {
+              "nr": "1.2.0",
+              "release_date": "2017-11-01",
+              "compatibility": [
+                "2.7",
+                "3.4-3.6"
+              ]
+            },
+            {
+              "nr": "1.3.0",
+              "release_date": "2018-09-26",
+              "compatibility": [
+                "2.7",
+                "3.4-3.7"
+              ]
+            },
+            {
+              "nr": "1.4.0",
+              "release_date": "2020-05-15",
+              "compatibility": [
+                "2.7",
+                "3.5-3.9"
+              ]
+            },
+            {
+              "nr": "1.5.0",
+              "release_date": "2022-01-22",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "1.6.0",
+              "release_date": "2025-09-11",
+              "compatibility": [
+                "3.8+"
+              ]
+            },
+            {
+              "nr": "1.6.2",
+              "release_date": "2026-01-01",
+              "compatibility": [
+                "3.8+"
+              ]
+            }
+          ],
+          "notes": "A Python binding to the Networking and Cryptography library (NaCl), which provides high-level cryptographic functions. It is designed to be easy to use and secure, with support for modern cryptographic primitives. The library is actively maintained and widely used in the Python community."
+        },
+        {
+          "name": "cryptography",
+          "version": [
+            {
+              "nr": "1.0",
+              "release_date": "2015-08-12",
+              "compatibility": [
+                "2.6"
+              ]
+            },
+            {
+              "nr": "2.0",
+              "release_date": "2017-06-17",
+              "compatibility": [
+                "2.7",
+                "3.4-3.11"
+              ]
+            },
+            {
+              "nr": "3.3",
+              "release_date": "2020-12-02",
+              "compatibility": [
+                "2.7",
+                "3.5-3.13"
+              ]
+            },
+            {
+              "nr": "3.4",
+              "release_date": "2021-02-07",
+              "compatibility": [
+                "2.7",
+                "3.6-3.13"
+              ]
+            },
+            {
+              "nr": "35.0",
+              "release_date": "2021-09-29",
+              "compatibility": [
+                "3.6-3.13"
+              ]
+            },
+            {
+              "nr": "36.0",
+              "release_date": "2021-11-21",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "37.0",
+              "release_date": "2022-04-26",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "38.0",
+              "release_date": "2022-09-06",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "39.0",
+              "release_date": "2023-01-01",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "40.0",
+              "release_date": "2023-03-24",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "41.0",
+              "release_date": "2023-05-30",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "42.0",
+              "release_date": "2024-01-23",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "43.0",
+              "release_date": "2024-07-20",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "44.0",
+              "release_date": "2024-11-27",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "45.0.1",
+              "release_date": "2025-05-17",
+              "compatibility": [
+                "3.8+"
+              ]
+            },
+            {
+              "nr": "46.0",
+              "release_date": "2025-09-16",
+              "compatibility": [
+                "3.8+"
+              ]
+            },
+            {
+              "nr": "47.0",
+              "release_date": "2026-04-24",
+              "compatibility": [
+                "3.8+"
+              ]
+            },
+            {
+              "nr": "48.0",
+              "release_date": "2026-05-04",
+              "compatibility": [
+                "3.9+"
+              ]
+            }
+          ],
+          "notes": "Widely used library with support for modern cryptographic primitives, including post-quantum algorithms. Actively maintained and regularly updated with security patches."
+        },
+        {
+          "name": "PyCryptodome",
+          "version": [
+            {
+              "nr": "3.0",
+              "release_date": "2014-06-24",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.1",
+              "release_date": "2015-03-16",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.2",
+              "release_date": "2015-09-05",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.3",
+              "release_date": "2015-10-28",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.4",
+              "release_date": "2016-02-07",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.5",
+              "release_date": "2018-03-07",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.6",
+              "release_date": "2018-04-08",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.7",
+              "release_date": "2018-10-28",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.8",
+              "release_date": "2019-03-23",
+              "compatibility": [
+                "2.6+",
+                "3.3+"
+              ]
+            },
+            {
+              "nr": "3.9",
+              "release_date": "2019-08-28",
+              "compatibility": [
+                "2.7+",
+                "3.5+"
+              ]
+            },
+            {
+              "nr": "3.10",
+              "release_date": "2021-02-09",
+              "compatibility": [
+                "2.7+",
+                "3.5+"
+              ]
+            },
+            {
+              "nr": "3.11",
+              "release_date": "2021-10-08",
+              "compatibility": [
+                "2.7+",
+                "3.5+"
+              ]
+            },
+            {
+              "nr": "3.12",
+              "release_date": "2021-12-04",
+              "compatibility": [
+                "2.7+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "3.13",
+              "release_date": "2022-01-23",
+              "compatibility": [
+                "2.7+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "3.14",
+              "release_date": "2022-01-30",
+              "compatibility": [
+                "2.7+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "3.15",
+              "release_date": "2022-06-22",
+              "compatibility": [
+                "2.7+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "3.16",
+              "release_date": "2022-11-26",
+              "compatibility": [
+                "2.7+",
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "3.17",
+              "release_date": "2023-01-28",
+              "compatibility": [
+                "2.7+",
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "3.18",
+              "release_date": "2023-05-19",
+              "compatibility": [
+                "2.7+",
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "3.19",
+              "release_date": "2023-09-16",
+              "compatibility": [
+                "2.7+",
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "3.20",
+              "release_date": "2024-01-10",
+              "compatibility": [
+                "3.5+"
+              ]
+            },
+            {
+              "nr": "3.21",
+              "release_date": "2024-10-02",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "3.22",
+              "release_date": "2025-03-15",
+              "compatibility": [
+                "3.7+"
+              ]
+            },
+            {
+              "nr": "3.23",
+              "release_date": "2025-05-17",
+              "compatibility": [
+                "3.7+"
+              ]
+            }
+          ],
+          "notes": "A self-contained Python package of low-level cryptographic primitives. It is a fork of the now unmaintained PyCrypto library and includes support for various cryptographic algorithms, including some post-quantum schemes."
+        },
+        {
+          "name": "M2Crypto",
+          "version": [
+            {
+              "nr": "0.11",
+              "release_date": "",
+              "available": false,
+              "compatibility": [
+                "2.x+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "0.13",
+              "release_date": "",
+              "available": false,
+              "compatibility": [
+                "2.x+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "0.15",
+              "release_date": "2006-04-06",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.16",
+              "release_date": "2006-07-05",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.17",
+              "release_date": "2006-12-21",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.18",
+              "release_date": "2007-07-26",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.19",
+              "release_date": "2008-10-06",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.20",
+              "release_date": "2009-08-11",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.21",
+              "release_date": "2011-01-13",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.22.3",
+              "release_date": "2014-01-22",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.7"
+              ]
+            },
+            {
+              "nr": "0.23",
+              "release_date": "2016-01-29",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.7"
+              ]
+            },
+            {
+              "nr": "0.24",
+              "release_date": "2016-03-21",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.7"
+              ]
+            },
+            {
+              "nr": "0.25",
+              "release_date": "2016-07-22",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.7"
+              ]
+            },
+            {
+              "nr": "0.26",
+              "release_date": "2017-03-25",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.27",
+              "release_date": "2017-10-05",
+              "compatibility": [
+                "2.x+"
+              ]
+            },
+            {
+              "nr": "0.28",
+              "release_date": "2018-02-08",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.29",
+              "release_date": "2018-02-23",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.30",
+              "release_date": "2018-04-25",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.31",
+              "release_date": "2018-11-09",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.32",
+              "release_date": "2019-03-04",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.33",
+              "release_date": "2019-04-26",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.34",
+              "release_date": "2019-05-30",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.35",
+              "release_date": "2019-06-08",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.36",
+              "release_date": "2020-07-13",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.37",
+              "release_date": "2020-12-08",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.38",
+              "release_date": "2021-06-14",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.39",
+              "release_date": "2023-07-04",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.40",
+              "release_date": "2023-10-24",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.41",
+              "release_date": "2024-02-13",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.11"
+              ]
+            },
+            {
+              "nr": "0.42",
+              "release_date": "2024-08-10",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.13"
+              ]
+            },
+            {
+              "nr": "0.43",
+              "release_date": "2024-10-30",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.13"
+              ]
+            },
+            {
+              "nr": "0.44",
+              "release_date": "2025-02-17",
+              "compatibility": [
+                "2.x+",
+                "3.6-3.13"
+              ]
+            },
+            {
+              "nr": "0.45",
+              "release_date": "2025-04-17",
+              "compatibility": [
+                "2.x+",
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "0.46",
+              "release_date": "2025-10-01",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "0.47",
+              "release_date": "2026-02-08",
+              "compatibility": [
+                "3.6+"
+              ]
+            },
+            {
+              "nr": "0.48",
+              "release_date": "2026-05-23",
+              "compatibility": [
+                "3.6+"
+              ]
+            }
+          ],
+          "notes": "A Python wrapper for OpenSSL. While it provides access to OpenSSL's cryptographic functions, its support for modern and post-quantum algorithms is limited. The library has seen less active development in recent years, which may impact its suitability for new projects.",
+          "status": "limited"
+        },
+        {
+          "name": "PyCrypto",
+          "version": [
+            {
+              "nr": "2.0",
+              "release_date": "2013-08-11",
+              "compatibility": [
+                "2.0+"
+              ]
+            },
+            {
+              "nr": "2.1",
+              "release_date": "2013-08-11",
+              "compatibility": [
+                "2.1+",
+                "3.0-3.3"
+              ]
+            },
+            {
+              "nr": "2.2",
+              "release_date": "2013-08-11",
+              "compatibility": [
+                "2.1+",
+                "3.0-3.3"
+              ]
+            },
+            {
+              "nr": "2.3",
+              "release_date": "2010-12-17",
+              "compatibility": [
+                "2.1+",
+                "3.0-3.3"
+              ]
+            },
+            {
+              "nr": "2.4",
+              "release_date": "2011-10-22",
+              "compatibility": [
+                "2.1+",
+                "3.0-3.3"
+              ]
+            },
+            {
+              "nr": "2.5",
+              "release_date": "2012-01-13",
+              "compatibility": [
+                "2.1+",
+                "3.0-3.3"
+              ]
+            },
+            {
+              "nr": "2.6",
+              "release_date": "2012-05-24",
+              "compatibility": [
+                "2.1+",
+                "3.0-3.3"
+              ]
+            }
+          ],
+          "notes": "An older cryptographic library that is no longer maintained. It has known security vulnerabilities and lacks support for modern cryptographic algorithms, including post-quantum schemes. It is not recommended for use in new projects.",
+          "status": "deprecated"
+        },
+        {
+          "name": "hashlib",
+          "version": "built-in"
+        }
+      ]
+    }
+  ]
+}

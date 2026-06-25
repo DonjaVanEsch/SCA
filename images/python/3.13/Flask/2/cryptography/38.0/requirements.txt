@@ -1,0 +1,2 @@
+Flask>=2.0,<3.0
+cryptography==38.0.4
