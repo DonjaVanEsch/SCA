@@ -233,28 +233,28 @@
               "release_date": "2008-09-03",
               "compatibility": [
                 "2.7+",
-                "3.2+"
+                "3.2-3.9"
               ]
             },
             {
               "nr": "2",
               "release_date": "2017-12-02",
               "compatibility": [
-                "3.5+"
+                "3.5-3.9"
               ]
             },
             {
               "nr": "3",
               "release_date": "2019-12-02",
               "compatibility": [
-                "3.6+"
+                "3.6-3.12"
               ]
             },
             {
               "nr": "4",
               "release_date": "2021-12-07",
               "compatibility": [
-                "3.8+"
+                "3.8-3.12"
               ]
             },
             {

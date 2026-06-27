@@ -12,11 +12,11 @@ def hello():
 
 @app.route("/version")
 def version():
-    import flask
+    import importlib.metadata
     lib_version = M2Crypto.version
     return jsonify({
         "language": {"name": "Python", "version": sys.version.split()[0]},
-        "framework": {"name": "Flask", "version": flask.__version__},
+        "framework": {"name": "Flask", "version": importlib.metadata.version("flask")},
         "library": {"name": "M2Crypto", "version": str(lib_version)},
     })
 

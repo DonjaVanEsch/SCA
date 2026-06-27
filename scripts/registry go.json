@@ -1,0 +1,296 @@
+{
+  "languages": [
+    {
+      "id": "go",
+      "display_name": "Go",
+      "versions": [
+        { "nr": "1.0",  "release_date": "2012-03-28", "include": true },
+        { "nr": "1.5",  "release_date": "2015-08-19", "include": true },
+        { "nr": "1.11", "release_date": "2018-08-24", "include": true },
+        { "nr": "1.13", "release_date": "2019-09-03", "include": true },
+        { "nr": "1.16", "release_date": "2021-02-16", "include": true },
+        { "nr": "1.18", "release_date": "2022-03-15", "include": true },
+        { "nr": "1.21", "release_date": "2023-08-08", "include": true },
+        { "nr": "1.22", "release_date": "2024-02-06", "include": true },
+        { "nr": "1.23", "release_date": "2024-08-13", "include": true },
+        { "nr": "1.24", "release_date": "2025-02-11", "include": true },
+        { "nr": "1.25", "release_date": "2025-08-12", "include": true },
+        { "nr": "1.26", "release_date": "2026-02-11", "include": true }
+      ],
+      "frameworks": [
+        {
+          "name": "Gin",
+          "module": "github.com/gin-gonic/gin",
+          "version": [
+            { "nr": "1.0",  "release_date": "2016-10-12", "compatibility": [ "1.6+"  ] },
+            { "nr": "1.1",  "release_date": "2016-12-03", "compatibility": [ "1.6+"  ] },
+            { "nr": "1.2",  "release_date": "2017-07-02", "compatibility": [ "1.6+"  ] },
+            { "nr": "1.3",  "release_date": "2018-08-14", "compatibility": [ "1.6+"  ] },
+            { "nr": "1.4",  "release_date": "2019-05-08", "compatibility": [ "1.12+" ] },
+            { "nr": "1.5",  "release_date": "2019-11-28", "compatibility": [ "1.12+" ] },
+            { "nr": "1.6",  "release_date": "2020-03-22", "compatibility": [ "1.13+" ] },
+            { "nr": "1.7",  "release_date": "2021-04-08", "compatibility": [ "1.13+" ] },
+            { "nr": "1.8",  "release_date": "2022-05-30", "compatibility": [ "1.18+" ] },
+            { "nr": "1.9",  "release_date": "2023-02-21", "compatibility": [ "1.18+" ] },
+            { "nr": "1.10", "release_date": "2024-05-07", "compatibility": [ "1.20+" ] },
+            { "nr": "1.11", "release_date": "2025-09-20", "compatibility": [ "1.23+" ] },
+            { "nr": "1.12", "release_date": "2026-02-28", "compatibility": [ "1.25+" ] }
+          ],
+          "notes": "v1 is de enige Go module major. v1.0–v1.3 hebben geen go.mod (pre-modules). v1.11 vereist go 1.23, v1.12 vereist go 1.25."
+        },
+        {
+          "name": "Echo",
+          "module": "github.com/labstack/echo",
+          "version": [
+            { "nr": "4.0",  "release_date": "2019-01-30", "compatibility": [ "1.0+"  ] },
+            { "nr": "4.1",  "release_date": "2019-04-29", "compatibility": [ "1.12+" ] },
+            { "nr": "4.2",  "release_date": "2021-02-11", "compatibility": [ "1.15+" ] },
+            { "nr": "4.3",  "release_date": "2021-05-08", "compatibility": [ "1.15+" ] },
+            { "nr": "4.4",  "release_date": "2021-07-12", "compatibility": [ "1.15+" ] },
+            { "nr": "4.5",  "release_date": "2021-08-01", "compatibility": [ "1.15+" ] },
+            { "nr": "4.6",  "release_date": "2021-09-20", "compatibility": [ "1.15+" ] },
+            { "nr": "4.7",  "release_date": "2022-03-01", "compatibility": [ "1.17+" ] },
+            { "nr": "4.8",  "release_date": "2022-08-10", "compatibility": [ "1.17+" ] },
+            { "nr": "4.9",  "release_date": "2022-09-04", "compatibility": [ "1.17+" ] },
+            { "nr": "4.10", "release_date": "2022-12-27", "compatibility": [ "1.17+" ] },
+            { "nr": "4.11", "release_date": "2023-07-14", "compatibility": [ "1.17+" ] },
+            { "nr": "4.12", "release_date": "2024-04-15", "compatibility": [ "1.18+" ] },
+            { "nr": "4.13", "release_date": "2024-12-04", "compatibility": [ "1.18+" ] },
+            { "nr": "4.14", "release_date": "2025-12-11", "compatibility": [ "1.24+" ] },
+            { "nr": "4.15", "release_date": "2026-01-01", "compatibility": [ "1.24+" ] },
+            { "nr": "5.0",  "release_date": "2026-01-18", "compatibility": [ "1.25+" ] },
+            { "nr": "5.1",  "release_date": "2026-03-31", "compatibility": [ "1.25+" ] },
+            { "nr": "5.2",  "release_date": "2026-06-14", "compatibility": [ "1.25+" ] }
+          ],
+          "notes": "Import path per major: /v4, /v5. v4.0 heeft geen go directive. v4.14+ vereist go 1.24. v5 stabiel jan 2026, vereist go 1.25."
+        },
+        {
+          "name": "Fiber",
+          "module": "github.com/gofiber/fiber",
+          "version": [
+            { "nr": "2.0",  "release_date": "2020-09-14", "compatibility": [ "1.14+" ] },
+            { "nr": "2.5",  "release_date": "2021-02-08", "compatibility": [ "1.14+" ] },
+            { "nr": "2.10", "release_date": "2021-05-19", "compatibility": [ "1.14+" ] },
+            { "nr": "2.15", "release_date": "2021-07-16", "compatibility": [ "1.16+" ] },
+            { "nr": "2.20", "release_date": "2021-10-06", "compatibility": [ "1.16+" ] },
+            { "nr": "2.25", "release_date": "2022-01-21", "compatibility": [ "1.16+" ] },
+            { "nr": "2.30", "release_date": "2022-03-21", "compatibility": [ "1.16+" ] },
+            { "nr": "2.35", "release_date": "2022-07-06", "compatibility": [ "1.16+" ] },
+            { "nr": "2.40", "release_date": "2022-11-18", "compatibility": [ "1.19+" ] },
+            { "nr": "2.45", "release_date": "2023-05-07", "compatibility": [ "1.20+" ] },
+            { "nr": "2.50", "release_date": "2023-10-16", "compatibility": [ "1.20+" ] },
+            { "nr": "2.52", "release_date": "2024-01-05", "compatibility": [ "1.20+" ] },
+            { "nr": "3.0",  "release_date": "2026-02-02", "compatibility": [ "1.25+" ] },
+            { "nr": "3.1",  "release_date": "2026-02-24", "compatibility": [ "1.25+" ] },
+            { "nr": "3.2",  "release_date": "2026-04-25", "compatibility": [ "1.25+" ] },
+            { "nr": "3.3",  "release_date": "2026-05-22", "compatibility": [ "1.25+" ] }
+          ],
+          "notes": "Import path per major: /v2, /v3. v2 maintenance-only (patches op v2.52.x). v3 vereist go 1.25+."
+        },
+        {
+          "name": "Chi",
+          "module": "github.com/go-chi/chi",
+          "version": [
+            { "nr": "5.0", "release_date": "2021-02-28", "compatibility": [ "1.14+" ] },
+            { "nr": "5.1", "release_date": "2024-06-28", "compatibility": [ "1.14+" ] },
+            { "nr": "5.2", "release_date": "2024-12-14", "compatibility": [ "1.22+" ] },
+            { "nr": "5.3", "release_date": "2026-05-22", "compatibility": [ "1.23+" ] }
+          ],
+          "notes": "Import path: /v5. Lightweight stdlib-compatible router. v5.2.1+ stapte over naar go 1.20/1.22; v5.3 vereist go 1.23."
+        },
+        {
+          "name": "Gorilla",
+          "module": "github.com/gorilla/mux",
+          "version": [
+            { "nr": "1.1", "release_date": "2016-03-17", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.2", "release_date": "2017-01-17", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.3", "release_date": "2017-01-18", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.4", "release_date": "2017-05-21", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.5", "release_date": "2017-09-05", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.6", "release_date": "2017-11-05", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.7", "release_date": "2019-01-25", "compatibility": [ "1.12+" ] },
+            { "nr": "1.8", "release_date": "2020-07-11", "compatibility": [ "1.20+" ] }
+          ],
+          "notes": "Archived 2023, laatste release v1.8.1 (go 1.20). v1.1–v1.6 geen go.mod (pre-modules). v1.7.4 eerste patch met go 1.12; v1.8.1 bumpt naar go 1.20."
+        },
+        {
+          "name": "Beego",
+          "module": "github.com/beego/beego",
+          "version": [
+            { "nr": "1.0",    "release_date": "2013-12-24", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.6",    "release_date": "2016-01-17", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.10",   "release_date": "2018-07-21", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.12.0", "release_date": "2019-07-05", "compatibility": [ "1.11+" ] },
+            { "nr": "1.12.1", "release_date": "2020-02-07", "compatibility": [ "1.13+" ] },
+            { "nr": "2.0",    "release_date": "2020-12-14", "compatibility": [ "1.14+" ] },
+            { "nr": "2.0.3",  "release_date": "2022-05-23", "compatibility": [ "1.18+" ] },
+            { "nr": "2.1",    "release_date": "2023-05-27", "compatibility": [ "1.18+" ] },
+            { "nr": "2.2",    "release_date": "2024-04-01", "compatibility": [ "1.20+" ] },
+            { "nr": "2.3",    "release_date": "2024-08-02", "compatibility": [ "1.20+" ] },
+            { "nr": "2.3.9",  "release_date": "2026-03-07", "compatibility": [ "1.24+" ] }
+          ],
+          "notes": "v1: github.com/astaxie/beego → github.com/beego/beego (repo migratie). v2 import path: /v2. v1.0–v1.10 geen go.mod; v1.12.0 eerste go.mod (geen directive); v1.12.1 eerste go 1.13 directive. v2.0.3→go 1.18; v2.2→go 1.20; v2.3.9→go 1.24."
+        },
+        {
+          "name": "Iris",
+          "module": "github.com/kataras/iris",
+          "version": [
+            { "nr": "10.0",    "release_date": "2018-01-09", "compatibility": [ "1.0+"  ] },
+            { "nr": "10.6",    "release_date": "2018-07-25", "compatibility": [ "1.0+"  ] },
+            { "nr": "11.1",    "release_date": "2018-11-18", "compatibility": [ "1.0+"  ] },
+            { "nr": "12.0",    "release_date": "2019-10-26", "compatibility": [ "1.13+" ] },
+            { "nr": "12.1",    "release_date": "2019-12-13", "compatibility": [ "1.13+" ] },
+            { "nr": "12.2",    "release_date": "2023-03-11", "compatibility": [ "1.20+" ] },
+            { "nr": "12.2.4",  "release_date": "2023-08-12", "compatibility": [ "1.21+" ] },
+            { "nr": "12.2.11", "release_date": "2024-04-24", "compatibility": [ "1.22+" ] }
+          ],
+          "notes": "v10/v11: github.com/kataras/iris (+incompatible, geen go.mod). v12 import path: /v12. v12.2→go 1.20; v12.2.4→go 1.21; v12.2.11→go 1.22 (laatste release)."
+        },
+        {
+          "name": "httprouter",
+          "module": "github.com/julienschmidt/httprouter",
+          "version": [
+            { "nr": "1.0", "release_date": "2015-06-25", "compatibility": [ "1.0+"  ] },
+            { "nr": "1.2", "release_date": "2018-10-13", "compatibility": [ "1.11+" ] },
+            { "nr": "1.3", "release_date": "2019-09-30", "compatibility": [ "1.7+"  ] }
+          ],
+          "notes": "Basis van Gin. v1 is de enige Go module major. v1.0/v1.1 geen go.mod; v1.2 go.mod zonder directive; v1.3 laatste release (go 1.7)."
+        },
+        {
+          "name": "Martini",
+          "module": "github.com/go-martini/martini",
+          "include": false,
+          "version": [
+            { "nr": "0.1", "release_date": "2013-12-05", "compatibility": [ "1.0+" ] },
+            { "nr": "1.0", "release_date": "2014-05-19", "compatibility": [ "1.0+" ] }
+          ],
+          "notes": "Abandoned 2015 (README notice), laatste commit 2017-01-21. Geen go.mod (pre-modules). Opgenomen voor historische volledigheid — niet meegenomen in image builds."
+        },
+        {
+          "name": "net/http",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Go standard library HTTP server — geen externe dependency."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "xcrypto",
+          "module": "golang.org/x/crypto",
+          "version": [
+            { "nr": "0.1",  "release_date": "2022-10-19", "compatibility": [ "1.17+" ] },
+            { "nr": "0.10", "release_date": "2023-06-12", "compatibility": [ "1.17+" ] },
+            { "nr": "0.15", "release_date": "2023-11-08", "compatibility": [ "1.18+" ] },
+            { "nr": "0.25", "release_date": "2024-07-05", "compatibility": [ "1.20+" ] },
+            { "nr": "0.30", "release_date": "2024-12-04", "compatibility": [ "1.20+" ] },
+            { "nr": "0.34", "release_date": "2025-02-22", "compatibility": [ "1.23+" ] },
+            { "nr": "0.42", "release_date": "2025-09-08", "compatibility": [ "1.24+" ] },
+            { "nr": "0.49", "release_date": "2026-03-11", "compatibility": [ "1.25+" ] },
+            { "nr": "0.53", "release_date": "2026-06-08", "compatibility": [ "1.25+" ] }
+          ],
+          "notes": "go directive bumps: 0.15→go1.18, 0.25→go1.20, 0.34→go1.23 (skip 1.21/1.22), 0.42→go1.24, 0.49→go1.25."
+        },
+        {
+          "name": "circl",
+          "module": "github.com/cloudflare/circl",
+          "version": [
+            { "nr": "1.1",   "release_date": "2021-10-13", "compatibility": [ "1.15+" ] },
+            { "nr": "1.2",   "release_date": "2022-06-15", "compatibility": [ "1.16+" ] },
+            { "nr": "1.3",   "release_date": "2022-11-11", "compatibility": [ "1.17+" ] },
+            { "nr": "1.3.3", "release_date": "2023-05-02", "compatibility": [ "1.19+" ] },
+            { "nr": "1.3.8", "release_date": "2024-04-24", "compatibility": [ "1.21+" ] },
+            { "nr": "1.4",   "release_date": "2024-08-20", "compatibility": [ "1.21+" ] },
+            { "nr": "1.5",   "release_date": "2024-10-10", "compatibility": [ "1.22+" ] },
+            { "nr": "1.6",   "release_date": "2025-02-04", "compatibility": [ "1.22+" ] },
+            { "nr": "1.6.2", "release_date": "2025-12-22", "compatibility": [ "1.22+" ] },
+            { "nr": "1.6.4", "release_date": "2026-06-22", "compatibility": [ "1.24+" ] }
+          ],
+          "notes": "PQC milestones: 1.3.3→P-256+Kyber hybrid & ASCON-80pq, 1.4→ML-KEM (FIPS 203), 1.5→ML-DSA (FIPS 204), 1.6→X-Wing, 1.6.2→SLH-DSA (FIPS 205), 1.6.4→go 1.24 vereist."
+        },
+        {
+          "name": "liboqs-go",
+          "module": "github.com/open-quantum-safe/liboqs-go",
+          "version": [
+            { "nr": "0.1",  "release_date": "2019-10-22", "compatibility": [ "1.0+"  ] },
+            { "nr": "0.4",  "release_date": "2020-11-28", "compatibility": [ "1.11+" ] },
+            { "nr": "0.7",  "release_date": "2022-01-05", "compatibility": [ "1.11+" ] },
+            { "nr": "0.8",  "release_date": "2023-07-05", "compatibility": [ "1.15+" ] },
+            { "nr": "0.9",  "release_date": "2023-10-30", "compatibility": [ "1.15+" ] },
+            { "nr": "0.10", "release_date": "2024-03-27", "compatibility": [ "1.21+" ] },
+            { "nr": "0.12", "release_date": "2025-01-16", "compatibility": [ "1.21+" ] }
+          ],
+          "notes": "CGo bindings naar liboqs C library. Versienummering synct met liboqs C (geen 0.5/0.6/0.11). 0.10→go 1.21 + NIST PRNG verwijderd; 0.12→ML-DSA context-string API (FIPS 204)."
+        },
+        {
+          "name": "tink-go",
+          "module": "github.com/tink-crypto/tink-go",
+          "version": [
+            { "nr": "1.4", "release_date": "2020-07-14", "compatibility": [ "1.12+" ] },
+            { "nr": "1.5", "release_date": "2020-10-15", "compatibility": [ "1.12+" ] },
+            { "nr": "1.6", "release_date": "2021-05-17", "compatibility": [ "1.12+" ] },
+            { "nr": "1.7", "release_date": "2022-08-10", "compatibility": [ "1.17+" ] },
+            { "nr": "2.0", "release_date": "2023-06-21", "compatibility": [ "1.19+" ] },
+            { "nr": "2.1", "release_date": "2023-12-04", "compatibility": [ "1.20+" ] },
+            { "nr": "2.2", "release_date": "2024-05-16", "compatibility": [ "1.21+" ] },
+            { "nr": "2.3", "release_date": "2025-01-14", "compatibility": [ "1.22+" ] },
+            { "nr": "2.4", "release_date": "2025-04-02", "compatibility": [ "1.23+" ] },
+            { "nr": "2.5", "release_date": "2025-10-10", "compatibility": [ "1.24+" ] },
+            { "nr": "2.7", "release_date": "2026-06-10", "compatibility": [ "1.24+" ] }
+          ],
+          "notes": "v1.x: github.com/google/tink/go (oude org). v2.x: github.com/tink-crypto/tink-go/v2 (nieuwe org, import path /v2). Experimentele PQC-ondersteuning in v2.x."
+        },
+        {
+          "name": "mlkem768",
+          "module": "filippo.io/mlkem768",
+          "version": [
+            { "nr": "0.0", "release_date": "2026-02-14", "compatibility": [ "1.25+" ] }
+          ],
+          "notes": "Pre-standaard ML-KEM door Filippo Valsorda. Geen semver tags — alleen pseudo-versies. Wordt in Go 1.26 een stdlib wrapper (crypto/mlkem); standalone ontwikkeling stopt daarna."
+        },
+        {
+          "name": "crypto",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Go standard library crypto — klassieke primitieven (AES, RSA, ECDSA, SHA, TLS). Altijd beschikbaar."
+        },
+        {
+          "name": "crypto/mlkem",
+          "module": "built-in",
+          "version": "built-in",
+          "compatibility": [ "1.24+" ],
+          "notes": "Go standard library ML-KEM (FIPS 203) — sub-pakket crypto/mlkem, beschikbaar sinds Go 1.24."
+        },
+        {
+          "name": "crypto/md5",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Cryptografisch gebroken hashfunctie (collision attacks). Opgenomen als SCA-detectie referentie — migratiepaden: xcrypto (SHA-3/BLAKE2), circl (ML-DSA voor signing)."
+        },
+        {
+          "name": "crypto/sha1",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Deprecated hashfunctie (SHAttered collision attack 2017). Opgenomen als SCA-detectie referentie — migratiepaden: crypto/sha256, crypto/sha512, xcrypto."
+        },
+        {
+          "name": "crypto/des",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Gebroken symmetrische cipher (DES/3DES). NIST deprecated 2019, disallowed 2023. Opgenomen als SCA-detectie referentie — migratiepad: crypto/aes (AES-GCM)."
+        },
+        {
+          "name": "crypto/rc4",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Volledig gebroken stream cipher (NOMORE attack 2015, RC4 biases). Opgenomen als SCA-detectie referentie — migratiepad: crypto/aes (AES-GCM) of xcrypto (ChaCha20-Poly1305)."
+        },
+        {
+          "name": "crypto/elliptic",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "ECC-basis pakket, deprecated voor nieuw gebruik sinds Go 1.22. Niet PQC-veilig. Opgenomen als SCA-detectie referentie — migratiepad: crypto/mlkem, circl (ML-KEM/X-Wing)."
+        }
+      ]
+    }
+  ]
+}

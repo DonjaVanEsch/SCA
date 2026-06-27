@@ -14,7 +14,7 @@ def hello():
 
 @app.get("/version")
 def version():
-    lib_version = Crypto.__version__
+    lib_version = getattr(Crypto, '__version__', None) or __import__('importlib.metadata', fromlist=['version']).version('pycryptodome')
     return {
         "language": {"name": "Python", "version": sys.version.split()[0]},
         "framework": {"name": "FastAPI", "version": fastapi.__version__},

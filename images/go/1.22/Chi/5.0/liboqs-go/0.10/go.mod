@@ -1,0 +1,8 @@
+module app
+
+go 1.22
+
+require (
+	github.com/go-chi/chi/v5 v5.0.14
+	github.com/open-quantum-safe/liboqs-go v0.0.0-20240327192735-f3526b7b43ba
+)

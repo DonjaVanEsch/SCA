@@ -13,7 +13,12 @@ if not settings.configured:
     django.setup()
 
 from django.http import JsonResponse
-from django.urls import path
+try:
+    from django.urls import path as _route
+    _urlpatterns = lambda h, v: [_route("", h), _route("version", v)]
+except ImportError:
+    from django.conf.urls import url as _route
+    _urlpatterns = lambda h, v: [_route(r"^$", h), _route(r"^version$", v)]
 import cryptography
 
 
@@ -30,10 +35,7 @@ def version_view(request):
     })
 
 
-urlpatterns = [
-    path("", hello),
-    path("version", version_view),
-]
+urlpatterns = _urlpatterns(hello, version_view)
 
 if __name__ == "__main__":
     from django.core.management import execute_from_command_line

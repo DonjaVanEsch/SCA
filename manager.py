@@ -5,15 +5,20 @@ PQC Image Manager
 Manage and inspect generated Docker image contexts.
 
 Usage:
-  python manager.py --list   [filters]
-  python manager.py --build  [filters]
-  python manager.py --run    [filters]
-  python manager.py --build --run [filters]
+  python manager.py --list                  [filters]
+  python manager.py --build                 [filters]
+  python manager.py --build --test --remove [filters]   # build → test → prune
+  python manager.py --run                   [filters]
 
 Actions:
   -l, --list                List matching image contexts
   -b, --build               Build Docker images for matching contexts
   -r, --run                 Run containers for matching contexts
+  -T, --test                Test built images: start container, check / and /version endpoints,
+                            stop container. Skips images that failed to build or are not present.
+  -D, --remove              Remove Docker images after building/testing (docker rmi).
+                            Also removes any stopped containers that reference matching images.
+                            Use together with -b and -T for a build → test → prune workflow.
   -y, --yes                 Skip confirmation prompt for large sets
 
 Filters:
@@ -75,13 +80,24 @@ def _version_matches(actual, pattern):
 
 
 def _collect(base):
-    """Walk the images tree; return one dict per Dockerfile found."""
+    """Walk the images tree; return one dict per Dockerfile found.
+
+    The framework folder may contain a path separator (e.g. net/http stored as
+    nested directories), so framework is reconstructed by joining all parts
+    between lang_ver and fw_ver (the last three parts are always fw_ver,
+    library, lib_ver).
+    """
     entries = []
     for dockerfile in sorted(base.rglob("Dockerfile")):
         parts = dockerfile.parent.relative_to(base).parts
-        if len(parts) != 6:
+        if len(parts) < 6:
             continue
-        language, lang_ver, framework, fw_ver, library, lib_ver = parts
+        language  = parts[0]
+        lang_ver  = parts[1]
+        lib_ver   = parts[-1]
+        library   = parts[-2]
+        fw_ver    = parts[-3]
+        framework = "/".join(parts[2:-3])
         entries.append({
             "language":  language,
             "lang_ver":  lang_ver,
@@ -98,8 +114,13 @@ def _filter(entries, args):
     def keep(e):
         if args.language         and e["language"].lower()  != args.language.lower():   return False
         if args.version          and not _version_matches(e["lang_ver"], args.version): return False
-        if args.framework        and e["framework"].lower() != args.framework.lower():  return False
-        if args.framework_version and e["fw_ver"]           != args.framework_version:  return False
+        if args.framework:
+            fw_norm   = lambda s: s.lower().replace("/", "_")
+            fw_filter = fw_norm(args.framework)
+            fw_actual = fw_norm(e["framework"])
+            if fw_actual != fw_filter and not fw_actual.startswith(fw_filter + "_"):
+                return False
+        if args.framework_version and not _version_matches(e["fw_ver"], args.framework_version): return False
         if args.library          and e["library"].lower()   != args.library.lower():    return False
         if args.library_version  and not _version_matches(e["lib_ver"], args.library_version): return False
         return True
@@ -151,9 +172,10 @@ def _print_summary(entries):
 
 def _image_tag(e):
     """Deterministic, Docker-legal image name derived from a context entry."""
+    fw = e["framework"].lower().replace("/", "_")
     return (
         f"pqc-{e['language']}-{e['lang_ver']}"
-        f"-{e['framework'].lower()}-{e['fw_ver']}"
+        f"-{fw}-{e['fw_ver']}"
         f"-{e['library'].lower()}-{e['lib_ver']}"
     )
 
@@ -469,8 +491,23 @@ def _do_test(entries, build_results=None):
 
 # ── Remove images ─────────────────────────────────────────────────────────────
 
+def _remove_stopped_containers(tag: str) -> int:
+    """Remove all stopped containers that reference *tag*. Returns count removed."""
+    proc = subprocess.run(
+        ["docker", "ps", "-a", "--filter", f"ancestor={tag}",
+         "--filter", "status=exited", "--filter", "status=created",
+         "--format", "{{.ID}}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    ids = proc.stdout.strip().splitlines()
+    if not ids:
+        return 0
+    subprocess.run(["docker", "rm"] + ids, capture_output=True)
+    return len(ids)
+
+
 def _do_remove(entries):
-    """Remove the Docker image for every entry (docker rmi)."""
+    """Remove stopped containers and the Docker image for every entry (docker rmi)."""
     n   = len(entries)
     pad = len(str(n))
     print(f"\nRemoving {n:,} image(s) ...\n")
@@ -483,6 +520,10 @@ def _do_remove(entries):
         if not _image_exists(tag):
             print(f"         NOT FOUND")
             continue
+
+        n_containers = _remove_stopped_containers(tag)
+        if n_containers:
+            print(f"         CONTAINERS  ({n_containers} stopped container(s) removed)")
 
         proc = subprocess.run(
             ["docker", "rmi", tag],

@@ -1,0 +1,8 @@
+module app
+
+go 1.25
+
+require (
+	github.com/beego/beego/v2 v2.1.6
+	github.com/open-quantum-safe/liboqs-go v0.0.0-20260310140033-75451133b94a
+)

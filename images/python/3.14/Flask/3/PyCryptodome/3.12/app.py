@@ -12,11 +12,11 @@ def hello():
 
 @app.route("/version")
 def version():
-    import flask
-    lib_version = Crypto.__version__
+    import importlib.metadata
+    lib_version = getattr(Crypto, '__version__', None) or __import__('importlib.metadata', fromlist=['version']).version('pycryptodome')
     return jsonify({
         "language": {"name": "Python", "version": sys.version.split()[0]},
-        "framework": {"name": "Flask", "version": flask.__version__},
+        "framework": {"name": "Flask", "version": importlib.metadata.version("flask")},
         "library": {"name": "PyCryptodome", "version": str(lib_version)},
     })
 

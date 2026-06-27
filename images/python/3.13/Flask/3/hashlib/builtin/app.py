@@ -12,11 +12,11 @@ def hello():
 
 @app.route("/version")
 def version():
-    import flask
+    import importlib.metadata
     lib_version = "built-in"
     return jsonify({
         "language": {"name": "Python", "version": sys.version.split()[0]},
-        "framework": {"name": "Flask", "version": flask.__version__},
+        "framework": {"name": "Flask", "version": importlib.metadata.version("flask")},
         "library": {"name": "hashlib", "version": str(lib_version)},
     })
 
