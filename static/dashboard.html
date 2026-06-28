@@ -1,0 +1,1603 @@
+<!doctype html>
+<title>PQC Image Manager</title>
+<meta name="description" content="Post-Quantum Cryptography image build, test, and management dashboard">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+:root {
+  --bg:        #0c1117;
+  --surface:   #161b22;
+  --surface2:  #1c2129;
+  --surface3:  #21262d;
+  --border:    #2a3140;
+  --border2:   #353d4a;
+  --text:      #cdd5de;
+  --muted:     #5e6b7d;
+  --muted2:    #8b949e;
+  --accent:    #1e7bd9;
+  --accent-h:  #2b8fe8;
+  --success:   #3fb950;
+  --danger:    #f85149;
+  --warning:   #e3b341;
+  --ignored-c: #4a5568;
+  --row-h:     #1a2030;
+  --sel-bg:    #0d2040;
+  --sel-border:#1e5799;
+  --radius:    5px;
+  --radius-lg: 8px;
+  --mono: 'Cascadia Code','JetBrains Mono','Fira Code','Consolas',monospace;
+  --sans: -apple-system,'Segoe UI',system-ui,sans-serif;
+  --log-h: 240px;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{height:100%;font-size:14px;background:var(--bg);color:var(--text);font-family:var(--sans)}
+body{height:100%;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font:inherit;color:inherit}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-track{background:var(--surface)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+#header{
+  display:flex;align-items:center;gap:16px;padding:0 16px;
+  height:52px;border-bottom:1px solid var(--border);flex-shrink:0;
+  background:var(--surface);
+}
+#header h1{
+  font-size:15px;font-weight:600;letter-spacing:.3px;
+  color:var(--text);white-space:nowrap;
+}
+.header-accent{color:var(--accent)}
+.stats-bar{
+  display:flex;gap:12px;align-items:center;font-size:12px;color:var(--muted2);
+  font-variant-numeric:tabular-nums;
+}
+.stat{display:flex;align-items:center;gap:5px}
+.stat b{color:var(--text);font-weight:600}
+.stat-sep{color:var(--border2)}
+.tabs{
+  display:flex;gap:2px;margin-left:auto;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--bg);padding:2px;
+}
+.tab-btn{
+  padding:5px 14px;border-radius:3px;font-size:13px;
+  color:var(--muted2);transition:background .15s,color .15s;
+}
+.tab-btn.active{background:var(--surface3);color:var(--text);font-weight:500}
+.tab-btn:hover:not(.active){color:var(--text);background:var(--surface2)}
+.header-actions{display:flex;gap:6px;align-items:center}
+
+/* ── Body panels ────────────────────────────────────────────────────────── */
+#body{display:flex;flex:1;overflow:hidden;min-height:0}
+.tab-panel{display:none;flex:1;overflow:hidden;min-height:0}
+.tab-panel.active{display:flex}
+
+/* ── Filter sidebar ─────────────────────────────────────────────────────── */
+#filter-panel{
+  width:220px;flex-shrink:0;border-right:1px solid var(--border);
+  background:var(--surface);overflow-y:auto;
+  display:flex;flex-direction:column;gap:0;
+}
+.filter-section{padding:14px 14px 0}
+.filter-section:last-child{padding-bottom:14px}
+.filter-label{
+  font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--muted);margin-bottom:8px;display:block;
+}
+.filter-group{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.filter-row{display:flex;flex-direction:column;gap:3px}
+.filter-row label{font-size:11px;color:var(--muted2)}
+.filter-input,.filter-select{
+  background:var(--surface3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:5px 8px;font-size:12px;
+  width:100%;color:var(--text);transition:border-color .15s;
+}
+.filter-input:focus,.filter-select:focus{border-color:var(--accent);outline:none}
+.filter-input::placeholder{color:var(--muted)}
+.filter-select option{background:var(--surface3)}
+.filter-divider{height:1px;background:var(--border);margin:10px 0}
+.filter-check{display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer}
+.filter-check input[type=checkbox]{
+  accent-color:var(--accent);width:13px;height:13px;cursor:pointer;
+}
+.filter-actions{display:flex;gap:6px;margin-top:12px}
+.btn{
+  padding:6px 12px;border-radius:var(--radius);font-size:12px;
+  font-weight:500;border:1px solid transparent;transition:background .15s,border-color .15s;
+  cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-primary:hover{background:var(--accent-h)}
+.btn-ghost{background:transparent;color:var(--muted2);border-color:var(--border)}
+.btn-ghost:hover{background:var(--surface3);color:var(--text)}
+.btn-danger{background:#3d1212;color:var(--danger);border-color:#5a1a1a}
+.btn-danger:hover{background:#4a1515}
+.btn-warning{background:#2d2008;color:var(--warning);border-color:#3d2d0a}
+.btn-warning:hover{background:#362510}
+.btn-success{background:#0d2d12;color:var(--success);border-color:#133d1a}
+.btn-success:hover{background:#103318}
+.btn-sm{padding:4px 9px;font-size:11px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Main panel ─────────────────────────────────────────────────────────── */
+#main-panel{
+  flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+}
+
+/* ── Action bar ─────────────────────────────────────────────────────────── */
+#action-bar{
+  display:flex;align-items:center;gap:8px;padding:8px 14px;
+  border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;
+  flex-wrap:wrap;
+}
+.action-group{display:flex;gap:5px;align-items:center}
+.action-sep{width:1px;height:20px;background:var(--border2);flex-shrink:0}
+#sel-count{font-size:12px;color:var(--muted2);white-space:nowrap;min-width:90px}
+.opt-label{
+  display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted2);
+  cursor:pointer;
+}
+.opt-label input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+.sel-menu-wrap{position:relative}
+.sel-menu{
+  position:absolute;top:calc(100% + 4px);left:0;z-index:200;
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:7px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.35);
+  min-width:200px;display:none;
+}
+.sel-menu.open{display:block}
+.sel-menu-item{
+  padding:8px 14px;font-size:12px;cursor:pointer;
+  display:flex;justify-content:space-between;align-items:center;color:var(--text);
+}
+.sel-menu-item:hover{background:var(--surface3)}
+.sel-menu-sep{height:1px;background:var(--border);margin:2px 0}
+kbd{
+  font-family:var(--mono);font-size:10px;padding:1px 5px;
+  border-radius:3px;background:var(--surface3);border:1px solid var(--border2);
+  color:var(--muted2);
+}
+.act-check{
+  display:flex;align-items:center;gap:4px;font-size:12px;font-weight:500;
+  cursor:pointer;padding:3px 7px;border-radius:5px;border:1px solid var(--border2);
+  color:var(--muted2);transition:color .15s,border-color .15s,background .15s;
+  user-select:none;
+}
+.act-check:has(input:checked){
+  background:rgba(30,123,217,.12);border-color:var(--accent);color:var(--text);
+}
+.act-check input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+.act-check:has(input:disabled){opacity:.4;cursor:not-allowed}
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+#table-wrap{flex:1;overflow:auto;min-height:0}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{
+  position:sticky;top:0;background:var(--surface);z-index:2;
+  padding:7px 10px;text-align:left;font-weight:600;
+  color:var(--muted2);font-size:11px;letter-spacing:.3px;
+  border-bottom:1px solid var(--border);white-space:nowrap;
+  user-select:none;
+}
+thead th.sortable{cursor:pointer}
+thead th.sortable:hover{color:var(--text)}
+thead th.sortable.sort-active{color:var(--accent)}
+.sort-icon{font-size:10px;margin-left:3px;opacity:.4}
+thead th.sort-active .sort-icon{opacity:1}
+tbody tr{
+  border-bottom:1px solid var(--border);
+  transition:background .1s;cursor:pointer;
+}
+tbody tr:hover{background:var(--row-h)}
+tbody tr.selected{background:var(--sel-bg)}
+tbody tr.selected td:first-child{border-left:2px solid var(--sel-border)}
+tbody tr.ignored-row{opacity:.55}
+td{padding:6px 10px;vertical-align:middle;font-variant-numeric:tabular-nums}
+td.cb-cell{width:32px;padding:6px 6px 6px 12px}
+.row-cb{
+  appearance:none;width:14px;height:14px;border:1px solid var(--border2);
+  border-radius:3px;background:var(--surface3);cursor:pointer;
+  display:grid;place-items:center;flex-shrink:0;
+}
+.row-cb:checked{
+  background:var(--accent);border-color:var(--accent);
+}
+.row-cb:checked::after{
+  content:'';width:8px;height:6px;
+  border-bottom:2px solid #fff;border-left:2px solid #fff;
+  transform:rotate(-45deg) translate(1px,-1px);
+}
+.mono-cell{font-family:var(--mono);font-size:11px}
+.badge{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:2px 7px;border-radius:10px;font-size:10px;
+  font-weight:600;white-space:nowrap;letter-spacing:.2px;
+}
+.badge-ok{background:#0d2d12;color:#3fb950}
+.badge-fail{background:#3d1212;color:#f85149}
+.badge-skip{background:var(--surface3);color:var(--muted)}
+.badge-warn{background:#2d2008;color:#e3b341}
+.ignored-icon{color:var(--muted);font-size:11px}
+.empty-state{
+  padding:48px;text-align:center;color:var(--muted);
+}
+.empty-state p{margin-top:8px;font-size:13px}
+#loading-row td{padding:20px;text-align:center;color:var(--muted);font-size:12px}
+
+/* ── Pagination ─────────────────────────────────────────────────────────── */
+#pagination{
+  display:flex;align-items:center;gap:6px;padding:8px 14px;
+  border-top:1px solid var(--border);background:var(--surface);
+  flex-shrink:0;font-size:12px;
+}
+.pg-info{color:var(--muted2);flex:1;font-variant-numeric:tabular-nums}
+.pg-btn{
+  padding:4px 8px;border-radius:var(--radius);border:1px solid var(--border);
+  background:var(--surface3);color:var(--muted2);font-size:12px;cursor:pointer;
+  transition:background .1s,color .1s;
+}
+.pg-btn:hover:not(:disabled){background:var(--surface);color:var(--text)}
+.pg-btn.current{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pg-btn:disabled{opacity:.35;cursor:not-allowed}
+
+/* ── Reports tab ────────────────────────────────────────────────────────── */
+#tab-reports{flex-direction:column}
+#tab-reference{flex-direction:column;overflow-y:auto}
+.panel-header{
+  display:flex;align-items:center;gap:10px;padding:10px 16px;
+  border-bottom:1px solid var(--border);background:var(--surface);
+  flex-shrink:0;flex-wrap:wrap;
+}
+.panel-header h2{font-size:13px;font-weight:600;margin-right:8px}
+.sub-tabs{display:flex;gap:4px}
+.sub-tab{
+  padding:4px 12px;border-radius:var(--radius);font-size:12px;
+  border:1px solid var(--border);color:var(--muted2);
+  transition:background .1s,color .1s;
+}
+.sub-tab.active{background:var(--surface3);color:var(--text);border-color:var(--border2)}
+.sub-tab:hover:not(.active){background:var(--surface2);color:var(--text)}
+#report-table-wrap{flex:1;overflow:auto;min-height:0}
+.report-filter{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.report-filter select,.report-filter input{
+  background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);
+  padding:4px 8px;font-size:12px;color:var(--text);min-width:90px;
+}
+.success-dot{
+  display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;
+}
+.dot-ok{background:var(--success)}
+.dot-fail{background:var(--danger)}
+.dot-none{background:var(--muted)}
+
+/* ── Reference tab ──────────────────────────────────────────────────────── */
+.ref-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
+  gap:16px;padding:16px;
+}
+.ref-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+  overflow:hidden;
+}
+.ref-card-header{
+  padding:12px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+}
+.ref-card-header h3{font-size:14px;font-weight:600}
+.ref-lang-badge{
+  font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;
+  background:var(--accent);color:#fff;letter-spacing:.3px;
+}
+.ref-section{padding:10px 14px;border-bottom:1px solid var(--border)}
+.ref-section:last-child{border-bottom:none}
+.ref-section-title{
+  font-size:10px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--muted);margin-bottom:8px;
+}
+.ref-version-list{display:flex;flex-wrap:wrap;gap:4px}
+.ref-ver{
+  font-size:11px;font-family:var(--mono);padding:2px 7px;
+  border-radius:4px;background:var(--surface3);border:1px solid var(--border);
+  color:var(--muted2);
+}
+.ref-ver.active{border-color:var(--accent);color:var(--accent);background:rgba(30,123,217,.1)}
+.ref-item{margin-bottom:8px}
+.ref-item-name{font-size:12px;font-weight:600;color:var(--text)}
+.ref-item-meta{font-size:11px;color:var(--muted2);margin-top:2px}
+.ref-item-note{
+  font-size:11px;color:var(--muted);margin-top:4px;
+  border-left:2px solid var(--border2);padding-left:8px;
+  line-height:1.5;
+}
+
+/* ── Log console ────────────────────────────────────────────────────────── */
+#log-console{
+  position:fixed;bottom:0;left:0;right:0;z-index:100;
+  background:var(--bg);border-top:1px solid var(--border);
+  height:var(--log-h);display:flex;flex-direction:column;
+  transform:translateY(100%);transition:transform .2s ease;
+}
+#log-console.open{transform:translateY(0)}
+#log-header{
+  display:flex;align-items:center;gap:10px;padding:6px 14px;
+  border-bottom:1px solid var(--border);background:var(--surface);
+  flex-shrink:0;
+}
+#log-title{font-size:12px;font-weight:600;flex:1}
+#log-status{font-size:11px;color:var(--muted2)}
+#log-progress{font-size:11px;font-family:var(--mono);color:var(--accent)}
+#log-body{
+  flex:1;overflow-y:auto;padding:8px 14px;
+  font-family:var(--mono);font-size:11px;line-height:1.7;
+  color:#9fdb8a;
+}
+#log-body .log-err{color:var(--danger)}
+#log-body .log-done{color:var(--accent);font-weight:600}
+.log-ts{color:var(--muted);margin-right:6px}
+
+/* ── Modal / tooltip ────────────────────────────────────────────────────── */
+#toast-container{
+  position:fixed;top:14px;right:14px;z-index:200;
+  display:flex;flex-direction:column;gap:6px;pointer-events:none;
+}
+.toast{
+  padding:8px 14px;border-radius:var(--radius);font-size:12px;
+  border-left:3px solid;max-width:320px;
+  animation:slide-in .2s ease;pointer-events:auto;
+}
+.toast-info{background:#0d1e33;border-color:var(--accent);color:var(--text)}
+.toast-ok{background:#0d2d12;border-color:var(--success);color:var(--text)}
+.toast-err{background:#3d1212;border-color:var(--danger);color:var(--text)}
+@keyframes slide-in{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+/* ── Detail drawer ──────────────────────────────────────────────────────── */
+#detail-drawer{
+  position:fixed;right:0;top:52px;bottom:0;width:340px;z-index:50;
+  background:var(--surface);border-left:1px solid var(--border);
+  transform:translateX(100%);transition:transform .2s ease;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+#detail-drawer.open{transform:translateX(0)}
+#detail-header{
+  padding:12px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;flex-shrink:0;
+}
+#detail-header h3{font-size:13px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#detail-body{flex:1;overflow-y:auto;padding:12px 14px}
+.detail-row{display:flex;flex-direction:column;gap:2px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.detail-row:last-child{border-bottom:none}
+.detail-key{font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+.detail-val{font-size:12px;font-family:var(--mono)}
+.detail-note{font-size:11px;color:var(--muted2);line-height:1.5;margin-top:4px}
+.detail-output{
+  font-family:var(--mono);font-size:10.5px;line-height:1.5;
+  background:var(--surface3);border:1px solid var(--border2);
+  border-radius:5px;padding:8px 10px;margin:0;
+  max-height:260px;overflow-y:auto;overflow-x:hidden;
+  white-space:pre-wrap;word-break:break-all;
+  color:var(--muted2);width:100%;box-sizing:border-box;
+}
+.detail-output-err{border-color:rgba(248,81,73,.4);color:#f85149}
+</style>
+
+<!-- ── Toast container ─────────────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header id="header">
+  <h1>PQC <span class="header-accent">Image Manager</span></h1>
+  <div class="stats-bar" id="stats-bar">
+    <span class="stat"><b id="s-total">–</b> images</span>
+    <span class="stat-sep">·</span>
+    <span class="stat"><b id="s-built" style="color:var(--success)">–</b> built OK</span>
+    <span class="stat-sep">·</span>
+    <span class="stat"><b id="s-tested" style="color:var(--accent)">–</b> tested OK</span>
+    <span class="stat-sep">·</span>
+    <span class="stat"><b id="s-ignored" style="color:var(--muted2)">–</b> ignored</span>
+  </div>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="images">Images</button>
+    <button class="tab-btn" data-tab="reports">Reports</button>
+    <button class="tab-btn" data-tab="reference">Reference</button>
+  </nav>
+  <div class="header-actions">
+    <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync image list from disk">⟳ Sync</button>
+    <button class="btn btn-warning btn-sm" id="btn-stop-all">Stop All</button>
+    <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync images from disk">⚙ Init DB</button>
+  </div>
+</header>
+
+<!-- ── Body ───────────────────────────────────────────────────────────── -->
+<div id="body">
+
+  <!-- ── Images tab ─────────────────────────────────────────────────── -->
+  <div id="tab-images" class="tab-panel active">
+    <!-- Filter sidebar -->
+    <aside id="filter-panel">
+      <div class="filter-section">
+        <span class="filter-label">Filters</span>
+        <div class="filter-group">
+          <div class="filter-row">
+            <label>Language</label>
+            <select class="filter-select" id="f-lang">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lang version <em style="color:var(--muted);font-size:10px">(3.1x, 3.x)</em></label>
+            <input class="filter-input" id="f-ver" placeholder="e.g. 3.11 or 3.1x">
+          </div>
+          <div class="filter-row">
+            <label>Framework</label>
+            <select class="filter-select" id="f-fw">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>FW version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="f-fwver" placeholder="e.g. 2 or 1.x">
+          </div>
+          <div class="filter-row">
+            <label>Library</label>
+            <select class="filter-select" id="f-lib">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lib version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="f-libver" placeholder="e.g. 44.0 or 4x">
+          </div>
+          <div class="filter-row">
+            <label>Run</label>
+            <select class="filter-select" id="f-run">
+              <option value="">All</option>
+            </select>
+          </div>
+        </div>
+        <div class="filter-divider"></div>
+        <label class="filter-check">
+          <input type="checkbox" id="f-ignored" checked>
+          Show ignored images
+        </label>
+        <div class="filter-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-clear-filter" style="flex:1">Clear filters</button>
+        </div>
+      </div>
+      <div class="filter-section" style="margin-top:auto;padding-top:10px">
+        <div class="filter-divider"></div>
+        <span class="filter-label">Export</span>
+        <div class="filter-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-export-list" style="flex:1">Image list</button>
+          <button class="btn btn-ghost btn-sm" id="btn-export-ignore" style="flex:1">Ignore list</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main panel -->
+    <div id="main-panel">
+      <!-- Action bar -->
+      <div id="action-bar">
+        <span id="sel-count">0 selected</span>
+        <div class="action-sep"></div>
+        <div class="action-group">
+          <label class="act-check" id="act-build-wrap"><input type="checkbox" id="act-build" disabled> Build</label>
+          <label class="act-check" id="act-test-wrap"><input type="checkbox" id="act-test" disabled> Test</label>
+          <label class="act-check" id="act-remove-wrap" style="color:var(--danger)"><input type="checkbox" id="act-remove" disabled> Remove</label>
+          <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Start</button>
+          <button class="btn btn-warning btn-sm" id="btn-stop" disabled>Stop</button>
+        </div>
+        <div class="action-sep"></div>
+        <div class="action-group">
+          <button class="btn btn-ghost btn-sm" id="btn-ignore" disabled>Ignore</button>
+          <button class="btn btn-ghost btn-sm" id="btn-unignore" disabled>Unignore</button>
+        </div>
+        <div class="action-sep"></div>
+        <label class="opt-label"><input type="checkbox" id="opt-no-cache"> no-cache</label>
+        <label class="opt-label"><input type="checkbox" id="opt-skip-existing"> skip-existing</label>
+        <div class="action-sep"></div>
+        <div class="action-group" style="gap:4px">
+          <label style="font-size:11px;color:var(--muted2)">Run</label>
+          <input id="run-name" class="filter-input" style="width:160px;padding:3px 7px" placeholder="auto">
+          <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate name">↺</button>
+        </div>
+        <div class="action-sep"></div>
+        <div class="sel-menu-wrap">
+          <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
+          <div class="sel-menu" id="sel-menu">
+            <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
+            <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
+            <div class="sel-menu-sep"></div>
+            <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div id="table-wrap">
+        <table id="img-table">
+          <thead>
+            <tr>
+              <th class="cb-cell"><input type="checkbox" id="header-cb" class="row-cb"></th>
+              <th class="sortable" data-sort="language">Language <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="lang_version">Ver <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="framework">Framework <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="fw_version">FW Ver <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="library">Library <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="lib_version">Lib Ver <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="build_success">Build <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-sort="test_success">Test <span class="sort-icon">⬍</span></th>
+              <th style="width:24px"></th>
+            </tr>
+          </thead>
+          <tbody id="img-tbody">
+            <tr id="loading-row"><td colspan="10" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div id="pagination">
+        <span class="pg-info" id="pg-info">–</span>
+        <div id="pg-buttons"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Reports tab ─────────────────────────────────────────────────── -->
+  <div id="tab-reports" class="tab-panel">
+    <div class="panel-header">
+      <h2>Reports</h2>
+      <div class="sub-tabs">
+        <button class="sub-tab active" data-report="test">Test results</button>
+        <button class="sub-tab" data-report="build">Build results</button>
+      </div>
+      <div class="report-filter">
+        <select id="rf-lang"><option value="">All languages</option></select>
+        <select id="rf-fw"><option value="">All frameworks</option></select>
+        <select id="rf-lib"><option value="">All libraries</option></select>
+        <select id="rf-run"><option value="">All runs</option></select>
+        <select id="rf-result">
+          <option value="">All results</option>
+          <option value="1">Pass / OK</option>
+          <option value="0">Fail</option>
+        </select>
+        <button class="btn btn-primary btn-sm" id="btn-load-reports">Load</button>
+      </div>
+    </div>
+    <div id="report-table-wrap">
+      <table id="report-table" style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr>
+            <th style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap"></th>
+            <th style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">Image</th>
+            <th style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">Detail</th>
+            <th style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">Date</th>
+          </tr>
+        </thead>
+        <tbody id="report-tbody">
+          <tr><td colspan="4" style="padding:32px;text-align:center;color:var(--muted)">Select filters and click Load</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Reference tab ───────────────────────────────────────────────── -->
+  <div id="tab-reference" class="tab-panel">
+    <div class="panel-header" style="flex-shrink:0">
+      <h2>Registry reference</h2>
+      <span style="font-size:12px;color:var(--muted2);margin-left:4px">Metadata from registry JSON files</span>
+    </div>
+    <div id="ref-content" class="ref-grid">
+      <div style="padding:32px;color:var(--muted);font-size:12px">Loading reference data…</div>
+    </div>
+  </div>
+
+</div><!-- #body -->
+
+<!-- ── Log console ─────────────────────────────────────────────────────── -->
+<div id="log-console">
+  <div id="log-header">
+    <div style="width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 1.5s infinite" id="log-dot"></div>
+    <span id="log-title">Job output</span>
+    <span id="log-progress"></span>
+    <span id="log-status" style="margin-left:auto;color:var(--muted2)">Running…</span>
+    <button class="btn btn-ghost btn-sm" id="btn-close-log">✕</button>
+  </div>
+  <div id="log-body"></div>
+</div>
+
+<!-- ── Detail drawer ───────────────────────────────────────────────────── -->
+<div id="detail-drawer">
+  <div id="detail-header">
+    <h3 id="detail-tag">—</h3>
+    <button class="btn btn-ghost btn-sm" id="btn-close-detail">✕</button>
+  </div>
+  <div id="detail-body"></div>
+</div>
+
+<style>
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+#log-dot.done{background:var(--muted);animation:none}
+</style>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────
+const state = {
+  page: 1,
+  perPage: 50,
+  total: 0,
+  pages: 1,
+  selected: new Set(),      // image ids (numbers)
+  currentTab: 'images',
+  reportType: 'test',
+  allOptions: {},           // { languages, frameworks, libraries, ... }
+  sortCol: '',
+  sortDir: 'asc',
+};
+
+// ── API helpers ───────────────────────────────────────────────────────────
+async function api(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Stats bar ─────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const s = await api('/api/stats');
+    document.getElementById('s-total').textContent   = s.total.toLocaleString();
+    document.getElementById('s-built').textContent   = s.built_ok.toLocaleString();
+    document.getElementById('s-tested').textContent  = s.test_ok.toLocaleString();
+    document.getElementById('s-ignored').textContent = s.ignored.toLocaleString();
+  } catch {}
+}
+
+// ── Debounce helper ───────────────────────────────────────────────────────
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// ── Cascading filter options ──────────────────────────────────────────────
+let _filterPending = false;
+
+async function refreshCascadingOptions() {
+  const filters = getFilters();
+  const params  = filtersToParams(filters);
+  try {
+    const url = `/api/filters?${params}`;
+    console.log('[cascade] fetching:', url);
+    const opts = await api(url);
+    console.log('[cascade] received frameworks:', opts.frameworks);
+
+    function repopulate(selId, values) {
+      const sel = document.getElementById(selId);
+      if (!sel) return;
+      const cur = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      values.forEach(v => sel.appendChild(new Option(v, v)));
+      sel.value = values.includes(cur) ? cur : '';
+    }
+
+    repopulate('f-lang',  opts.languages  || []);
+    repopulate('f-fw',    opts.frameworks || []);
+    repopulate('f-lib',   opts.libraries  || []);
+    repopulate('rf-lang', opts.languages  || []);
+    repopulate('rf-fw',   opts.frameworks || []);
+    repopulate('rf-lib',  opts.libraries  || []);
+    saveFilters();
+  } catch(err) {
+    console.error('[cascade] error:', err);
+  }
+}
+
+// ── Filter persistence ────────────────────────────────────────────────────
+const _FILTER_KEY = 'pqc-filters';
+
+function saveFilters() {
+  const f = getFilters();
+  f.include_ignored = document.getElementById('f-ignored').checked;
+  localStorage.setItem(_FILTER_KEY, JSON.stringify(f));
+}
+
+function restoreFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(_FILTER_KEY) || 'null');
+    if (!saved) return;
+    const map = {
+      'f-lang': saved.language, 'f-fw': saved.framework, 'f-lib': saved.library,
+      'f-ver':  saved.version,  'f-fwver': saved.framework_version,
+      'f-libver': saved.library_version,
+    };
+    Object.entries(map).forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el && val !== undefined) el.value = val;
+    });
+    if (saved.include_ignored !== undefined)
+      document.getElementById('f-ignored').checked = saved.include_ignored;
+  } catch {}
+}
+
+async function loadFilterOptions() {
+  // Step 1: load ALL options without cascading so dropdowns have values
+  try {
+    const opts = await api('/api/filters');
+    function repopAll(selId, values) {
+      const sel = document.getElementById(selId);
+      if (!sel) return;
+      while (sel.options.length > 1) sel.remove(1);
+      values.forEach(v => sel.appendChild(new Option(v, v)));
+    }
+    repopAll('f-lang',  opts.languages  || []);
+    repopAll('f-fw',    opts.frameworks || []);
+    repopAll('f-lib',   opts.libraries  || []);
+    repopAll('rf-lang', opts.languages  || []);
+    repopAll('rf-fw',   opts.frameworks || []);
+    repopAll('rf-lib',  opts.libraries  || []);
+  } catch {}
+
+  // Step 2: restore saved values (options now exist in the selects)
+  restoreFilters();
+
+  // Step 3: cascade based on the restored values
+  await refreshCascadingOptions();
+}
+
+// ── Get current filters ───────────────────────────────────────────────────
+function getFilters() {
+  return {
+    language:          document.getElementById('f-lang').value,
+    version:           document.getElementById('f-ver').value.trim(),
+    framework:         document.getElementById('f-fw').value,
+    framework_version: document.getElementById('f-fwver').value.trim(),
+    library:           document.getElementById('f-lib').value,
+    library_version:   document.getElementById('f-libver').value.trim(),
+    run:               document.getElementById('f-run').value,
+  };
+}
+
+function filtersToParams(f, extra = {}) {
+  const p = new URLSearchParams();
+  Object.entries({ ...f, ...extra }).forEach(([k, v]) => { if (v !== '') p.set(k, v); });
+  return p;
+}
+
+// ── Image table ───────────────────────────────────────────────────────────
+async function loadImages(page = 1) {
+  state.page = page;
+  const filters = getFilters();
+  const incIgn  = document.getElementById('f-ignored').checked ? 'true' : 'false';
+  const params  = filtersToParams(filters, {
+    page, per_page: state.perPage, include_ignored: incIgn,
+  });
+
+  const tbody = document.getElementById('img-tbody');
+  tbody.innerHTML = '<tr id="loading-row"><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+
+  try {
+    const data = await api(`/api/images?${params}`);
+    state.total = data.total;
+    state.pages = data.pages;
+    renderTable(data.items);
+    renderPagination(data.total, data.page, data.pages, data.per_page);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function copyOutput(preId, btn) {
+  const pre = document.getElementById(preId);
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.textContent).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.style.color = 'var(--success)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  }).catch(() => {
+    // Fallback for browsers without clipboard API
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand('copy');
+    sel.removeAllRanges();
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+function buildBadge(success) {
+  if (success === null || success === undefined) return '<span class="badge badge-skip">—</span>';
+  if (success === 1 || success === true)  return '<span class="badge badge-ok">OK</span>';
+  return '<span class="badge badge-fail">FAIL</span>';
+}
+
+function testBadge(success) {
+  if (success === null || success === undefined) return '<span class="badge badge-skip">—</span>';
+  if (success === 1 || success === true)  return '<span class="badge badge-ok">PASS</span>';
+  return '<span class="badge badge-fail">FAIL</span>';
+}
+
+function renderTable(items) {
+  const tbody = document.getElementById('img-tbody');
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="10">
+      <div class="empty-state">
+        <div style="font-size:28px;opacity:.3">⬜</div>
+        <p>No images match the current filters.</p>
+      </div></td></tr>`;
+    updateActionBar();
+    return;
+  }
+
+  tbody.innerHTML = items.map(r => {
+    const sel = state.selected.has(r.id);
+    const ign = r.ignored === 1;
+    return `<tr data-id="${r.id}" class="${sel ? 'selected' : ''}${ign ? ' ignored-row' : ''}"
+              onclick="rowClick(event,${r.id})">
+      <td class="cb-cell">
+        <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''}
+               onclick="event.stopPropagation();toggleSelect(${r.id})">
+      </td>
+      <td>${r.language}</td>
+      <td class="mono-cell">${r.lang_version}</td>
+      <td>${r.framework}</td>
+      <td class="mono-cell">${r.fw_version}</td>
+      <td>${r.library}</td>
+      <td class="mono-cell">${r.lib_version}</td>
+      <td>${buildBadge(r.build_success)}</td>
+      <td>${testBadge(r.test_success)}</td>
+      <td style="padding:0 6px">
+        <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
+                onclick="event.stopPropagation();openDetail(${r.id})" title="Details">⋯</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('header-cb').checked = false;
+  updateActionBar();
+}
+
+// ── Selection ─────────────────────────────────────────────────────────────
+function toggleSelect(id) {
+  if (state.selected.has(id)) state.selected.delete(id);
+  else state.selected.add(id);
+  const row = document.querySelector(`tr[data-id="${id}"]`);
+  if (row) row.classList.toggle('selected', state.selected.has(id));
+  updateActionBar();
+}
+
+function rowClick(e, id) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+  toggleSelect(id);
+  const row = document.querySelector(`tr[data-id="${id}"]`);
+  if (row) {
+    const cb = row.querySelector('.row-cb');
+    if (cb) cb.checked = state.selected.has(id);
+  }
+}
+
+function selectPage() {
+  document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
+    const id = parseInt(row.dataset.id);
+    state.selected.add(id);
+    row.classList.add('selected');
+    const cb = row.querySelector('.row-cb');
+    if (cb) cb.checked = true;
+  });
+  updateActionBar();
+}
+
+async function selectAllFiltered() {
+  const filters = getFilters();
+  const incIgn  = document.getElementById('f-ignored').checked ? 'true' : 'false';
+  const params  = filtersToParams(filters, { include_ignored: incIgn });
+  try {
+    const data = await api(`/api/images/ids?${params}`);
+    data.ids.forEach(id => state.selected.add(id));
+    // Re-render visible rows to reflect selection
+    document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
+      const id = parseInt(row.dataset.id);
+      if (state.selected.has(id)) {
+        row.classList.add('selected');
+        const cb = row.querySelector('.row-cb');
+        if (cb) cb.checked = true;
+      }
+    });
+    toast(`${data.ids.length.toLocaleString()} images selected`, 'ok');
+    updateActionBar();
+  } catch (e) {
+    toast(`Error selecting all: ${e.message}`, 'err');
+  }
+}
+
+function deselectAll() {
+  state.selected.clear();
+  document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
+    row.classList.remove('selected');
+    const cb = row.querySelector('.row-cb');
+    if (cb) cb.checked = false;
+  });
+  document.getElementById('header-cb').checked = false;
+  updateActionBar();
+}
+
+function updateActionBar() {
+  const n = state.selected.size;
+  document.getElementById('sel-count').textContent = `${n.toLocaleString()} selected`;
+  const dis = n === 0;
+  ['act-build','act-test','act-remove','btn-start','btn-stop','btn-ignore','btn-unignore'].forEach(id => {
+    document.getElementById(id).disabled = dis;
+  });
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────
+function renderPagination(total, page, pages, perPage) {
+  const start = (page - 1) * perPage + 1;
+  const end   = Math.min(page * perPage, total);
+  document.getElementById('pg-info').textContent =
+    `${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}`;
+
+  const pg = document.getElementById('pg-buttons');
+  pg.innerHTML = '';
+
+  const mkBtn = (label, p, cur) => {
+    const b = document.createElement('button');
+    b.className = `pg-btn${cur ? ' current' : ''}`;
+    b.textContent = label;
+    b.disabled = cur || p < 1 || p > pages;
+    if (!b.disabled) b.onclick = () => loadImages(p);
+    return b;
+  };
+
+  pg.appendChild(mkBtn('‹', page - 1, false));
+  const range = pageRange(page, pages);
+  range.forEach(p => {
+    if (p === '…') {
+      const s = document.createElement('span');
+      s.textContent = '…';
+      s.style.cssText = 'padding:0 4px;color:var(--muted)';
+      pg.appendChild(s);
+    } else {
+      pg.appendChild(mkBtn(p, p, p === page));
+    }
+  });
+  pg.appendChild(mkBtn('›', page + 1, false));
+}
+
+function pageRange(cur, total) {
+  if (total <= 7) return Array.from({length: total}, (_, i) => i + 1);
+  const r = [];
+  r.push(1);
+  if (cur > 3) r.push('…');
+  for (let p = Math.max(2, cur - 1); p <= Math.min(total - 1, cur + 1); p++) r.push(p);
+  if (cur < total - 2) r.push('…');
+  r.push(total);
+  return r;
+}
+
+// ── Run name helpers ──────────────────────────────────────────────────────
+function generateRunName() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  return `run-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+async function loadRuns() {
+  try {
+    const runs = await api('/api/runs');
+    ['f-run', 'rf-run'].forEach(id => {
+      const sel = document.getElementById(id);
+      while (sel.options.length > 1) sel.remove(1);
+      runs.forEach(r => sel.appendChild(new Option(r.name, r.name)));
+    });
+  } catch {}
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────
+async function runAction(action, ids, opts, onDone = null, run_name = '') {
+  try {
+    const res = await api('/api/action', {
+      method: 'POST',
+      body: JSON.stringify({ action, image_ids: ids, options: opts, run_name }),
+    });
+    openLog(`${action} — ${ids.length} image(s)`, res.job_id, action, onDone);
+  } catch (e) {
+    toast(`Failed to start ${action}: ${e.message}`, 'err');
+    if (onDone) onDone(true); // true = error, skip remaining
+  }
+}
+
+async function startActions() {
+  if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
+  const actions = ['build', 'test', 'remove'].filter(a =>
+    document.getElementById(`act-${a}`).checked
+  );
+  if (!actions.length) { toast('Select at least one action (Build / Test / Remove)', 'err'); return; }
+
+  const ids      = [...state.selected];
+  const opts     = {
+    no_cache:      document.getElementById('opt-no-cache').checked,
+    skip_existing: document.getElementById('opt-skip-existing').checked,
+  };
+  const run_name = document.getElementById('run-name').value.trim() || generateRunName();
+
+  document.getElementById('btn-start').disabled = true;
+
+  function runNext(i) {
+    if (i >= actions.length) {
+      document.getElementById('btn-start').disabled = state.selected.size === 0;
+      loadImages(state.page);
+      loadStats();
+      loadRuns();
+      if (actions.length > 1) toast('All actions completed', 'ok');
+      return;
+    }
+    runAction(actions[i], ids, opts, (err) => {
+      if (err) {
+        document.getElementById('btn-start').disabled = state.selected.size === 0;
+      } else {
+        runNext(i + 1);
+      }
+    }, run_name);
+  }
+
+  runNext(0);
+}
+
+async function setIgnore(ignored) {
+  if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
+  try {
+    const res = await api('/api/ignore', {
+      method: 'POST',
+      body: JSON.stringify({ image_ids: [...state.selected], ignored }),
+    });
+    toast(`${res.count} image(s) ${ignored ? 'added to' : 'removed from'} ignore list`, 'ok');
+    loadImages(state.page);
+    loadStats();
+  } catch (e) {
+    toast(`Error: ${e.message}`, 'err');
+  }
+}
+
+// ── Log console (SSE) ─────────────────────────────────────────────────────
+let _es = null;
+function openLog(title, jobId, action, onDone = null) {
+  const con = document.getElementById('log-console');
+  const body = document.getElementById('log-body');
+  const dot  = document.getElementById('log-dot');
+  document.getElementById('log-title').textContent = title;
+  document.getElementById('log-status').textContent = 'Running…';
+  document.getElementById('log-progress').textContent = '';
+  body.innerHTML = '';
+  dot.className = '';
+  con.classList.add('open');
+
+  if (_es) { _es.close(); _es = null; }
+  _es = new EventSource(`/api/stream/${jobId}`);
+
+  let lineCount = 0, passCount = 0, failCount = 0;
+
+  _es.onmessage = e => {
+    const line = e.data;
+    if (line === '[DONE]') {
+      _es.close(); _es = null;
+      dot.className = 'done';
+      document.getElementById('log-status').textContent = 'Done';
+      toast(`${action} finished`, 'ok');
+      if (onDone) { onDone(false); } else { loadImages(state.page); loadStats(); }
+      return;
+    }
+    lineCount++;
+    const div = document.createElement('div');
+    if (line.startsWith('ERROR')) div.className = 'log-err';
+    else if (line.includes('PASS') || line.includes('OK') || line.includes('STOPPED'))
+      div.style.color = 'var(--success)';
+    else if (line.includes('FAIL') || line.includes('FAILED'))
+      div.style.color = 'var(--danger)';
+
+    // Track progress from "[n/N]" lines
+    const m = line.match(/\[(\d+)\/(\d+)\]/);
+    if (m) {
+      document.getElementById('log-progress').textContent = `${m[1]} / ${m[2]}`;
+    }
+    if (line.includes('PASS') || line.includes('OK  ')) passCount++;
+    if (line.includes('FAIL') || line.includes('FAILED')) failCount++;
+
+    div.textContent = line;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  };
+
+  _es.onerror = () => {
+    if (_es) { _es.close(); _es = null; }
+    dot.className = 'done';
+    document.getElementById('log-status').textContent = 'Connection lost';
+  };
+}
+
+// ── Detail drawer ─────────────────────────────────────────────────────────
+async function openDetail(id) {
+  const rows = await api(`/api/images?page=1&per_page=1`);  // won't work for specific id
+  // Fetch from existing table data instead
+  const tbody = document.getElementById('img-tbody');
+  const row   = tbody.querySelector(`tr[data-id="${id}"]`);
+  if (!row) return;
+
+  // Get image data from the current page's items (cached in state)
+  const imgData = state.pageItems?.find(r => r.id === id);
+  if (!imgData) return;
+
+  document.getElementById('detail-tag').textContent = imgData.image_tag || '—';
+  const body = document.getElementById('detail-body');
+
+  const fields = [
+    ['Language',      imgData.language],
+    ['Lang version',  imgData.lang_version],
+    ['Lang released', imgData.lang_release_date || '—'],
+    ['Framework',     imgData.framework],
+    ['FW module',     imgData.fw_module || '—'],
+    ['FW version',    imgData.fw_version],
+    ['FW released',   imgData.fw_release_date || '—'],
+    ['FW compat',     (imgData.fw_compatibility ? JSON.parse(imgData.fw_compatibility || '[]').join(', ') : '—')],
+    ['Library',       imgData.library],
+    ['Lib module',    imgData.lib_module || '—'],
+    ['Lib version',   imgData.lib_version],
+    ['Lib released',  imgData.lib_release_date || '—'],
+    ['Lib compat',    (imgData.lib_compatibility ? JSON.parse(imgData.lib_compatibility || '[]').join(', ') : '—')],
+    ['Image tag',     imgData.image_tag],
+    ['Context path',  imgData.context_path],
+    ['Build',         imgData.build_success === 1 ? '✓ OK' : imgData.build_success === 0 ? '✗ FAIL' : '—'],
+    ['Last test',     imgData.test_success === 1 ? '✓ PASS' : imgData.test_success === 0 ? '✗ FAIL' : '—'],
+    ['Tested at',     imgData.tested_at || '—'],
+    ['Ignored',       imgData.ignored ? `Yes — ${imgData.ignore_reason || 'no reason'}` : 'No'],
+  ];
+
+  body.innerHTML = fields.map(([k, v]) => `
+    <div class="detail-row">
+      <span class="detail-key">${k}</span>
+      <span class="detail-val">${v}</span>
+    </div>`).join('');
+
+  // Add notes
+  if (imgData.fw_notes) body.innerHTML += `
+    <div class="detail-row">
+      <span class="detail-key">FW notes</span>
+      <span class="detail-note">${imgData.fw_notes}</span>
+    </div>`;
+  if (imgData.lib_notes) body.innerHTML += `
+    <div class="detail-row">
+      <span class="detail-key">Lib notes</span>
+      <span class="detail-note">${imgData.lib_notes}</span>
+    </div>`;
+
+  // Build output (always shown when available, highlighted red on failure)
+  if (imgData.build_output) {
+    const failed = imgData.build_success === 0;
+    const oid = `bout-${id}`;
+    body.innerHTML += `
+    <div class="detail-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+        <span class="detail-key" style="color:${failed ? 'var(--danger)' : 'var(--muted2)'}">
+          Build output${failed ? ' (failed)' : ''}
+        </span>
+        <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px"
+                onclick="copyOutput('${oid}',this)">Copy</button>
+      </div>
+      <pre id="${oid}" class="detail-output${failed ? ' detail-output-err' : ''}">${escHtml(imgData.build_output)}</pre>
+    </div>`;
+  }
+
+  document.getElementById('detail-drawer').classList.add('open');
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────
+async function loadReports() {
+  const filters = {
+    language:          document.getElementById('rf-lang').value,
+    framework:         document.getElementById('rf-fw').value,
+    library:           document.getElementById('rf-lib').value,
+    run:               document.getElementById('rf-run').value,
+    success:           document.getElementById('rf-result').value,
+  };
+  const params  = filtersToParams(filters, { limit: 500 });
+  const url     = `/api/reports/${state.reportType}?${params}`;
+  const tbody   = document.getElementById('report-tbody');
+  tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+
+  try {
+    const rows = await api(url);
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No results found</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => {
+      const ok   = r.success === 1;
+      const dot  = `<span class="success-dot ${ok ? 'dot-ok' : 'dot-fail'}"></span>`;
+      const img  = `<span style="font-family:var(--mono);font-size:11px">${r.image_tag}</span>`;
+      let detail = '';
+
+      const rid = `rout-${r.id}`;
+      if (state.reportType === 'test') {
+        detail = ok
+          ? '<span style="color:var(--success)">/ ✓  /version ✓</span>'
+          : `<span style="color:var(--danger)">${escHtml(r.error_msg || 'failed')}</span>`;
+      } else {
+        detail = ok
+          ? '<span style="color:var(--success)">Build succeeded</span>'
+          : `<span style="color:var(--danger)">Build failed</span>`;
+      }
+
+      const dt      = (r.tested_at || r.finished_at || '').replace('T',' ').slice(0,16);
+      if (r.run_name) detail += ` <span style="font-size:10px;color:var(--muted2);margin-left:6px">[${escHtml(r.run_name)}]</span>`;
+      const hasOut  = !ok && r.output;
+      const outRow  = hasOut
+        ? `<tr id="${rid}" style="display:none;border-bottom:1px solid var(--border)">
+             <td></td>
+             <td colspan="3" style="padding:0 10px 10px">
+               <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+                 <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px"
+                         onclick="event.stopPropagation();copyOutput('${rid}-pre',this)">Copy</button>
+               </div>
+               <pre id="${rid}-pre" class="detail-output detail-output-err">${escHtml(r.output)}</pre>
+             </td>
+           </tr>`
+        : '';
+      const toggle  = hasOut ? `style="cursor:pointer" onclick="const r=document.getElementById('${rid}');r.style.display=r.style.display==='none'?'':'none'"` : '';
+      return `<tr ${toggle} style="border-bottom:${hasOut?'none':'1px solid var(--border)'}">
+        <td style="padding:6px 10px;width:20px">${dot}</td>
+        <td style="padding:6px 10px">${img}</td>
+        <td style="padding:6px 10px;font-size:11px">${detail}${hasOut ? ' <span style="color:var(--muted);font-size:10px">(click for details)</span>' : ''}</td>
+        <td style="padding:6px 10px;font-size:11px;color:var(--muted2);white-space:nowrap;font-family:var(--mono)">${dt}</td>
+      </tr>${outRow}`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+  }
+}
+
+// ── Reference ─────────────────────────────────────────────────────────────
+async function loadReference() {
+  const el = document.getElementById('ref-content');
+  try {
+    const data = await api('/api/reference');
+    el.innerHTML = data.languages.map(lang => {
+      const vers = lang.versions.map(v =>
+        `<span class="ref-ver ${v.include ? 'active' : ''}" title="${v.release_date || ''}">${v.version_nr}</span>`
+      ).join('');
+
+      const frameworks = lang.frameworks?.map(fw => {
+        const fwVers = (fw.versions || []).map(v =>
+          `<span class="ref-ver" title="${v.release_date || ''}">${v.version_nr}</span>`
+        ).join('');
+        return `<div class="ref-item">
+          <div class="ref-item-name">${fw.name}
+            ${fw.module_path && fw.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${fw.module_path}</span>` : ''}
+          </div>
+          <div class="ref-version-list" style="margin-top:4px">${fwVers}</div>
+          ${fw.notes ? `<div class="ref-item-note">${fw.notes}</div>` : ''}
+        </div>`;
+      }).join('') || '';
+
+      const libraries = lang.libraries?.map(lib => {
+        const libVers = (lib.versions || []).map(v =>
+          `<span class="ref-ver" title="${v.release_date || ''}">${v.version_nr}</span>`
+        ).join('');
+        return `<div class="ref-item">
+          <div class="ref-item-name">${lib.name}
+            ${lib.module_path && lib.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${lib.module_path}</span>` : ''}
+          </div>
+          <div class="ref-version-list" style="margin-top:4px">${libVers}</div>
+          ${lib.notes ? `<div class="ref-item-note">${lib.notes}</div>` : ''}
+        </div>`;
+      }).join('') || '';
+
+      return `<div class="ref-card">
+        <div class="ref-card-header">
+          <h3>${lang.display_name || lang.name}</h3>
+          <span class="ref-lang-badge">${lang.name}</span>
+          ${lang.port_base ? `<span style="font-size:11px;color:var(--muted2);margin-left:auto">port base: ${lang.port_base}</span>` : ''}
+        </div>
+        <div class="ref-section">
+          <div class="ref-section-title">Versions (active)</div>
+          <div class="ref-version-list">${vers}</div>
+        </div>
+        ${frameworks ? `<div class="ref-section">
+          <div class="ref-section-title">Frameworks (${lang.frameworks?.length || 0})</div>
+          ${frameworks}
+        </div>` : ''}
+        ${libraries ? `<div class="ref-section">
+          <div class="ref-section-title">Crypto libraries (${lang.libraries?.length || 0})</div>
+          ${libraries}
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div style="padding:20px;color:var(--danger)">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+function switchTab(name) {
+  state.currentTab = name;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
+  if (name === 'reference' && !document.querySelector('.ref-card')) loadReference();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+async function init() {
+  await loadFilterOptions();
+
+  // Check if DB has images; if empty, run init
+  try {
+    const stats = await api('/api/stats');
+    if (stats.total === 0) {
+      toast('Database empty — initialising…', 'info');
+      await api('/api/init', { method: 'POST' });
+      await loadFilterOptions();
+      toast('Database initialised', 'ok');
+    }
+    document.getElementById('s-total').textContent   = stats.total.toLocaleString();
+    document.getElementById('s-built').textContent   = stats.built_ok.toLocaleString();
+    document.getElementById('s-tested').textContent  = stats.test_ok.toLocaleString();
+    document.getElementById('s-ignored').textContent = stats.ignored.toLocaleString();
+  } catch {}
+
+  await loadImages(1);
+  loadStats();
+  loadRuns();
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(b =>
+  b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+document.querySelectorAll('.sub-tab').forEach(b =>
+  b.addEventListener('click', () => {
+    state.reportType = b.dataset.report;
+    document.querySelectorAll('.sub-tab').forEach(s => s.classList.toggle('active', s === b));
+  }));
+
+document.getElementById('btn-clear-filter').addEventListener('click', async () => {
+  ['f-lang','f-fw','f-lib'].forEach(id => document.getElementById(id).value = '');
+  ['f-ver','f-fwver','f-libver'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-ignored').checked = true;
+  saveFilters();
+  await refreshCascadingOptions();
+  loadImages(1);
+});
+
+// Live refresh: select dropdowns trigger cascading immediately
+['f-lang','f-fw','f-lib','f-ignored'].forEach(id =>
+  document.getElementById(id).addEventListener('change', async () => {
+    await refreshCascadingOptions();
+    loadImages(1);
+  }));
+
+// Live refresh: text inputs debounced (400 ms)
+const _debouncedRefresh = debounce(async () => {
+  await refreshCascadingOptions();
+  loadImages(1);
+}, 400);
+['f-ver','f-fwver','f-libver'].forEach(id =>
+  document.getElementById(id).addEventListener('input', _debouncedRefresh));
+
+// Sortable column headers
+document.querySelectorAll('thead th.sortable').forEach(th =>
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    if (state.sortCol === col) {
+      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortCol = col;
+      state.sortDir = 'asc';
+    }
+    loadImages(1);
+  }));
+
+document.getElementById('header-cb').addEventListener('change', e => {
+  if (e.target.checked) selectPage();
+  else deselectAll();
+});
+
+// ── Select dropdown menu ──────────────────────────────────────────────────
+const _selMenu = document.getElementById('sel-menu');
+document.getElementById('btn-sel-menu').addEventListener('click', e => {
+  e.stopPropagation();
+  _selMenu.classList.toggle('open');
+});
+document.addEventListener('click', () => _selMenu.classList.remove('open'));
+_selMenu.addEventListener('click', e => e.stopPropagation());
+
+document.getElementById('mnu-sel-page').addEventListener('click', () => {
+  _selMenu.classList.remove('open');
+  selectPage();
+});
+document.getElementById('mnu-sel-all').addEventListener('click', () => {
+  _selMenu.classList.remove('open');
+  selectAllFiltered();
+});
+document.getElementById('mnu-desel-all').addEventListener('click', () => {
+  _selMenu.classList.remove('open');
+  deselectAll();
+});
+
+document.getElementById('btn-start').addEventListener('click', startActions);
+document.getElementById('btn-stop').addEventListener('click', () => {
+  const ids  = [...state.selected];
+  const opts = {};
+  runAction('stop', ids, opts);
+});
+document.getElementById('btn-ignore').addEventListener('click',   () => setIgnore(true));
+document.getElementById('btn-unignore').addEventListener('click', () => setIgnore(false));
+
+document.getElementById('btn-close-log').addEventListener('click', () => {
+  document.getElementById('log-console').classList.remove('open');
+  if (_es) { _es.close(); _es = null; }
+});
+
+document.getElementById('btn-close-detail').addEventListener('click', () =>
+  document.getElementById('detail-drawer').classList.remove('open'));
+
+document.getElementById('btn-sync').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-sync');
+  btn.disabled = true;
+  btn.textContent = '⟳ Syncing…';
+  try {
+    const r = await api('/api/sync', { method: 'POST' });
+    toast(`Sync complete: ${r.total.toLocaleString()} images, ${r.inserted} new, ${r.removed} removed`, 'ok');
+    await loadFilterOptions();
+    loadImages(state.page);
+    loadStats();
+  } catch (e) {
+    toast(`Sync failed: ${e.message}`, 'err');
+  }
+  btn.disabled = false;
+  btn.textContent = '⟳ Sync';
+});
+
+document.getElementById('btn-init').addEventListener('click', async () => {
+  if (!confirm('Reload registry metadata and sync images from disk?')) return;
+  try {
+    const r = await api('/api/init', { method: 'POST' });
+    toast(`Init complete: ${r.images.total.toLocaleString()} images`, 'ok');
+    await loadFilterOptions();
+    loadImages(1);
+    loadStats();
+  } catch (e) {
+    toast(`Init failed: ${e.message}`, 'err');
+  }
+});
+
+document.getElementById('btn-stop-all').addEventListener('click', async () => {
+  if (!confirm('Stop all running pqc-* containers?')) return;
+  try {
+    const r = await api('/api/stop-all', { method: 'POST' });
+    openLog('Stop all containers', r.job_id, 'stop-all');
+  } catch (e) {
+    toast(`Error: ${e.message}`, 'err');
+  }
+});
+
+document.getElementById('btn-load-reports').addEventListener('click', loadReports);
+
+document.getElementById('btn-export-list').addEventListener('click', () => {
+  const filters = getFilters();
+  const params  = filtersToParams(filters);
+  window.location.href = `/api/export/image-list?${params}`;
+});
+
+document.getElementById('btn-export-ignore').addEventListener('click', () => {
+  window.location.href = '/api/export/ignore-list';
+});
+
+// ── Sort header indicators ────────────────────────────────────────────────
+function renderSortHeaders() {
+  document.querySelectorAll('thead th.sortable').forEach(th => {
+    const col  = th.dataset.sort;
+    const icon = th.querySelector('.sort-icon');
+    if (col === state.sortCol) {
+      th.classList.add('sort-active');
+      icon.textContent = state.sortDir === 'asc' ? '↑' : '↓';
+    } else {
+      th.classList.remove('sort-active');
+      icon.textContent = '⬍';
+    }
+  });
+}
+
+// Store page items for detail drawer
+const _origLoadImages = loadImages;
+async function loadImagesWithCache(page = 1) {
+  state.page = page;
+  const filters = getFilters();
+  const incIgn  = document.getElementById('f-ignored').checked ? 'true' : 'false';
+  const extra   = {
+    page, per_page: state.perPage, include_ignored: incIgn,
+    ...(state.sortCol ? { sort_by: state.sortCol, sort_dir: state.sortDir } : {}),
+  };
+  const params  = filtersToParams(filters, extra);
+  const tbody   = document.getElementById('img-tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+  try {
+    const data = await api(`/api/images?${params}`);
+    state.total     = data.total;
+    state.pages     = data.pages;
+    state.pageItems = data.items;  // cache for detail drawer
+    renderTable(data.items);
+    renderPagination(data.total, data.page, data.pages, data.per_page);
+    renderSortHeaders();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+  }
+}
+// Override loadImages with the caching version
+window.loadImages = loadImagesWithCache;
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.getElementById('detail-drawer').classList.remove('open');
+    document.getElementById('log-console').classList.remove('open');
+    _selMenu.classList.remove('open');
+    return;
+  }
+  // Ctrl+A → select all filtered
+  if (e.ctrlKey && e.key === 'a' && state.currentTab === 'images') {
+    e.preventDefault();
+    selectAllFiltered();
+    return;
+  }
+  // Ctrl+D → deselect all
+  if (e.ctrlKey && e.key === 'd' && state.currentTab === 'images') {
+    e.preventDefault();
+    deselectAll();
+    return;
+  }
+});
+
+// ── Run name input wiring ─────────────────────────────────────────────────
+document.getElementById('btn-run-gen').addEventListener('click', () => {
+  document.getElementById('run-name').value = generateRunName();
+});
+
+// Set a default run name on page load
+document.getElementById('run-name').value = generateRunName();
+
+// Wire f-run filter to reload images
+document.getElementById('f-run').addEventListener('change', () => {
+  loadImages(1);
+});
+
+// Start
+window.loadImages = loadImagesWithCache;
+init();
+</script>

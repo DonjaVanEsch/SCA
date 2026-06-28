@@ -733,6 +733,13 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
 
     uses_modules = _parse(lang_ver) >= _GO_MODULES_MIN
 
+    # Pre-module framework versions can't resolve transitive deps under Go modules
+    # (broken module paths, missing go.mod, etc.) — skip them entirely.
+    if (fw_name, fw_major) in _INCOMPATIBLE_FW and uses_modules:
+        if out.exists():
+            shutil.rmtree(out)
+        return False
+
     # ── Resolve framework version ──────────────────────────────────────────
     fw_mod      = _fw_module(fw_name, fw_major)
     fw_resolved = ""  # go.mod require line fragment: "module version"
