@@ -29,6 +29,11 @@ Filters:
   -c, --library LIB         Filter by crypto library      (e.g. cryptography, PyNaCl)
   -C, --library-version V   Filter by library version     (e.g. 47.0, 1.x)
 
+List / ignore files:
+  --image-list FILE         Path to a text file with one context path per line.
+                            Only images whose path appears in the file are included.
+  --ignore-list FILE        Path to a text file with context paths or image tags to skip.
+
 Version wildcard:
   Use 'x' in place of a version part to match all values at that position.
     3.x   -> any Python 3.x (3.9, 3.10, 3.11 ...)
@@ -77,6 +82,30 @@ def _version_matches(actual, pattern):
     if "x" in pattern:
         return actual.startswith(pattern[: pattern.index("x")])
     return actual == pattern
+
+
+def _load_path_set(filepath: str) -> set:
+    """Read a text file; return a set of normalised path strings (forward slashes)."""
+    p = Path(filepath)
+    if not p.exists():
+        print(f"Error: file not found: {filepath}")
+        sys.exit(1)
+    lines = p.read_text(encoding="utf-8").splitlines()
+    return {line.strip().replace("\\", "/") for line in lines if line.strip()}
+
+
+def _filter_by_list(entries: list, path_set: set) -> list:
+    """Keep only entries whose relative context path appears in path_set."""
+    return [e for e in entries if e["path"].replace("\\", "/") in path_set]
+
+
+def _filter_by_ignore(entries: list, ignore_set: set) -> list:
+    """Remove entries whose path or image tag appears in ignore_set."""
+    return [
+        e for e in entries
+        if e["path"].replace("\\", "/") not in ignore_set
+        and _image_tag(e) not in ignore_set
+    ]
 
 
 def _collect(base):
@@ -172,11 +201,12 @@ def _print_summary(entries):
 
 def _image_tag(e):
     """Deterministic, Docker-legal image name derived from a context entry."""
-    fw = e["framework"].lower().replace("/", "_")
+    fw  = e["framework"].lower().replace("/", "_")
+    lib = e["library"].lower().replace("/", "_")
     return (
         f"pqc-{e['language']}-{e['lang_ver']}"
         f"-{fw}-{e['fw_ver']}"
-        f"-{e['library'].lower()}-{e['lib_ver']}"
+        f"-{lib}-{e['lib_ver']}"
     )
 
 
@@ -220,22 +250,25 @@ def _confirm(verb, n, yes):
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-def _do_build(entries, no_cache=False, skip_existing=False):
-    """Build a Docker image for every entry. Returns {tag: bool} results."""
+def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print):
+    """Build a Docker image for every entry.
+
+    Returns {tag: {"success": bool, "output": str, "elapsed": float, "skipped": bool}}.
+    """
     n = len(entries)
     pad = len(str(n))
     note = "  (--no-cache)" if no_cache else ""
-    print(f"\nBuilding {n:,} image(s){note} ...\n")
+    log_fn(f"\nBuilding {n:,} image(s){note} ...\n")
     results = {}
 
     for i, e in enumerate(entries, 1):
         tag     = _image_tag(e)
         context = str(PROJECT_ROOT / e["path"])
-        print(f"[{i:{pad}}/{n}] {tag}", flush=True)
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
         if skip_existing and _image_exists(tag):
-            print(f"         SKIPPED  (image already exists)")
-            results[tag] = True
+            log_fn(f"         SKIPPED  (image already exists)")
+            results[tag] = {"success": True, "output": "", "elapsed": 0.0, "skipped": True}
             continue
 
         cmd = ["docker", "build", "-t", tag]
@@ -243,41 +276,47 @@ def _do_build(entries, no_cache=False, skip_existing=False):
             cmd.append("--no-cache")
         cmd.append(context)
 
-        t0   = time.monotonic()
-        proc = subprocess.run(
+        t0      = time.monotonic()
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        proc    = subprocess.run(
             cmd,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        elapsed = time.monotonic() - t0
+        elapsed  = time.monotonic() - t0
+        finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        output   = (proc.stderr or proc.stdout or "").strip()
 
         if proc.returncode == 0:
-            print(f"         OK  ({elapsed:.1f}s)")
-            results[tag] = True
+            log_fn(f"         OK  ({elapsed:.1f}s)")
+            results[tag] = {"success": True,  "output": output,
+                            "elapsed": elapsed, "skipped": False,
+                            "started_at": started, "finished_at": finished}
         else:
-            print(f"         FAILED  ({elapsed:.1f}s)")
-            output = (proc.stderr or proc.stdout or "").strip()
+            log_fn(f"         FAILED  ({elapsed:.1f}s)")
             for line in output.splitlines()[-15:]:
-                print(f"         | {line}")
-            results[tag] = False
+                log_fn(f"         | {line}")
+            results[tag] = {"success": False, "output": output,
+                            "elapsed": elapsed, "skipped": False,
+                            "started_at": started, "finished_at": finished}
 
-    ok   = sum(1 for v in results.values() if v)
+    ok   = sum(1 for v in results.values() if v["success"])
     fail = n - ok
-    print(f"\nBuild complete: {ok} succeeded, {fail} failed.")
+    log_fn(f"\nBuild complete: {ok} succeeded, {fail} failed.")
     return results
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
-def _do_run(entries, build_results=None):
+def _do_run(entries, build_results=None, log_fn=print):
     """Start a detached container for every entry.
 
-    build_results: dict {tag: bool} from _do_build; entries whose build
+    build_results: dict {tag: result_dict} from _do_build; entries whose build
     failed are automatically skipped.  Pass None to run without a preceding
     build step (images must already exist in that case).
     """
     n   = len(entries)
     pad = len(str(n))
-    print(f"\nStarting {n:,} container(s) ...\n")
+    log_fn(f"\nStarting {n:,} container(s) ...\n")
 
     started = []   # [(name, url)]
     failed  = []
@@ -287,15 +326,15 @@ def _do_run(entries, build_results=None):
         name = tag   # container name == image tag
 
         # Skip entries whose build step failed
-        if build_results is not None and not build_results.get(tag):
-            print(f"[{i:{pad}}/{n}] {name}")
-            print(f"         SKIPPED  (build failed)")
+        if build_results is not None and not build_results.get(tag, {}).get("success"):
+            log_fn(f"[{i:{pad}}/{n}] {name}")
+            log_fn(f"         SKIPPED  (build failed)")
             continue
 
         # Without a preceding build, verify the image exists
         if build_results is None and not _image_exists(tag):
-            print(f"[{i:{pad}}/{n}] {name}")
-            print(f"         NOT FOUND  (run --build first)")
+            log_fn(f"[{i:{pad}}/{n}] {name}")
+            log_fn(f"         NOT FOUND  (run --build first)")
             failed.append(name)
             continue
 
@@ -307,48 +346,48 @@ def _do_run(entries, build_results=None):
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
-        print(f"[{i:{pad}}/{n}] {name}", flush=True)
+        log_fn(f"[{i:{pad}}/{n}] {name}")
 
         if proc.returncode != 0:
-            print(f"         FAILED")
+            log_fn(f"         FAILED")
             for line in proc.stderr.strip().splitlines()[-5:]:
-                print(f"         | {line}")
+                log_fn(f"         | {line}")
             failed.append(name)
             continue
 
         port = _get_host_port(name)
         url  = f"http://localhost:{port}"
-        print(f"         {url}")
+        log_fn(f"         {url}")
         started.append((name, url))
 
     # ── Summary table ─────────────────────────────────────────────────────────
     if started:
         name_w = max(len(nm) for nm, _ in started)
-        print(f"\nRunning ({len(started)}):")
-        print(f"  {'Container':<{name_w}}  URL")
-        print(f"  {'-' * name_w}  ---")
+        log_fn(f"\nRunning ({len(started)}):")
+        log_fn(f"  {'Container':<{name_w}}  URL")
+        log_fn(f"  {'-' * name_w}  ---")
         for nm, url in started:
-            print(f"  {nm:<{name_w}}  {url}")
+            log_fn(f"  {nm:<{name_w}}  {url}")
 
     if failed:
-        print(f"\nFailed to start ({len(failed)}): {', '.join(failed)}")
+        log_fn(f"\nFailed to start ({len(failed)}): {', '.join(failed)}")
 
 
 # ── Stop ──────────────────────────────────────────────────────────────────────
 
-def _do_stop(entries):
+def _do_stop(entries, log_fn=print):
     """Stop and remove the container for every entry."""
     n   = len(entries)
     pad = len(str(n))
-    print(f"\nStopping {n:,} container(s) ...\n")
+    log_fn(f"\nStopping {n:,} container(s) ...\n")
 
-    stopped = []
+    stopped     = []
     not_running = []
-    failed  = []
+    failed      = []
 
     for i, e in enumerate(entries, 1):
         name = _image_tag(e)
-        print(f"[{i:{pad}}/{n}] {name}", flush=True)
+        log_fn(f"[{i:{pad}}/{n}] {name}")
 
         proc = subprocess.run(
             ["docker", "rm", "-f", name],
@@ -356,17 +395,17 @@ def _do_stop(entries):
         )
 
         if proc.returncode == 0:
-            print(f"         STOPPED")
+            log_fn(f"         STOPPED")
             stopped.append(name)
         else:
             err = proc.stderr.strip()
             if "No such container" in err:
-                print(f"         NOT RUNNING")
+                log_fn(f"         NOT RUNNING")
                 not_running.append(name)
             else:
-                print(f"         FAILED")
+                log_fn(f"         FAILED")
                 for line in err.splitlines()[-3:]:
-                    print(f"         | {line}")
+                    log_fn(f"         | {line}")
                 failed.append(name)
 
     parts = []
@@ -376,10 +415,10 @@ def _do_stop(entries):
         parts.append(f"{len(not_running)} not running")
     if failed:
         parts.append(f"{len(failed)} failed")
-    print(f"\nDone: {', '.join(parts)}.")
+    log_fn(f"\nDone: {', '.join(parts)}.")
 
 
-def _do_stop_all():
+def _do_stop_all(log_fn=print):
     """Stop and remove every container whose name starts with 'pqc-'."""
     proc = subprocess.run(
         ["docker", "ps", "-a", "--filter", "name=pqc-", "--format", "{{.Names}}"],
@@ -389,53 +428,61 @@ def _do_stop_all():
              if n.strip().startswith("pqc-")]
 
     if not names:
-        print("No PQC containers are running.")
+        log_fn("No PQC containers are running.")
         return
 
     n   = len(names)
     pad = len(str(n))
-    print(f"\nStopping all {n:,} PQC container(s) ...\n")
+    log_fn(f"\nStopping all {n:,} PQC container(s) ...\n")
 
     stopped = 0
     for i, name in enumerate(names, 1):
-        print(f"[{i:{pad}}/{n}] {name}", flush=True)
+        log_fn(f"[{i:{pad}}/{n}] {name}")
         r = subprocess.run(
             ["docker", "rm", "-f", name],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if r.returncode == 0:
-            print(f"         STOPPED")
+            log_fn(f"         STOPPED")
             stopped += 1
         else:
-            print(f"         FAILED")
+            log_fn(f"         FAILED")
             for line in r.stderr.strip().splitlines()[-3:]:
-                print(f"         | {line}")
+                log_fn(f"         | {line}")
 
-    print(f"\nDone: {stopped}/{n} stopped.")
+    log_fn(f"\nDone: {stopped}/{n} stopped.")
 
 
 # ── Test ─────────────────────────────────────────────────────────────────────
 
-def _do_test(entries, build_results=None):
-    """Start each container, test / and /version, stop it. Returns {tag: bool}."""
+def _do_test(entries, build_results=None, log_fn=print):
+    """Start each container, test / and /version, stop it.
+
+    Returns {tag: {"success": bool, "root_ok": bool, "version_ok": bool,
+                   "error": str, "version_data": dict|None}}.
+    """
     n   = len(entries)
     pad = len(str(n))
-    print(f"\nTesting {n:,} image(s) ...\n")
+    log_fn(f"\nTesting {n:,} image(s) ...\n")
     results = {}
 
     for i, e in enumerate(entries, 1):
         tag  = _image_tag(e)
         name = tag
-        print(f"[{i:{pad}}/{n}] {tag}", flush=True)
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
-        if build_results is not None and not build_results.get(tag):
-            print(f"         SKIP  (build failed)")
-            results[tag] = False
+        if build_results is not None and not build_results.get(tag, {}).get("success"):
+            log_fn(f"         SKIP  (build failed)")
+            results[tag] = {"success": False, "root_ok": False,
+                            "version_ok": False, "error": "build failed",
+                            "version_data": None}
             continue
 
         if not _image_exists(tag):
-            print(f"         SKIP  (not built)")
-            results[tag] = False
+            log_fn(f"         SKIP  (not built)")
+            results[tag] = {"success": False, "root_ok": False,
+                            "version_ok": False, "error": "image not found",
+                            "version_data": None}
             continue
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
@@ -445,47 +492,66 @@ def _do_test(entries, build_results=None):
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if proc.returncode != 0:
-            print(f"         FAIL  (container did not start)")
+            log_fn(f"         FAIL  (container did not start)")
             for line in proc.stderr.strip().splitlines()[-3:]:
-                print(f"         | {line}")
-            results[tag] = False
+                log_fn(f"         | {line}")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            results[tag] = {"success": False, "root_ok": False,
+                            "version_ok": False, "error": "container start failed",
+                            "version_data": None}
             continue
 
-        port = _get_host_port(name)
-        ok   = True
-        fail_reason = ""
+        port        = _get_host_port(name)
+        root_ok     = False
+        version_ok  = False
+        version_data = None
+        fail_reason  = ""
 
-        for path, check in [("/", lambda d: d.get("message") == "Hello World"),
+        for path, check in [("/",        lambda d: d.get("message") == "Hello World"),
                              ("/version", lambda d: isinstance(d, dict) and len(d) > 0)]:
             passed = False
+            last_data = None
             for _ in range(20):
                 try:
                     with urllib.request.urlopen(
                         f"http://localhost:{port}{path}", timeout=2
                     ) as r:
-                        data = json.loads(r.read().decode())
-                        if check(data):
+                        last_data = json.loads(r.read().decode())
+                        if check(last_data):
                             passed = True
                     break
                 except Exception:
                     time.sleep(0.5)
+
+            if path == "/":
+                root_ok = passed
+            else:
+                version_ok   = passed
+                version_data = last_data
+
             if not passed:
-                ok = False
                 fail_reason = path
                 break
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
+        ok = root_ok and version_ok
         if ok:
-            print(f"         PASS")
+            log_fn(f"         PASS")
         else:
-            print(f"         FAIL  ({fail_reason} did not respond correctly)")
-        results[tag] = ok
+            log_fn(f"         FAIL  ({fail_reason} did not respond correctly)")
 
-    passed = sum(1 for v in results.values() if v)
+        results[tag] = {
+            "success":      ok,
+            "root_ok":      root_ok,
+            "version_ok":   version_ok,
+            "error":        fail_reason if not ok else "",
+            "version_data": version_data,
+        }
+
+    passed = sum(1 for v in results.values() if v["success"])
     failed = len(results) - passed
-    print(f"\nTest complete: {passed} passed, {failed} failed.")
+    log_fn(f"\nTest complete: {passed} passed, {failed} failed.")
     return results
 
 
@@ -506,38 +572,38 @@ def _remove_stopped_containers(tag: str) -> int:
     return len(ids)
 
 
-def _do_remove(entries):
+def _do_remove(entries, log_fn=print):
     """Remove stopped containers and the Docker image for every entry (docker rmi)."""
     n   = len(entries)
     pad = len(str(n))
-    print(f"\nRemoving {n:,} image(s) ...\n")
+    log_fn(f"\nRemoving {n:,} image(s) ...\n")
 
     removed = 0
     for i, e in enumerate(entries, 1):
         tag = _image_tag(e)
-        print(f"[{i:{pad}}/{n}] {tag}", flush=True)
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
         if not _image_exists(tag):
-            print(f"         NOT FOUND")
+            log_fn(f"         NOT FOUND")
             continue
 
         n_containers = _remove_stopped_containers(tag)
         if n_containers:
-            print(f"         CONTAINERS  ({n_containers} stopped container(s) removed)")
+            log_fn(f"         CONTAINERS  ({n_containers} stopped container(s) removed)")
 
         proc = subprocess.run(
             ["docker", "rmi", tag],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if proc.returncode == 0:
-            print(f"         REMOVED")
+            log_fn(f"         REMOVED")
             removed += 1
         else:
-            print(f"         FAILED")
+            log_fn(f"         FAILED")
             for line in proc.stderr.strip().splitlines()[-3:]:
-                print(f"         | {line}")
+                log_fn(f"         | {line}")
 
-    print(f"\nDone: {removed}/{n} removed.")
+    log_fn(f"\nDone: {removed}/{n} removed.")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -631,6 +697,16 @@ examples:
     filters.add_argument("-C", "--library-version",   metavar="LIBVER",dest="library_version",
                          help="Library version         (e.g. 47.0, 1.x, 3.2x)")
 
+    lists = p.add_argument_group("lists")
+    lists.add_argument(
+        "--image-list", metavar="FILE", dest="image_list",
+        help="Text file with one context path per line; only these images are included",
+    )
+    lists.add_argument(
+        "--ignore-list", metavar="FILE", dest="ignore_list",
+        help="Text file with context paths or image tags to skip",
+    )
+
     return p
 
 
@@ -671,6 +747,14 @@ def main():
         args.framework_version, args.library, args.library_version,
     ])
     entries = _filter(all_entries, args)
+
+    if args.image_list:
+        path_set = _load_path_set(args.image_list)
+        entries  = _filter_by_list(entries, path_set)
+
+    if args.ignore_list:
+        ignore_set = _load_path_set(args.ignore_list)
+        entries    = _filter_by_ignore(entries, ignore_set)
 
     if not entries:
         print("No image contexts match the given filters.")
