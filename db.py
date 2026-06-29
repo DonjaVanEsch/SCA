@@ -123,9 +123,11 @@ CREATE TABLE IF NOT EXISTS images (
 
 -- ── Run labels ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS runs (
-    id         INTEGER PRIMARY KEY,
-    name       TEXT    UNIQUE NOT NULL,
-    created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+    id          INTEGER PRIMARY KEY,
+    name        TEXT    UNIQUE NOT NULL,
+    created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+    status      TEXT    NOT NULL DEFAULT 'running',
+    finished_at TEXT
 );
 
 -- ── Result tables ──────────────────────────────────────────────────────────
@@ -241,6 +243,8 @@ def init_db() -> None:
         for ddl in [
             "ALTER TABLE build_results ADD COLUMN run_id INTEGER REFERENCES runs(id)",
             "ALTER TABLE test_results  ADD COLUMN run_id INTEGER REFERENCES runs(id)",
+            "ALTER TABLE runs ADD COLUMN status TEXT NOT NULL DEFAULT 'running'",
+            "ALTER TABLE runs ADD COLUMN finished_at TEXT",
         ]:
             try:
                 conn.execute(ddl)
@@ -629,9 +633,19 @@ def get_runs() -> list[dict]:
     """Return all runs ordered newest first."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at FROM runs ORDER BY created_at DESC"
+            "SELECT id, name, created_at, status, finished_at FROM runs ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def update_run_status(run_id: int, status: str) -> None:
+    """Mark a run as 'completed' or 'interrupted', recording the finish time."""
+    finished_at = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE runs SET status=?, finished_at=? WHERE id=?",
+            (status, finished_at, run_id),
+        )
 
 
 def get_cascading_filter_options(active: dict) -> dict:
@@ -866,7 +880,7 @@ def get_test_reports(filters: dict | None = None, limit: int = 500) -> list[dict
             SELECT
                 t.id, t.success, t.root_ok, t.version_ok,
                 t.error_msg, t.response_data, t.tested_at,
-                r.name AS run_name,
+                r.name AS run_name, r.status AS run_status,
                 d.language, d.lang_version, d.framework, d.fw_version,
                 d.library, d.lib_version, d.image_tag,
                 d.fw_release_date, d.lib_release_date,
@@ -904,7 +918,7 @@ def get_build_reports(filters: dict | None = None, limit: int = 500) -> list[dic
         rows = conn.execute(f"""
             SELECT
                 b.id, b.success, b.output, b.started_at, b.finished_at,
-                r.name AS run_name,
+                r.name AS run_name, r.status AS run_status,
                 d.language, d.lang_version, d.framework, d.fw_version,
                 d.library, d.lib_version, d.image_tag
             FROM build_results b

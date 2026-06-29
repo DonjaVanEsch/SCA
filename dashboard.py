@@ -34,7 +34,8 @@ def _new_job(action: str) -> tuple[str, queue.Queue]:
     job_id = str(uuid.uuid4())
     q: queue.Queue = queue.Queue()
     with _jobs_lock:
-        _jobs[job_id] = {"q": q, "done": False, "action": action}
+        _jobs[job_id] = {"q": q, "done": False, "action": action,
+                         "stop_event": threading.Event()}
     return job_id, q
 
 
@@ -182,32 +183,30 @@ def action():
         q.put(str(msg))
 
     def run():
-        run_id = db.get_or_create_run(run_name) if run_name else None
+        run_id     = db.get_or_create_run(run_name) if run_name else None
+        stop_event = _jobs[job_id]["stop_event"]
         try:
             if action_str == "build":
-                results = manager._do_build(
-                    entries,
-                    no_cache=bool(opts.get("no_cache")),
-                    skip_existing=bool(opts.get("skip_existing")),
-                    log_fn=log,
-                )
-                for e in entries:
-                    tag = manager._image_tag(e)
-                    r   = results.get(tag, {})
+                def _save_build(entry, r):
                     db.save_build_result(
-                        e["_id"], r.get("success", False),
+                        entry["_id"], r.get("success", False),
                         r.get("output", ""),
                         r.get("started_at"), r.get("finished_at"),
                         run_id,
                     )
+                manager._do_build(
+                    entries,
+                    no_cache=bool(opts.get("no_cache")),
+                    skip_existing=bool(opts.get("skip_existing")),
+                    log_fn=log,
+                    save_fn=_save_build,
+                    stop_event=stop_event,
+                )
 
             elif action_str == "test":
-                results = manager._do_test(entries, log_fn=log)
-                for e in entries:
-                    tag = manager._image_tag(e)
-                    r   = results.get(tag, {})
+                def _save_test(entry, r):
                     db.save_test_result(
-                        e["_id"],
+                        entry["_id"],
                         r.get("success",    False),
                         r.get("root_ok",    False),
                         r.get("version_ok", False),
@@ -215,6 +214,12 @@ def action():
                         r.get("version_data"),
                         run_id,
                     )
+                manager._do_test(
+                    entries,
+                    log_fn=log,
+                    save_fn=_save_test,
+                    stop_event=stop_event,
+                )
 
             elif action_str == "remove":
                 manager._do_remove(entries, log_fn=log)
@@ -225,6 +230,14 @@ def action():
         except Exception as exc:
             log(f"ERROR: {exc}")
         finally:
+            if stop_event.is_set():
+                log("[CANCELLED] Run was interrupted by the user.")
+            if run_id is not None:
+                status = "interrupted" if stop_event.is_set() else "completed"
+                try:
+                    db.update_run_status(run_id, status)
+                except Exception:
+                    pass
             _finish_job(job_id)
 
     threading.Thread(target=run, daemon=True).start()
@@ -246,6 +259,19 @@ def stop_all():
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"job_id": job_id})
+
+
+# ── Cancel job ───────────────────────────────────────────────────────────────
+
+@app.route("/api/cancel/<job_id>", methods=["POST"])
+def cancel_job(job_id: str):
+    """Signal a running build/test job to stop after the current image."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    job["stop_event"].set()
+    return jsonify({"ok": True})
 
 
 # ── Ignore list ───────────────────────────────────────────────────────────────
@@ -273,6 +299,10 @@ def stream(job_id: str):
             return
 
         q: queue.Queue = job["q"]
+        # Reconnect case: job finished and queue already drained by previous connection
+        if job["done"] and q.empty():
+            yield "data: [DONE]\n\n"
+            return
         while True:
             try:
                 line = q.get(timeout=25)
@@ -283,6 +313,10 @@ def stream(job_id: str):
                 escaped = line.replace("\n", "\ndata: ")
                 yield f"data: {escaped}\n\n"
             except queue.Empty:
+                # Job may have finished while we were waiting for the next chunk
+                if job["done"]:
+                    yield "data: [DONE]\n\n"
+                    break
                 yield ": keepalive\n\n"    # keep connection alive
 
     return Response(
