@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"runtime"
 	"runtime/debug"
 	"github.com/gofiber/fiber/v2"
@@ -23,16 +24,25 @@ func modVersion(path string) string {
 	return "unknown"
 }
 
+func jsonSend(c *fiber.Ctx, v interface{}) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	c.Set("Content-Type", "application/json")
+	return c.Send(b)
+}
+
 func main() {
 	app := fiber.New()
 	app.Get("/", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"message": "Hello World"})
+		return jsonSend(c, map[string]interface{}{"message": "Hello World"})
 	})
 	app.Get("/version", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"language":  fiber.Map{"name": "Go", "version": runtime.Version()},
-			"framework": fiber.Map{"name": "Fiber", "version": modVersion("github.com/gofiber/fiber/v2")},
-			"library":   fiber.Map{"name": "tink-go", "version": modVersion("github.com/tink-crypto/tink-go/v2")},
+		return jsonSend(c, map[string]interface{}{
+			"language":  map[string]interface{}{"name": "Go", "version": runtime.Version()},
+			"framework": map[string]interface{}{"name": "Fiber", "version": modVersion("github.com/gofiber/fiber/v2")},
+			"library":   map[string]interface{}{"name": "tink-go", "version": modVersion("github.com/tink-crypto/tink-go/v2")},
 		})
 	})
 	app.Listen(":8000")
