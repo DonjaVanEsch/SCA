@@ -47,7 +47,15 @@ SCA/
 │   ├── registry python.json        # Python matrix: lang versions, frameworks, libs, compat rules
 │   └── registry go.json            # Go matrix: lang versions, frameworks, libs, compat rules
 │
+├── static/
+│   └── dashboard.html              # Single-page dashboard UI (served by dashboard.py)
+│
 ├── manager.py                      # CLI: build / run / test / remove Docker images
+│                                   # Also exposes _do_build / _do_test / _do_remove /
+│                                   # _do_stop / _do_stop_all for use by dashboard.py
+├── db.py                           # SQLite database layer (pqc_manager.db)
+├── dashboard.py                    # Flask web dashboard (port 5050)
+├── pqc_manager.db                  # SQLite database (auto-created, not committed)
 └── CONTEXT.md                      # This file
 ```
 
@@ -105,6 +113,119 @@ python manager.py --build --language python --framework Flask --library cryptogr
 python manager.py --test  --language go    --framework Gin    --library-version 1.x
 python manager.py --list
 ```
+
+In addition to the CLI interface, `manager.py` exposes internal worker functions used by the dashboard:
+
+| Function | Description |
+|----------|-------------|
+| `_do_build(entries, no_cache, skip_existing, log_fn, save_fn, stop_event)` | Build Docker images; calls `save_fn(entry, result)` per image |
+| `_do_test(entries, log_fn, save_fn, stop_event)` | Start container → hit `/` and `/version` → stop; calls `save_fn` per image |
+| `_do_remove(entries, log_fn)` | `docker rmi` each image |
+| `_do_stop(entries, log_fn)` | Stop any running containers for the matched images |
+| `_do_stop_all(log_fn)` | Stop all `pqc-*` containers |
+
+`stop_event` is a `threading.Event`; set it to cancel the job after the current image finishes.
+
+### 5. `db.py` — Database layer
+
+Manages a SQLite database (`pqc_manager.db`) with the following schema:
+
+**Reference tables** (loaded from `registry *.json` via `load_registry()`):
+
+| Table | Contents |
+|-------|----------|
+| `languages` | Programming languages (`python`, `go`, …) |
+| `lang_versions` | Language versions per language |
+| `frameworks` | Web frameworks per language |
+| `fw_versions` | Framework major versions with release date + compatibility JSON |
+| `libraries` | Crypto libraries per language |
+| `lib_versions` | Library versions with release date + compatibility JSON |
+
+**Image table** (synced from `images/` via `sync_images()`):
+
+| Table | Contents |
+|-------|----------|
+| `images` | One row per Dockerfile; FKs into reference tables; `ignored` flag + reason |
+
+**Run tracking** (group build/test sessions with a label):
+
+| Table | Contents |
+|-------|----------|
+| `runs` | Named run sessions with `status` (`running` / `completed` / `interrupted`) and timestamps |
+
+**Result tables**:
+
+| Table | Contents |
+|-------|----------|
+| `build_results` | Latest build outcome per image (1:1 with `images`); linked to a `run` |
+| `test_results` | Full test-run history per image (1:N); `root_ok`, `version_ok`, `response_data` (JSON), linked to a `run` |
+
+**Convenience view** `image_details` — flat join of all tables; used for all queries in the dashboard.
+
+Key functions:
+
+```python
+db.init_db()                          # Create schema + view (idempotent)
+db.load_registry()                    # Parse registry JSON → populate reference tables
+db.sync_images()                      # Walk images/ → upsert image rows; returns (total, inserted, removed)
+db.get_images(filters, page, per_page, include_ignored, sort_by, sort_dir)
+db.get_filter_options()               # All distinct values per dimension
+db.get_cascading_filter_options(active)  # Cascaded options (child narrows on parent selection)
+db.get_all_ids_for_filter(filters, include_ignored)
+db.get_images_by_ids(image_ids)
+db.save_build_result(image_id, success, output, started_at, finished_at, run_id)
+db.save_test_result(image_id, success, root_ok, version_ok, error_msg, response_data, run_id)
+db.set_ignored(image_ids, ignored, reason)
+db.get_or_create_run(name)            # Returns run_id
+db.update_run_status(run_id, status)
+db.get_stats()                        # Aggregate counts for dashboard header
+db.get_test_reports(filters, limit)
+db.get_build_reports(filters, limit)
+db.get_pending_images(filters, limit) # Images with NULL build or test result
+```
+
+### 6. `dashboard.py` — Web dashboard
+
+A Flask server on **port 5050** that provides a single-page UI backed by REST + SSE APIs.
+
+**Start it with:**
+```bash
+python dashboard.py
+# → http://localhost:5050
+```
+
+On first start it auto-runs `db.init_db()`, `db.load_registry()`, and `db.sync_images()`.
+
+**API endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/` | Serve `static/dashboard.html` |
+| `POST` | `/api/init` | Reload registry + re-sync images from disk |
+| `POST` | `/api/sync` | Re-sync images only (no registry reload) |
+| `GET`  | `/api/stats` | Aggregate counts (total, built OK, tested OK, …) |
+| `GET`  | `/api/filters` | Filter options; cascades if query params are present |
+| `GET`  | `/api/reference` | Full reference tables for the info panel |
+| `GET`  | `/api/runs` | All runs ordered newest first |
+| `GET`  | `/api/images` | Paginated image list with build/test status; supports filters + sorting |
+| `GET`  | `/api/images/ids` | All image IDs matching current filters (for select-all) |
+| `POST` | `/api/action` | Start a job: `build`, `test`, `remove`, `stop`, or `mark_success` |
+| `POST` | `/api/stop-all` | Stop all `pqc-*` containers |
+| `POST` | `/api/cancel/<job_id>` | Signal a running job to stop after the current image |
+| `POST` | `/api/ignore` | Set/unset the ignored flag on a set of images |
+| `GET`  | `/api/stream/<job_id>` | SSE stream of live log lines from a running job |
+| `GET`  | `/api/reports/test` | Filtered test results (up to 2 000 rows) |
+| `GET`  | `/api/reports/build` | Filtered build results (up to 2 000 rows) |
+| `GET`  | `/api/reports/pending` | Images with no build or test result yet |
+| `GET`  | `/api/export/ignore-list` | Download ignore list as plain text |
+| `GET`  | `/api/export/image-list` | Download filtered image paths as plain text |
+
+**Job system:**
+
+Each `POST /api/action` spawns a background thread and returns a `{"job_id": "..."}`.  
+The UI subscribes to `GET /api/stream/<job_id>` (SSE) to receive live log lines.  
+`POST /api/cancel/<job_id>` sets the job's `stop_event`, which causes the worker to stop after the current image.  
+The `run_name` field in the action body associates all results with a named `runs` row.
 
 ---
 
@@ -272,6 +393,8 @@ The version strings must be **runtime-detected** (not hardcoded) wherever possib
 python scripts/generate_images.py --lang python
 python scripts/generate_images.py --lang go
 
+# ── CLI (manager.py) ──────────────────────────────────────────────────────────
+
 # Build a filtered subset
 python manager.py --build --language python --framework Flask --library cryptography --library-version 44.0
 
@@ -280,6 +403,18 @@ python manager.py --test --language go --framework Gin
 
 # List all generated image paths
 python manager.py --list --language python
+
+# ── Web dashboard ─────────────────────────────────────────────────────────────
+
+# Start the dashboard (auto-initialises the database on first run)
+python dashboard.py
+# → http://localhost:5050
+
+# Re-load registry + re-sync images from the UI or via API:
+curl -X POST http://localhost:5050/api/init
+
+# Manually re-sync images (after adding new image contexts):
+curl -X POST http://localhost:5050/api/sync
 ```
 
 ---
@@ -294,3 +429,8 @@ python manager.py --list --language python
 | Multi-stage Go builds | Produces a ~5 MB scratch image; avoids Go toolchain overhead in runtime analysis |
 | Python Bullseye base for old crypto | cryptography < 36 and M2Crypto require OpenSSL 1.x which is only in Bullseye |
 | Registry JSON as single source of truth | All version ranges and compat rules are centralised; generation is purely mechanical |
+| SQLite for state (`pqc_manager.db`) | Zero-infrastructure persistence for build/test results, run labels, and ignore lists; WAL mode for concurrent dashboard reads + worker writes |
+| `image_details` view | Flat join used by all dashboard queries — keeps query code simple and all column names consistent |
+| SSE for live job output | Allows the dashboard to stream log lines from long-running build/test jobs without polling; connection kept alive with `: keepalive` comments every 25 s |
+| `stop_event` per job | Lets the dashboard cancel a build/test loop cleanly after the current image, without killing the thread |
+| Run labels | Groups build and test results under a named session so users can compare successive runs or filter reports to a specific experiment |

@@ -167,7 +167,7 @@ def action():
     opts       = data.get("options", {})
     run_name   = data.get("run_name", "")
 
-    if action_str not in ("build", "test", "remove", "stop"):
+    if action_str not in ("build", "test", "remove", "stop", "mark_success"):
         return jsonify({"error": f"Unknown action: {action_str}"}), 400
     if not image_ids:
         return jsonify({"error": "No image ids provided"}), 400
@@ -226,6 +226,21 @@ def action():
 
             elif action_str == "stop":
                 manager._do_stop(entries, log_fn=log)
+
+            elif action_str == "mark_success":
+                now = datetime.now(timezone.utc).isoformat()
+                total_imgs = len(rows)
+                for idx, row in enumerate(rows, 1):
+                    if stop_event.is_set():
+                        break
+                    img_id  = row["id"]
+                    img_tag = row["image_tag"]
+                    db.save_build_result(img_id, True,
+                                         "Manually marked as successful",
+                                         now, now, run_id)
+                    db.save_test_result(img_id, True, True, True,
+                                        "", None, run_id)
+                    log(f"[{idx}/{total_imgs}] {img_tag} — MARKED OK")
 
         except Exception as exc:
             log(f"ERROR: {exc}")
@@ -337,8 +352,20 @@ def test_reports():
         "language", "version", "framework",
         "framework_version", "library", "library_version", "success", "run",
     )}
-    limit = max(1, min(2000, int(request.args.get("limit", 500))))
-    return jsonify(db.get_test_reports(filters, limit))
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(500, int(request.args.get("per_page", 100))))
+    return jsonify(db.get_test_reports(filters, page, per_page))
+
+
+@app.route("/api/reports/pending")
+def pending_reports():
+    filters = {k: request.args.get(k, "") for k in (
+        "language", "version", "framework",
+        "framework_version", "library", "library_version",
+    )}
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(500, int(request.args.get("per_page", 100))))
+    return jsonify(db.get_pending_images(filters, page, per_page))
 
 
 @app.route("/api/reports/build")
@@ -347,8 +374,9 @@ def build_reports():
         "language", "version", "framework",
         "framework_version", "library", "library_version", "success", "run",
     )}
-    limit = max(1, min(2000, int(request.args.get("limit", 500))))
-    return jsonify(db.get_build_reports(filters, limit))
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(500, int(request.args.get("per_page", 100))))
+    return jsonify(db.get_build_reports(filters, page, per_page))
 
 
 # ── Export helpers ────────────────────────────────────────────────────────────
