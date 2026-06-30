@@ -857,8 +857,9 @@ def save_test_result(image_id: int, success: bool,
 
 # ── Reports ───────────────────────────────────────────────────────────────────
 
-def get_test_reports(filters: dict | None = None, limit: int = 500) -> list[dict]:
-    """Return recent test results joined with image metadata."""
+def get_test_reports(filters: dict | None = None,
+                     page: int = 1, per_page: int = 100) -> dict:
+    """Return paginated test results joined with image metadata."""
     filters   = filters or {}
     where_sql, params = _build_where(filters)
 
@@ -876,6 +877,14 @@ def get_test_reports(filters: dict | None = None, limit: int = 500) -> list[dict
         params.append(run_val)
 
     with _connect() as conn:
+        total = conn.execute(f"""
+            SELECT COUNT(*) FROM test_results t
+            JOIN image_details d ON d.id = t.image_id
+            LEFT JOIN runs r ON r.id = t.run_id
+            {where_sql} {run_filter}
+        """, params).fetchone()[0]
+
+        offset = (page - 1) * per_page
         rows = conn.execute(f"""
             SELECT
                 t.id, t.success, t.root_ok, t.version_ok,
@@ -890,14 +899,21 @@ def get_test_reports(filters: dict | None = None, limit: int = 500) -> list[dict
             LEFT JOIN runs r ON r.id = t.run_id
             {where_sql}
             {run_filter}
-            ORDER BY t.tested_at DESC
-            LIMIT ?
-        """, params + [limit]).fetchall()
-    return [dict(r) for r in rows]
+            ORDER BY d.language, d.lang_version, d.framework, d.fw_version,
+                     d.library, d.lib_version, t.tested_at DESC
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "items": [dict(r) for r in rows],
+    }
 
 
-def get_build_reports(filters: dict | None = None, limit: int = 500) -> list[dict]:
-    """Return recent build results joined with image metadata."""
+def get_build_reports(filters: dict | None = None,
+                      page: int = 1, per_page: int = 100) -> dict:
+    """Return paginated build results joined with image metadata."""
     filters   = filters or {}
     where_sql, params = _build_where(filters)
 
@@ -915,6 +931,14 @@ def get_build_reports(filters: dict | None = None, limit: int = 500) -> list[dic
         params.append(run_val)
 
     with _connect() as conn:
+        total = conn.execute(f"""
+            SELECT COUNT(*) FROM build_results b
+            JOIN image_details d ON d.id = b.image_id
+            LEFT JOIN runs r ON r.id = b.run_id
+            {where_sql} {run_filter}
+        """, params).fetchone()[0]
+
+        offset = (page - 1) * per_page
         rows = conn.execute(f"""
             SELECT
                 b.id, b.success, b.output, b.started_at, b.finished_at,
@@ -926,10 +950,46 @@ def get_build_reports(filters: dict | None = None, limit: int = 500) -> list[dic
             LEFT JOIN runs r ON r.id = b.run_id
             {where_sql}
             {run_filter}
-            ORDER BY b.finished_at DESC
-            LIMIT ?
-        """, params + [limit]).fetchall()
-    return [dict(r) for r in rows]
+            ORDER BY d.language, d.lang_version, d.framework, d.fw_version,
+                     d.library, d.lib_version
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "items": [dict(r) for r in rows],
+    }
+
+
+def get_pending_images(filters: dict | None = None,
+                       page: int = 1, per_page: int = 100) -> dict:
+    """Return paginated non-ignored images where build or test has no result yet."""
+    filters = filters or {}
+    where_sql, params = _build_where(filters)
+    connector = "AND" if where_sql else "WHERE"
+    where_sql = (f"{where_sql} {connector} "
+                 "(build_success IS NULL OR test_success IS NULL) AND ignored = 0")
+    with _connect() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM image_details {where_sql}", params
+        ).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        rows = conn.execute(f"""
+            SELECT id, image_tag, language, lang_version, framework, fw_version,
+                   library, lib_version, build_success, test_success, synced_at
+            FROM image_details
+            {where_sql}
+            ORDER BY language, lang_version, framework, fw_version, library, lib_version
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "items": [dict(r) for r in rows],
+    }
 
 
 def get_stats() -> dict:

@@ -375,6 +375,27 @@
     cursor: not-allowed
   }
 
+  #report-filter-panel {
+    width: 220px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding-bottom: 44px;
+  }
+
+  #report-main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   /* ── Main panel ─────────────────────────────────────────────────────────── */
   #main-panel {
     flex: 1;
@@ -543,7 +564,8 @@
   #table-wrap {
     flex: 1;
     overflow: auto;
-    min-height: 0
+    min-height: 0;
+    padding-bottom: 44px;
   }
 
   table {
@@ -772,10 +794,6 @@
     cursor: not-allowed
   }
 
-  /* ── Reports tab ────────────────────────────────────────────────────────── */
-  #tab-reports {
-    flex-direction: column
-  }
 
   #tab-reference {
     flex-direction: column;
@@ -827,15 +845,8 @@
   #report-table-wrap {
     flex: 1;
     overflow: auto;
-    min-height: 0
-  }
-
-  .report-filter {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    margin-left: auto;
-    flex-wrap: wrap
+    min-height: 0;
+    padding-bottom: 44px;
   }
 
   .report-filter select,
@@ -1303,6 +1314,21 @@
         <span id="sel-count">0 selected</span>
         <div class="action-sep"></div>
 
+        <!-- Select group -->
+        <div class="sel-menu-wrap">
+          <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
+          <div class="sel-menu" id="sel-menu">
+            <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
+            <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
+            <div class="sel-menu-sep"></div>
+            <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
+            <div class="sel-menu-sep"></div>
+            <div class="sel-menu-item" id="mnu-ignore">Ignore</div>
+            <div class="sel-menu-item" id="mnu-unignore">Unignore</div>
+          </div>
+        </div>
+        <div class="action-sep"></div>
+
         <!-- Docker group -->
         <div class="docker-group">
           <span class="docker-group-label">🐳 Docker</span>
@@ -1318,26 +1344,14 @@
             <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox" id="opt-no-cache"> no-cache</label>
             <label class="opt-label" title="Skip images that are already built"><input type="checkbox" id="opt-skip-existing"> skip-existing</label>
             <div class="action-sep"></div>
-            <label style="font-size:11px;color:var(--muted2)">Run</label>
-            <input id="run-name" class="filter-input" style="width:140px;padding:3px 7px" placeholder="auto">
-            <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate run name">↺</button>
-            <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Start</button>
-          </div>
-        </div>
-
-        <div class="action-sep"></div>
-        <div class="action-group">
-          <button class="btn btn-ghost btn-sm" id="btn-ignore" disabled>Ignore</button>
-          <button class="btn btn-ghost btn-sm" id="btn-unignore" disabled>Unignore</button>
-        </div>
-        <div class="action-sep"></div>
-        <div class="sel-menu-wrap">
-          <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
-          <div class="sel-menu" id="sel-menu">
-            <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
-            <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
-            <div class="sel-menu-sep"></div>
-            <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
+            <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
+              <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Run</label>
+              <input id="run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px" placeholder="auto">
+              <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate run name">↺</button>
+              <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Start</button>
+              <div class="action-sep"></div>
+              <button class="btn btn-success btn-sm" id="btn-mark-success" disabled title="Flag selected images as build + test successful and store in the current run">✓ Mark Successful</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1372,59 +1386,105 @@
 
   <!-- ── Reports tab ─────────────────────────────────────────────────── -->
   <div id="tab-reports" class="tab-panel">
-    <div class="panel-header">
-      <h2>Reports</h2>
-      <div class="sub-tabs">
-        <button class="sub-tab active" data-report="test">Test results</button>
-        <button class="sub-tab" data-report="build">Build results</button>
+
+    <!-- Report filter sidebar -->
+    <aside id="report-filter-panel">
+      <div class="filter-section">
+        <span class="filter-label">Filters</span>
+        <div class="filter-group">
+          <div class="filter-row">
+            <label>Language</label>
+            <select class="filter-select" id="rf-lang">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lang version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="rf-ver" placeholder="e.g. 1.25 or 1.2x">
+          </div>
+          <div class="filter-row">
+            <label>Framework</label>
+            <select class="filter-select" id="rf-fw">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>FW version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="rf-fwver" placeholder="e.g. 3 or 1.x">
+          </div>
+          <div class="filter-row">
+            <label>Library</label>
+            <select class="filter-select" id="rf-lib">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lib version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="rf-libver" placeholder="e.g. 44.0 or 4x">
+          </div>
+        </div>
+        <div class="filter-divider"></div>
+        <span class="filter-label" id="rf-options-label">Report options</span>
+        <div class="filter-group" id="rf-run-result-group">
+          <div class="filter-row">
+            <label>Run</label>
+            <select class="filter-select" id="rf-run">
+              <option value="">All runs</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Result</label>
+            <select class="filter-select" id="rf-result">
+              <option value="">All results</option>
+              <option value="1">Pass / OK</option>
+              <option value="0">Fail</option>
+            </select>
+          </div>
+        </div>
+        <div class="filter-actions">
+          <button class="btn btn-primary btn-sm" id="btn-load-reports" style="flex:1">Load</button>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-report-filter" style="flex:1">Clear</button>
+        </div>
       </div>
-      <div class="report-filter">
-        <select id="rf-lang">
-          <option value="">All languages</option>
-        </select>
-        <select id="rf-fw">
-          <option value="">All frameworks</option>
-        </select>
-        <select id="rf-lib">
-          <option value="">All libraries</option>
-        </select>
-        <select id="rf-run">
-          <option value="">All runs</option>
-        </select>
-        <select id="rf-result">
-          <option value="">All results</option>
-          <option value="1">Pass / OK</option>
-          <option value="0">Fail</option>
-        </select>
-        <button class="btn btn-primary btn-sm" id="btn-load-reports">Load</button>
+    </aside>
+
+    <!-- Report main panel -->
+    <div id="report-main-panel">
+      <div class="panel-header">
+        <h2>Reports</h2>
+        <div class="sub-tabs">
+          <button class="sub-tab active" data-report="test">Test results</button>
+          <button class="sub-tab" data-report="build">Build results</button>
+          <button class="sub-tab" data-report="pending">Pending</button>
+        </div>
       </div>
-    </div>
-    <div id="report-table-wrap">
-      <table id="report-table" style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead>
-          <tr>
-            <th
-              style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">
-            </th>
-            <th
-              style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
-              Image</th>
-            <th
-              style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
-              Detail</th>
-            <th
-              style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">
-              Date</th>
-          </tr>
-        </thead>
-        <tbody id="report-tbody">
-          <tr>
-            <td colspan="4" style="padding:32px;text-align:center;color:var(--muted)">Select filters and click Load</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
+      <div id="report-table-wrap">
+        <table id="report-table" style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">
+              </th>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
+                Image</th>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
+                Detail</th>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">
+                Date</th>
+            </tr>
+          </thead>
+          <tbody id="report-tbody">
+            <tr>
+              <td colspan="4" style="padding:32px;text-align:center;color:var(--muted)">Select filters and click Load</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- #report-main-panel -->
+  </div><!-- #tab-reports -->
 
   <!-- ── Reference tab ───────────────────────────────────────────────── -->
   <div id="tab-reference" class="tab-panel">
@@ -1812,7 +1872,7 @@
     const n = state.selected.size;
     document.getElementById('sel-count').textContent = `${n.toLocaleString()} selected`;
     const dis = n === 0;
-    ['act-build', 'act-test', 'act-remove', 'btn-start', 'btn-stop', 'btn-ignore', 'btn-unignore'].forEach(id => {
+    ['act-build', 'act-test', 'act-remove', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
       document.getElementById(id).disabled = dis;
     });
   }
@@ -1866,7 +1926,31 @@
   function generateRunName() {
     const now = new Date();
     const pad = n => String(n).padStart(2, '0');
-    return `run-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+
+    const parts = [
+      document.getElementById('f-lang').value.trim(),
+      document.getElementById('f-ver').value.trim(),
+      document.getElementById('f-fw').value.trim(),
+      document.getElementById('f-fwver').value.trim(),
+      document.getElementById('f-lib').value.trim(),
+      document.getElementById('f-libver').value.trim(),
+    ].filter(Boolean);
+    const prefix = parts.length > 0 ? parts.join('-') : 'run';
+    const base = `${prefix}-${date}`;
+
+    // Determine next sequence number from already-known runs
+    let maxSeq = 0;
+    const sel = document.getElementById('f-run');
+    if (sel) {
+      for (const opt of sel.options) {
+        if (opt.value.startsWith(base + '-')) {
+          const seq = parseInt(opt.value.slice(base.length + 1), 10);
+          if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+        }
+      }
+    }
+    return `${base}-${String(maxSeq + 1).padStart(3, '0')}`;
   }
 
   async function loadRuns() {
@@ -1933,6 +2017,20 @@
     }
 
     runNext(0);
+  }
+
+  async function markSuccess() {
+    if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
+    const ids = [...state.selected];
+    const run_name = document.getElementById('run-name').value.trim() || generateRunName();
+    setRunName(run_name);
+    document.getElementById('btn-mark-success').disabled = true;
+    runAction('mark_success', ids, {}, () => {
+      deselectAll();
+      loadImages(state.page);
+      loadStats();
+      loadRuns();
+    }, run_name, { pending_actions: [], image_ids: ids, opts: {}, run_name });
   }
 
   async function setIgnore(ignored) {
@@ -2170,23 +2268,64 @@
   }
 
   // ── Reports ───────────────────────────────────────────────────────────────
-  async function loadReports() {
-    const filters = {
-      language: document.getElementById('rf-lang').value,
-      framework: document.getElementById('rf-fw').value,
-      library: document.getElementById('rf-lib').value,
-      run: document.getElementById('rf-run').value,
+  const reportState = { page: 1, perPage: 100, total: 0, pages: 1 };
+
+  async function loadReports(page = 1) {
+    reportState.page = page;
+    const isPending = state.reportType === 'pending';
+    const base = {
+      language:          document.getElementById('rf-lang').value,
+      version:           document.getElementById('rf-ver').value,
+      framework:         document.getElementById('rf-fw').value,
+      framework_version: document.getElementById('rf-fwver').value,
+      library:           document.getElementById('rf-lib').value,
+      library_version:   document.getElementById('rf-libver').value,
+    };
+    const filters = isPending ? base : {
+      ...base,
+      run:     document.getElementById('rf-run').value,
       success: document.getElementById('rf-result').value,
     };
-    const params = filtersToParams(filters, { limit: 500 });
+    const params = filtersToParams(filters, { page, per_page: reportState.perPage });
     const url = `/api/reports/${state.reportType}?${params}`;
     const tbody = document.getElementById('report-tbody');
     tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">Loading…</td></tr>';
 
     try {
-      const rows = await api(url);
+      const data = await api(url);
+      reportState.total = data.total;
+      reportState.pages = data.pages;
+      renderReportPagination();
+
+      const rows = data.items;
       if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No results found</td></tr>';
+        return;
+      }
+
+      if (isPending) {
+        tbody.innerHTML = rows.map(r => {
+          const bOk = r.build_success === 1, bRun = r.build_success !== null;
+          const tOk = r.test_success  === 1, tRun = r.test_success  !== null;
+          const bDot = bRun
+            ? `<span class="success-dot ${bOk ? 'dot-ok' : 'dot-fail'}" title="Build: ${bOk ? 'OK' : 'failed'}"></span>`
+            : `<span class="success-dot" style="background:var(--border2)" title="Build: not run"></span>`;
+          const tDot = tRun
+            ? `<span class="success-dot ${tOk ? 'dot-ok' : 'dot-fail'}" title="Test: ${tOk ? 'OK' : 'failed'}"></span>`
+            : `<span class="success-dot" style="background:var(--border2)" title="Test: not run"></span>`;
+          const img = `<span style="font-family:var(--mono);font-size:11px">${escHtml(r.image_tag)}</span>`;
+          const missing = [
+            !bRun ? '<span style="color:var(--muted2)">Build: not run</span>' : (!bOk ? '<span style="color:var(--danger)">Build: failed</span>' : null),
+            !tRun ? '<span style="color:var(--muted2)">Test: not run</span>'  : (!tOk ? '<span style="color:var(--danger)">Test: failed</span>'  : null),
+          ].filter(Boolean).join('  ');
+          const dt = (r.synced_at || '').replace('T', ' ').slice(0, 16);
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 10px;width:40px;white-space:nowrap">${bDot} ${tDot}</td>
+            <td style="padding:6px 10px">${img}</td>
+            <td style="padding:6px 10px;font-size:11px">${missing}</td>
+            <td style="padding:6px 10px;font-size:11px;color:var(--muted2);white-space:nowrap;font-family:var(--mono)">${dt}</td>
+          </tr>`;
+        }).join('');
         return;
       }
 
@@ -2234,6 +2373,39 @@
     } catch (e) {
       tbody.innerHTML = `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
     }
+  }
+
+  function renderReportPagination() {
+    const { page, pages, total, perPage } = reportState;
+    const from = Math.min((page - 1) * perPage + 1, total);
+    const to   = Math.min(page * perPage, total);
+    document.getElementById('pg-info').textContent =
+      total ? `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}` : '–';
+
+    const pg = document.getElementById('pg-buttons');
+    pg.innerHTML = '';
+
+    const mkBtn = (label, p, cur) => {
+      const b = document.createElement('button');
+      b.className = `pg-btn${cur ? ' current' : ''}`;
+      b.textContent = label;
+      b.disabled = cur || p < 1 || p > pages;
+      if (!b.disabled) b.onclick = () => loadReports(p);
+      return b;
+    };
+
+    pg.appendChild(mkBtn('‹', page - 1, false));
+    pageRange(page, pages).forEach(p => {
+      if (p === '…') {
+        const s = document.createElement('span');
+        s.textContent = '…';
+        s.style.cssText = 'padding:0 4px;color:var(--muted)';
+        pg.appendChild(s);
+      } else {
+        pg.appendChild(mkBtn(p, p, p === page));
+      }
+    });
+    pg.appendChild(mkBtn('›', page + 1, false));
   }
 
   // ── Reference ─────────────────────────────────────────────────────────────
@@ -2302,7 +2474,9 @@
     state.currentTab = name;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
-    document.getElementById('pagination').style.display = name === 'images' ? '' : 'none';
+    document.getElementById('pagination').style.display = (name === 'images' || name === 'reports') ? '' : 'none';
+    if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
+    if (name === 'reports') renderReportPagination();
     if (name === 'reference' && !document.querySelector('.ref-card')) loadReference();
   }
 
@@ -2339,7 +2513,17 @@
     b.addEventListener('click', () => {
       state.reportType = b.dataset.report;
       document.querySelectorAll('.sub-tab').forEach(s => s.classList.toggle('active', s === b));
+      const isPending = state.reportType === 'pending';
+      const grp = document.getElementById('rf-run-result-group');
+      const lbl = document.getElementById('rf-options-label');
+      if (grp) grp.style.display = isPending ? 'none' : '';
+      if (lbl) lbl.style.display = isPending ? 'none' : '';
     }));
+
+  document.getElementById('btn-clear-report-filter').addEventListener('click', () => {
+    ['rf-lang', 'rf-fw', 'rf-lib', 'rf-run', 'rf-result'].forEach(id => document.getElementById(id).value = '');
+    ['rf-ver', 'rf-fwver', 'rf-libver'].forEach(id => document.getElementById(id).value = '');
+  });
 
   document.getElementById('btn-clear-filter').addEventListener('click', async () => {
     ['f-lang', 'f-fw', 'f-lib'].forEach(id => document.getElementById(id).value = '');
@@ -2411,8 +2595,9 @@
     const opts = {};
     runAction('stop', ids, opts);
   });
-  document.getElementById('btn-ignore').addEventListener('click', () => setIgnore(true));
-  document.getElementById('btn-unignore').addEventListener('click', () => setIgnore(false));
+  document.getElementById('btn-mark-success').addEventListener('click', markSuccess);
+  document.getElementById('mnu-ignore').addEventListener('click', () => setIgnore(true));
+  document.getElementById('mnu-unignore').addEventListener('click', () => setIgnore(false));
 
   document.getElementById('btn-collapse-log').addEventListener('click', () => {
     const con = document.getElementById('log-console');
@@ -2485,7 +2670,7 @@
     }
   });
 
-  document.getElementById('btn-load-reports').addEventListener('click', loadReports);
+  document.getElementById('btn-load-reports').addEventListener('click', () => loadReports(1));
 
   document.getElementById('btn-export-list').addEventListener('click', () => {
     const filters = getFilters();
@@ -2563,12 +2748,16 @@
   });
 
   // ── Run name input wiring ─────────────────────────────────────────────────
+  function setRunName(name) {
+    document.getElementById('run-name').value = name;
+  }
+
   document.getElementById('btn-run-gen').addEventListener('click', () => {
-    document.getElementById('run-name').value = generateRunName();
+    setRunName(generateRunName());
   });
 
   // Set a default run name on page load
-  document.getElementById('run-name').value = generateRunName();
+  setRunName(generateRunName());
 
   // Wire f-run filter to reload images
   document.getElementById('f-run').addEventListener('change', () => {

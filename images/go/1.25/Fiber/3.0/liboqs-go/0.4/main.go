@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"encoding/json"
@@ -24,7 +24,7 @@ func modVersion(path string) string {
 	return "unknown"
 }
 
-func jsonSend(c *fiber.Ctx, v interface{}) error {
+func jsonSend(c fiber.Ctx, v interface{}) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -35,10 +35,10 @@ func jsonSend(c *fiber.Ctx, v interface{}) error {
 
 func main() {
 	app := fiber.New()
-	app.Get("/", func(c *fiber.Ctx) error {
+	app.Get("/", func(c fiber.Ctx) error {
 		return jsonSend(c, map[string]interface{}{"message": "Hello World"})
 	})
-	app.Get("/version", func(c *fiber.Ctx) error {
+	app.Get("/version", func(c fiber.Ctx) error {
 		return jsonSend(c, map[string]interface{}{
 			"language":  map[string]interface{}{"name": "Go", "version": runtime.Version()},
 			"framework": map[string]interface{}{"name": "Fiber", "version": modVersion("github.com/gofiber/fiber/v3")},
