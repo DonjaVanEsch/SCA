@@ -3,7 +3,7 @@ package main
 import (
 	"runtime"
 	"runtime/debug"
-	beego "github.com/beego/beego"
+	beego "github.com/astaxie/beego"
 	_ "github.com/tink-crypto/tink-go/v2/aead"
 )
 
@@ -39,7 +39,7 @@ type VersionController struct {
 func (c *VersionController) Get() {
 	c.Data["json"] = map[string]interface{}{
 		"language":  map[string]string{"name": "Go", "version": runtime.Version()},
-		"framework": map[string]string{"name": "Beego", "version": modVersion("github.com/beego/beego")},
+		"framework": map[string]string{"name": "Beego", "version": modVersion("github.com/astaxie/beego")},
 		"library":   map[string]string{"name": "tink-go", "version": modVersion("github.com/tink-crypto/tink-go/v2")},
 	}
 	c.ServeJSON()
