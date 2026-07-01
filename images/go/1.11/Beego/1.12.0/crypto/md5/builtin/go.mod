@@ -3,5 +3,5 @@ module app
 go 1.11
 
 require (
-	github.com/beego/beego v1.12.0
+	github.com/astaxie/beego v1.12.0
 )

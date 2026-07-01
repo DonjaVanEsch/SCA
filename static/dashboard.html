@@ -1055,6 +1055,18 @@
     font-weight: 600
   }
 
+  #log-body .log-phase-sep {
+    margin: 6px 0;
+    color: var(--muted2);
+    font-size: 10px;
+    font-family: var(--mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    border-top: 1px solid var(--border2);
+    padding-top: 4px;
+  }
+
   .log-ts {
     color: var(--muted);
     margin-right: 6px
@@ -1238,6 +1250,15 @@
   <div class="header-actions">
     <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync image list from disk">⟳ Sync</button>
     <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync images from disk">⚙ Init DB</button>
+    <div class="sel-menu-wrap" id="cleanup-wrap">
+      <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
+      <div class="sel-menu" id="cleanup-menu" style="right:0;left:auto">
+        <div class="sel-menu-item" id="mnu-cleanup-normal">Normal cleanup</div>
+        <div class="sel-menu-item" id="mnu-cleanup-full">Full cleanup <span style="font-size:10px;color:var(--muted2)">(+ volumes)</span></div>
+        <div class="sel-menu-sep"></div>
+        <div class="sel-menu-item" id="mnu-cleanup-dry">Dry run (preview)</div>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -1349,6 +1370,9 @@
               <input id="run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px" placeholder="auto">
               <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate run name">↺</button>
               <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Start</button>
+              <label style="font-size:11px;color:var(--muted2);white-space:nowrap;margin-left:4px" title="Parallel docker build processes">Workers</label>
+              <input id="opt-workers" type="number" min="1" max="16" value="4"
+                style="width:46px;padding:3px 6px;text-align:center;background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text)">
               <div class="action-sep"></div>
               <button class="btn btn-success btn-sm" id="btn-mark-success" disabled title="Flag selected images as build + test successful and store in the current run">✓ Mark Successful</button>
             </div>
@@ -1511,6 +1535,7 @@
         id="log-dot"></div>
       <span id="log-title">Job output</span>
       <span id="log-progress"></span>
+      <span id="log-elapsed" style="font-size:11px;font-family:var(--mono);color:var(--muted2)"></span>
       <span id="log-status" style="margin-left:auto;color:var(--muted2)">Running…</span>
       <button class="btn btn-warning btn-sm" id="btn-cancel-job" style="display:none" title="Stop after current image">■ Cancel</button>
       <button class="btn btn-ghost btn-sm" id="btn-collapse-log" title="Collapse">▼</button>
@@ -1959,19 +1984,34 @@
       ['f-run', 'rf-run'].forEach(id => {
         const sel = document.getElementById(id);
         while (sel.options.length > 1) sel.remove(1);
-        runs.forEach(r => sel.appendChild(new Option(r.name, r.name)));
+        runs.forEach(r => {
+          const opt = new Option(r.name, r.name);
+          if (r.duration_seconds != null) {
+            const s = r.duration_seconds;
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = s % 60;
+            const fmt = h > 0
+              ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+              : `${m}:${String(sec).padStart(2,'0')}`;
+            opt.title = `${r.status}  ·  duur: ${fmt}`;
+          } else if (r.status === 'running') {
+            opt.title = 'nog bezig…';
+          }
+          sel.appendChild(opt);
+        });
       });
     } catch { }
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
-  async function runAction(action, ids, opts, onDone = null, run_name = '', jobMeta = null) {
+  async function runAction(action, ids, opts, onDone = null, run_name = '', jobMeta = null, keepLogs = false) {
     try {
       const res = await api('/api/action', {
         method: 'POST',
         body: JSON.stringify({ action, image_ids: ids, options: opts, run_name }),
       });
-      openLog(`${action} — ${ids.length} image(s)`, res.job_id, action, onDone, jobMeta);
+      openLog(`${action} — ${ids.length} image(s)`, res.job_id, action, onDone, jobMeta, keepLogs);
     } catch (e) {
       toast(`Failed to start ${action}: ${e.message}`, 'err');
       localStorage.removeItem('pqc-active-job');
@@ -1990,6 +2030,7 @@
     const opts = {
       no_cache: document.getElementById('opt-no-cache').checked,
       skip_existing: document.getElementById('opt-skip-existing').checked,
+      workers: parseInt(document.getElementById('opt-workers').value) || 4,
     };
     const run_name = document.getElementById('run-name').value.trim() || generateRunName();
 
@@ -2013,7 +2054,7 @@
         } else {
           runNext(i + 1);
         }
-      }, run_name, { pending_actions: pending, image_ids: ids, opts, run_name });
+      }, run_name, { pending_actions: pending, image_ids: ids, opts, run_name }, i > 0);
     }
 
     runNext(0);
@@ -2052,10 +2093,31 @@
   let _es = null;
   let _currentJobId = null;
   let _wasCancelled = false;
+  let _timerInterval = null;
+
+  function _fmtElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  }
   // jobMeta = { pending_actions, image_ids, opts, run_name } — save to localStorage when set
-  function openLog(title, jobId, action, onDone = null, jobMeta = null) {
+  function openLog(title, jobId, action, onDone = null, jobMeta = null, keepLogs = false) {
     _currentJobId = jobId;
     _wasCancelled = false;
+
+    const elapsedEl = document.getElementById('log-elapsed');
+    const prevTitle = document.getElementById('log-title').textContent;
+    const prevTime  = elapsedEl.textContent;
+
+    if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+    const _runStart = Date.now();
+    elapsedEl.textContent = '0:00';
+    _timerInterval = setInterval(() => {
+      elapsedEl.textContent = _fmtElapsed(Date.now() - _runStart);
+    }, 1000);
 
     const cancelBtn = document.getElementById('btn-cancel-job');
     const cancellable = ['build', 'test'].includes(action);
@@ -2068,7 +2130,15 @@
     document.getElementById('log-title').textContent = title;
     document.getElementById('log-status').textContent = 'Running…';
     document.getElementById('log-progress').textContent = '';
-    body.innerHTML = '';
+    if (keepLogs && body.children.length > 0) {
+      const sep = document.createElement('div');
+      sep.className = 'log-phase-sep';
+      sep.textContent = `── ${prevTitle}  ·  ${prevTime} ──────────────────────────────`;
+      body.appendChild(sep);
+      body.scrollTop = body.scrollHeight;
+    } else {
+      body.innerHTML = '';
+    }
     dot.className = '';
     con.classList.add('open');
     con.classList.remove('collapsed');
@@ -2097,6 +2167,7 @@
         localStorage.removeItem('pqc-active-job');
         dot.className = 'done';
         cancelBtn.style.display = 'none';
+        if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
         if (_wasCancelled) {
           document.getElementById('log-status').textContent = 'Interrupted';
           toast(`${action} interrupted by user`, 'info');
@@ -2124,6 +2195,7 @@
         localStorage.removeItem('pqc-active-job');
         dot.className = 'done';
         cancelBtn.style.display = 'none';
+        if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
         document.getElementById('log-status').textContent = 'Lost';
         const div = document.createElement('div');
         div.className = 'log-err';
@@ -2156,6 +2228,7 @@
     _es.onerror = () => {
       if (_es) { _es.close(); _es = null; }
       dot.className = 'done';
+      if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
       document.getElementById('log-status').textContent = 'Connection lost';
     };
   }
@@ -2756,12 +2829,49 @@
     setRunName(generateRunName());
   });
 
-  // Set a default run name on page load
-  setRunName(generateRunName());
+  // Run name is generated on demand (when Start is clicked) so it picks up active filters
 
   // Wire f-run filter to reload images
   document.getElementById('f-run').addEventListener('change', () => {
     loadImages(1);
+  });
+
+  // ── Docker cleanup ────────────────────────────────────────────────────────
+  async function dockerCleanup(full, dryRun) {
+    const label = dryRun
+      ? 'Docker cleanup — dry run'
+      : full ? 'Docker cleanup — full' : 'Docker cleanup';
+    try {
+      const r = await api('/api/docker-cleanup', {
+        method: 'POST',
+        body: JSON.stringify({ full, dry_run: dryRun }),
+      });
+      openLog(label, r.job_id, 'docker-cleanup');
+    } catch (e) {
+      toast(`Cleanup failed: ${e.message}`, 'err');
+    }
+  }
+
+  const _cleanupMenu = document.getElementById('cleanup-menu');
+  document.getElementById('btn-cleanup').addEventListener('click', e => {
+    e.stopPropagation();
+    _cleanupMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', () => _cleanupMenu.classList.remove('open'));
+  _cleanupMenu.addEventListener('click', e => e.stopPropagation());
+
+  document.getElementById('mnu-cleanup-normal').addEventListener('click', () => {
+    _cleanupMenu.classList.remove('open');
+    dockerCleanup(false, false);
+  });
+  document.getElementById('mnu-cleanup-full').addEventListener('click', () => {
+    _cleanupMenu.classList.remove('open');
+    if (!confirm('Full cleanup: removes all unused images and volumes. Continue?')) return;
+    dockerCleanup(true, false);
+  });
+  document.getElementById('mnu-cleanup-dry').addEventListener('click', () => {
+    _cleanupMenu.classList.remove('open');
+    dockerCleanup(false, true);
   });
 
   // Start

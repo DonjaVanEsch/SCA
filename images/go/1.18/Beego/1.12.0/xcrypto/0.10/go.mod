@@ -3,6 +3,6 @@ module app
 go 1.18
 
 require (
-	github.com/beego/beego v1.12.0
+	github.com/astaxie/beego v1.12.0
 	golang.org/x/crypto v0.10.0
 )

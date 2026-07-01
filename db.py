@@ -630,12 +630,26 @@ def get_or_create_run(name: str) -> int:
 
 
 def get_runs() -> list[dict]:
-    """Return all runs ordered newest first."""
+    """Return all runs ordered newest first, with duration_seconds computed."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, name, created_at, status, finished_at FROM runs ORDER BY created_at DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        duration = None
+        if d.get("created_at") and d.get("finished_at"):
+            try:
+                from datetime import datetime, timezone
+                t0 = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
+                t1 = datetime.fromisoformat(d["finished_at"].replace("Z", "+00:00"))
+                duration = int((t1 - t0).total_seconds())
+            except Exception:
+                pass
+        d["duration_seconds"] = duration
+        result.append(d)
+    return result
 
 
 def update_run_status(run_id: int, status: str) -> None:

@@ -2,7 +2,7 @@ package main
 
 import (
 	"runtime"
-	beego "github.com/beego/beego"
+	beego "github.com/astaxie/beego"
 	_ "crypto/elliptic"
 )
 
@@ -24,7 +24,7 @@ type VersionController struct {
 func (c *VersionController) Get() {
 	c.Data["json"] = map[string]interface{}{
 		"language":  map[string]string{"name": "Go", "version": runtime.Version()},
-		"framework": map[string]string{"name": "Beego", "version": modVersion("github.com/beego/beego")},
+		"framework": map[string]string{"name": "Beego", "version": modVersion("github.com/astaxie/beego")},
 		"library":   map[string]string{"name": "crypto/elliptic", "version": "built-in"},
 	}
 	c.ServeJSON()

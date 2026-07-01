@@ -9,6 +9,9 @@ Usage:
   python manager.py --build                 [filters]
   python manager.py --build --test --remove [filters]   # build → test → prune
   python manager.py --run                   [filters]
+  python manager.py --cleanup
+  python manager.py --cleanup-full
+  python manager.py --cleanup-dry-run
 
 Actions:
   -l, --list                List matching image contexts
@@ -20,6 +23,12 @@ Actions:
                             Also removes any stopped containers that reference matching images.
                             Use together with -b and -T for a build → test → prune workflow.
   -y, --yes                 Skip confirmation prompt for large sets
+
+Docker cleanup (independent of image filters):
+      --cleanup             Remove stopped containers, dangling images, build cache,
+                            and unused networks.
+      --cleanup-full        Same as --cleanup, plus all unused images and volumes.
+      --cleanup-dry-run     Preview what would be removed (no changes made).
 
 Filters:
   -L, --language LANG       Filter by language            (e.g. python)
@@ -46,8 +55,10 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent
@@ -258,34 +269,39 @@ def _confirm(verb, n, yes):
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
-              save_fn=None, stop_event=None):
+              save_fn=None, stop_event=None, workers=4):
     """Build a Docker image for every entry.
 
     save_fn(entry, result_dict) is called immediately after each image completes.
     stop_event (threading.Event) can be set externally to cancel the loop early.
+    workers controls how many docker build processes run in parallel.
     Returns {tag: {"success": bool, "output": str, "elapsed": float, "skipped": bool}}.
     """
     n = len(entries)
     pad = len(str(n))
     note = "  (--no-cache)" if no_cache else ""
-    log_fn(f"\nBuilding {n:,} image(s){note} ...\n")
-    results = {}
+    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    log_fn(f"\nBuilding {n:,} image(s){note}{parallel_note} ...\n")
 
-    for i, e in enumerate(entries, 1):
+    results: dict = {}
+    _lock = threading.Lock()
+
+    def _build_one(i, e):
         if stop_event is not None and stop_event.is_set():
-            log_fn(f"\n[CANCELLED] Build stopped after {i - 1} of {n} image(s).")
-            break
+            return
 
         tag     = _image_tag(e)
         context = str(PROJECT_ROOT / e["path"])
-        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
         if skip_existing and _image_exists(tag):
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
             log_fn(f"         SKIPPED  (image already exists)")
-            results[tag] = {"success": True, "output": "", "elapsed": 0.0, "skipped": True}
-            if save_fn is not None:
-                save_fn(e, results[tag])
-            continue
+            result = {"success": True, "output": "", "elapsed": 0.0, "skipped": True}
+            with _lock:
+                results[tag] = result
+                if save_fn is not None:
+                    save_fn(e, result)
+            return
 
         cmd = ["docker", "build", "-t", tag]
         if no_cache:
@@ -294,33 +310,58 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
 
         t0      = time.monotonic()
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        proc    = subprocess.run(
+        proc    = subprocess.Popen(
             cmd,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
         )
+        while proc.poll() is None:
+            if stop_event is not None and stop_event.is_set():
+                proc.kill()
+                proc.wait()
+                return
+            time.sleep(0.3)
+        stdout, stderr = proc.communicate()
         elapsed  = time.monotonic() - t0
         finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        output   = (proc.stderr or proc.stdout or "").strip()
+        output   = (stderr or stdout or "").strip()
 
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
         if proc.returncode == 0:
             log_fn(f"         OK  ({elapsed:.1f}s)")
-            results[tag] = {"success": True,  "output": output,
-                            "elapsed": elapsed, "skipped": False,
-                            "started_at": started, "finished_at": finished}
+            result = {"success": True,  "output": output,
+                      "elapsed": elapsed, "skipped": False,
+                      "started_at": started, "finished_at": finished}
         else:
             log_fn(f"         FAILED  ({elapsed:.1f}s)")
             for line in output.splitlines()[-15:]:
                 log_fn(f"         | {line}")
-            results[tag] = {"success": False, "output": output,
-                            "elapsed": elapsed, "skipped": False,
-                            "started_at": started, "finished_at": finished}
+            result = {"success": False, "output": output,
+                      "elapsed": elapsed, "skipped": False,
+                      "started_at": started, "finished_at": finished}
 
-        if save_fn is not None:
-            save_fn(e, results[tag])
+        with _lock:
+            results[tag] = result
+            if save_fn is not None:
+                save_fn(e, result)
 
-    ok   = sum(1 for v in results.values() if v["success"])
-    fail = len(results) - ok
-    log_fn(f"\nBuild complete: {ok} succeeded, {fail} failed.")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_build_one, i, e): (i, e)
+                for i, e in enumerate(entries, 1)}
+        for fut in as_completed(futs):
+            try:
+                fut.result()
+            except Exception as exc:
+                i, _ = futs[fut]
+                log_fn(f"[{i:{pad}}/{n}] ERROR: {exc}")
+
+    ok        = sum(1 for v in results.values() if v["success"])
+    failed    = sum(1 for v in results.values() if not v["success"])
+    cancelled = n - len(results)
+    parts     = [f"{ok} succeeded", f"{failed} failed"]
+    if cancelled:
+        parts.append(f"{cancelled} cancelled")
+    log_fn(f"\nBuild complete: {', '.join(parts)}.")
     return results
 
 
@@ -443,6 +484,110 @@ def _do_stop(entries, log_fn=print):
     if failed:
         parts.append(f"{len(failed)} failed")
     log_fn(f"\nDone: {', '.join(parts)}.")
+
+
+def _do_docker_cleanup(full=False, dry_run=False, log_fn=print):
+    """Remove stopped containers, dangling images, build cache, and unused networks.
+
+    full=True also removes all unused images and volumes.
+    dry_run=True only reports what would be removed.
+    """
+    def run(*cmd):
+        return subprocess.run(
+            list(cmd), capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+
+    def section(title):
+        bar = "─" * max(0, 52 - len(title))
+        log_fn(f"\n── {title} {bar}")
+
+    section("Disk usage (before)")
+    r = run("docker", "system", "df")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(line)
+
+    if dry_run:
+        log_fn("\n[DRY RUN] No changes will be made.\n")
+
+        section("Would remove: stopped containers")
+        r = run("docker", "ps", "-a",
+                "--filter", "status=exited", "--filter", "status=created",
+                "--format", "{{.ID}}  {{.Image}}  {{.Status}}")
+        out = (r.stdout or "").strip()
+        log_fn(out if out else "  (none)")
+
+        section("Would remove: dangling images")
+        r = run("docker", "images", "--filter", "dangling=true",
+                "--format", "{{.ID}}  {{.Repository}}:{{.Tag}}  {{.Size}}")
+        out = (r.stdout or "").strip()
+        log_fn(out if out else "  (none)")
+
+        if full:
+            section("Would remove: all unused images")
+            r = run("docker", "images",
+                    "--format", "{{.ID}}  {{.Repository}}:{{.Tag}}  {{.Size}}")
+            out = (r.stdout or "").strip()
+            log_fn(out if out else "  (none)")
+
+        section("Would remove: unused volumes")
+        r = run("docker", "volume", "ls", "--filter", "dangling=true",
+                "--format", "{{.Name}}")
+        out = (r.stdout or "").strip()
+        log_fn(out if out else "  (none)")
+        return
+
+    section("Removing stopped containers")
+    r = run("docker", "ps", "-aq",
+            "--filter", "status=exited", "--filter", "status=created")
+    ids = [x.strip() for x in (r.stdout or "").strip().splitlines() if x.strip()]
+    if ids:
+        run("docker", "rm", *ids)
+        log_fn(f"  Removed {len(ids)} container(s).  OK")
+    else:
+        log_fn("  Nothing to remove.")
+
+    section("Removing dangling images (<none>:<none>)")
+    r = run("docker", "images", "-q", "--filter", "dangling=true")
+    ids = [x.strip() for x in (r.stdout or "").strip().splitlines() if x.strip()]
+    if ids:
+        run("docker", "rmi", *ids)
+        log_fn(f"  Removed {len(ids)} image(s).  OK")
+    else:
+        log_fn("  Nothing to remove.")
+
+    if full:
+        section("Removing all unused images")
+        r = run("docker", "image", "prune", "-af")
+        for line in (r.stdout or r.stderr or "").strip().splitlines():
+            log_fn(f"  {line}")
+        log_fn("  OK" if r.returncode == 0 else "  FAILED")
+
+    section("Removing build cache")
+    r = run("docker", "builder", "prune", "-af")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(f"  {line}")
+    log_fn("  OK" if r.returncode == 0 else "  FAILED")
+
+    section("Removing unused networks")
+    r = run("docker", "network", "prune", "-f")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(f"  {line}")
+    log_fn("  OK" if r.returncode == 0 else "  FAILED")
+
+    if full:
+        section("Removing unused volumes")
+        r = run("docker", "volume", "prune", "-f")
+        for line in (r.stdout or r.stderr or "").strip().splitlines():
+            log_fn(f"  {line}")
+        log_fn("  OK" if r.returncode == 0 else "  FAILED")
+
+    section("Disk usage (after)")
+    r = run("docker", "system", "df")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(line)
+
+    log_fn("\nCleanup complete.")
 
 
 def _do_stop_all(log_fn=print):
@@ -725,6 +870,13 @@ examples:
         help="Pass --no-cache to docker build, ignoring all cached layers",
     )
     actions.add_argument(
+        "-w", "--workers",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Number of parallel docker build processes (default: 4)",
+    )
+    actions.add_argument(
         "-s", "--skip-existing",
         action="store_true",
         dest="skip_existing",
@@ -751,6 +903,23 @@ examples:
         action="store_true",
         dest="stop_all",
         help="Stop and remove ALL pqc-* containers (ignores filters)",
+    )
+    actions.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Remove stopped containers, dangling images, build cache, and unused networks",
+    )
+    actions.add_argument(
+        "--cleanup-full",
+        action="store_true",
+        dest="cleanup_full",
+        help="Full cleanup: also removes all unused images and volumes",
+    )
+    actions.add_argument(
+        "--cleanup-dry-run",
+        action="store_true",
+        dest="cleanup_dry_run",
+        help="Show what would be removed by --cleanup (no changes made)",
     )
     actions.add_argument(
         "-y", "--yes",
@@ -792,9 +961,16 @@ def main():
     parser = _build_parser()
     args   = parser.parse_args()
 
-    if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
+    if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all or args.cleanup or args.cleanup_full or args.cleanup_dry_run):
         parser.print_help()
         sys.exit(0)
+
+    # ── Cleanup is independent of the images tree ─────────────────────────────
+    if args.cleanup or args.cleanup_full or args.cleanup_dry_run:
+        _require_docker()
+        _do_docker_cleanup(full=args.cleanup_full, dry_run=args.cleanup_dry_run)
+        if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
+            sys.exit(0)
 
     # ── Stop-all is independent of the images tree ────────────────────────────
     if args.stop_all:
@@ -846,7 +1022,7 @@ def main():
         if not _confirm("build", len(entries), args.yes):
             print("Aborted.")
             sys.exit(0)
-        build_results = _do_build(entries, no_cache=args.no_cache, skip_existing=args.skip_existing)
+        build_results = _do_build(entries, no_cache=args.no_cache, skip_existing=args.skip_existing, workers=args.workers)
 
     # ── Run ───────────────────────────────────────────────────────────────────
     if args.run:

@@ -198,6 +198,7 @@ def action():
                     entries,
                     no_cache=bool(opts.get("no_cache")),
                     skip_existing=bool(opts.get("skip_existing")),
+                    workers=int(opts.get("workers", 4)),
                     log_fn=log,
                     save_fn=_save_build,
                     stop_event=stop_event,
@@ -253,6 +254,31 @@ def action():
                     db.update_run_status(run_id, status)
                 except Exception:
                     pass
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/docker-cleanup", methods=["POST"])
+def docker_cleanup():
+    """Run Docker cleanup. Body: {"full": false, "dry_run": false}"""
+    data    = request.json or {}
+    full    = bool(data.get("full", False))
+    dry_run = bool(data.get("dry_run", False))
+    mode    = "dry-run" if dry_run else ("full" if full else "normal")
+    job_id, q = _new_job(f"docker-cleanup-{mode}")
+
+    def run():
+        try:
+            manager._do_docker_cleanup(
+                full=full,
+                dry_run=dry_run,
+                log_fn=lambda msg="": q.put(str(msg)),
+            )
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
             _finish_job(job_id)
 
     threading.Thread(target=run, daemon=True).start()

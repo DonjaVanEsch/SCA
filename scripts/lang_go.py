@@ -61,8 +61,6 @@ def _fw_module(fw_name: str, fw_major: str):
     if fw_name == "Beego":
         if ver[0] >= 2:
             return "github.com/beego/beego/v2"
-        if ver >= (1, 12):
-            return "github.com/beego/beego"
         return "github.com/astaxie/beego"
     if fw_name == "Iris":
         return "github.com/kataras/iris/v12" if ver[0] >= 12 else "github.com/kataras/iris"
