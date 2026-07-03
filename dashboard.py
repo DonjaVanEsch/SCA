@@ -146,7 +146,8 @@ def get_all_ids():
         "framework_version", "library", "library_version",
     )}
     include_ignored = request.args.get("include_ignored", "true").lower() == "true"
-    ids = db.get_all_ids_for_filter(filters, include_ignored)
+    status = request.args.get("status", "")
+    ids = db.get_all_ids_for_filter(filters, include_ignored, status)
     return jsonify({"ids": ids})
 
 
@@ -167,7 +168,7 @@ def action():
     opts       = data.get("options", {})
     run_name   = data.get("run_name", "")
 
-    if action_str not in ("build", "test", "remove", "stop", "mark_success"):
+    if action_str not in ("build", "test", "remove", "stop", "mark_success", "run_container"):
         return jsonify({"error": f"Unknown action: {action_str}"}), 400
     if not image_ids:
         return jsonify({"error": "No image ids provided"}), 400
@@ -221,6 +222,9 @@ def action():
                     save_fn=_save_test,
                     stop_event=stop_event,
                 )
+
+            elif action_str == "run_container":
+                manager._do_run(entries, log_fn=log)
 
             elif action_str == "remove":
                 manager._do_remove(entries, log_fn=log)

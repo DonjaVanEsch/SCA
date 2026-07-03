@@ -1249,12 +1249,14 @@
   </nav>
   <div class="header-actions">
     <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync image list from disk">⟳ Sync</button>
-    <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync images from disk">⚙ Init DB</button>
+    <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync images from disk">⚙ Init
+      DB</button>
     <div class="sel-menu-wrap" id="cleanup-wrap">
       <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
       <div class="sel-menu" id="cleanup-menu" style="right:0;left:auto">
         <div class="sel-menu-item" id="mnu-cleanup-normal">Normal cleanup</div>
-        <div class="sel-menu-item" id="mnu-cleanup-full">Full cleanup <span style="font-size:10px;color:var(--muted2)">(+ volumes)</span></div>
+        <div class="sel-menu-item" id="mnu-cleanup-full">Full cleanup <span
+            style="font-size:10px;color:var(--muted2)">(+ volumes)</span></div>
         <div class="sel-menu-sep"></div>
         <div class="sel-menu-item" id="mnu-cleanup-dry">Dry run (preview)</div>
       </div>
@@ -1303,7 +1305,7 @@
             <input class="filter-input" id="f-libver" placeholder="e.g. 44.0 or 4x">
           </div>
           <div class="filter-row">
-            <label>Run</label>
+            <label>Batch</label>
             <select class="filter-select" id="f-run">
               <option value="">All</option>
             </select>
@@ -1332,20 +1334,33 @@
     <div id="main-panel">
       <!-- Action bar -->
       <div id="action-bar">
-        <span id="sel-count">0 selected</span>
-        <div class="action-sep"></div>
-
-        <!-- Select group -->
-        <div class="sel-menu-wrap">
-          <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
-          <div class="sel-menu" id="sel-menu">
-            <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
-            <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
-            <div class="sel-menu-sep"></div>
-            <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
-            <div class="sel-menu-sep"></div>
-            <div class="sel-menu-item" id="mnu-ignore">Ignore</div>
-            <div class="sel-menu-item" id="mnu-unignore">Unignore</div>
+        <!-- Selection group -->
+        <div class="docker-group">
+          <span class="docker-group-label">Selection</span>
+          <div class="docker-group-inner">
+            <span id="sel-count">0 selected</span>
+            <div class="action-sep"></div>
+            <div class="sel-menu-wrap">
+              <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
+              <div class="sel-menu" id="sel-menu">
+                <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
+                <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
+                <div class="sel-menu-sep"></div>
+                <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
+                <div class="sel-menu-sep"></div>
+                <div class="sel-menu-item" id="mnu-sel-not-built">Not built</div>
+                <div class="sel-menu-item" id="mnu-sel-build-failed">Build failed</div>
+                <div class="sel-menu-item" id="mnu-sel-not-tested">Not tested</div>
+                <div class="sel-menu-item" id="mnu-sel-test-failed">Test failed</div>
+                <div class="sel-menu-sep"></div>
+                <div class="sel-menu-item" id="mnu-ignore">Ignore</div>
+                <div class="sel-menu-item" id="mnu-unignore">Unignore</div>
+              </div>
+            </div>
+            <div class="action-sep"></div>
+            <label class="opt-label" title="Deselect all images automatically when a run finishes">
+              <input type="checkbox" id="opt-deselect-after"> deselect after batch
+            </label>
           </div>
         </div>
         <div class="action-sep"></div>
@@ -1354,27 +1369,36 @@
         <div class="docker-group">
           <span class="docker-group-label">🐳 Docker</span>
           <div class="docker-group-inner">
-            <label class="act-check" id="act-build-wrap"><input type="checkbox" id="act-build" disabled> Build</label>
-            <label class="act-check" id="act-test-wrap"><input type="checkbox" id="act-test" disabled> Test</label>
+            <label class="act-check" id="act-run-wrap"><input type="checkbox" id="act-run" disabled> Launch</label>
+            <button class="btn btn-warning btn-sm" id="btn-stop" disabled
+              title="Stop containers for selected images">Stop</button>
+            <button class="btn btn-ghost btn-sm" id="btn-stop-all" title="Stop all running pqc-* containers">Stop
+              All</button>
             <label class="act-check" id="act-remove-wrap" style="color:var(--danger)"><input type="checkbox"
                 id="act-remove" disabled> Remove</label>
             <div class="action-sep"></div>
-            <button class="btn btn-warning btn-sm" id="btn-stop" disabled title="Stop containers for selected images">Stop</button>
-            <button class="btn btn-ghost btn-sm" id="btn-stop-all" title="Stop all running pqc-* containers">Stop All</button>
+            <label class="act-check" id="act-build-wrap"><input type="checkbox" id="act-build" disabled> Build</label>
+            <label class="act-check" id="act-test-wrap"><input type="checkbox" id="act-test" disabled> Test</label>
             <div class="action-sep"></div>
-            <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox" id="opt-no-cache"> no-cache</label>
-            <label class="opt-label" title="Skip images that are already built"><input type="checkbox" id="opt-skip-existing"> skip-existing</label>
+            <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox"
+                id="opt-no-cache"> no-cache</label>
+            <label class="opt-label" title="Skip images that are already built"><input type="checkbox"
+                id="opt-skip-existing"> skip-existing</label>
             <div class="action-sep"></div>
             <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
-              <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Run</label>
-              <input id="run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px" placeholder="auto">
-              <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate run name">↺</button>
-              <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Start</button>
-              <label style="font-size:11px;color:var(--muted2);white-space:nowrap;margin-left:4px" title="Parallel docker build processes">Workers</label>
+              <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Batch</label>
+              <input id="run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px"
+                placeholder="auto">
+              <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate batch name">↺</button>
+              <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Execute</button>
+              <label style="font-size:11px;color:var(--muted2);white-space:nowrap;margin-left:4px"
+                title="Parallel docker build processes">Workers</label>
               <input id="opt-workers" type="number" min="1" max="16" value="4"
                 style="width:46px;padding:3px 6px;text-align:center;background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text)">
               <div class="action-sep"></div>
-              <button class="btn btn-success btn-sm" id="btn-mark-success" disabled title="Flag selected images as build + test successful and store in the current run">✓ Mark Successful</button>
+              <button class="btn btn-success btn-sm" id="btn-mark-success" disabled
+                title="Flag selected images as build + test successful and store in the current batch">✓ Mark
+                Successful</button>
             </div>
           </div>
         </div>
@@ -1451,9 +1475,9 @@
         <span class="filter-label" id="rf-options-label">Report options</span>
         <div class="filter-group" id="rf-run-result-group">
           <div class="filter-row">
-            <label>Run</label>
+            <label>Batch</label>
             <select class="filter-select" id="rf-run">
-              <option value="">All runs</option>
+              <option value="">All batches</option>
             </select>
           </div>
           <div class="filter-row">
@@ -1502,7 +1526,8 @@
           </thead>
           <tbody id="report-tbody">
             <tr>
-              <td colspan="4" style="padding:32px;text-align:center;color:var(--muted)">Select filters and click Load</td>
+              <td colspan="4" style="padding:32px;text-align:center;color:var(--muted)">Select filters and click Load
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1537,7 +1562,8 @@
       <span id="log-progress"></span>
       <span id="log-elapsed" style="font-size:11px;font-family:var(--mono);color:var(--muted2)"></span>
       <span id="log-status" style="margin-left:auto;color:var(--muted2)">Running…</span>
-      <button class="btn btn-warning btn-sm" id="btn-cancel-job" style="display:none" title="Stop after current image">■ Cancel</button>
+      <button class="btn btn-warning btn-sm" id="btn-cancel-job" style="display:none" title="Stop after current image">■
+        Cancel</button>
       <button class="btn btn-ghost btn-sm" id="btn-collapse-log" title="Collapse">▼</button>
       <button class="btn btn-ghost btn-sm" id="btn-close-log" title="Close">✕</button>
     </div>
@@ -1859,6 +1885,28 @@
     updateActionBar();
   }
 
+  async function selectByStatus(status) {
+    const filters = getFilters();
+    const incIgn = document.getElementById('f-ignored').checked ? 'true' : 'false';
+    const params = filtersToParams(filters, { include_ignored: incIgn, status });
+    try {
+      const data = await api(`/api/images/ids?${params}`);
+      data.ids.forEach(id => state.selected.add(id));
+      document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
+        const id = parseInt(row.dataset.id);
+        if (state.selected.has(id)) {
+          row.classList.add('selected');
+          const cb = row.querySelector('.row-cb');
+          if (cb) cb.checked = true;
+        }
+      });
+      toast(`${data.ids.length.toLocaleString()} images selected`, 'ok');
+      updateActionBar();
+    } catch (e) {
+      toast(`Error selecting: ${e.message}`, 'err');
+    }
+  }
+
   async function selectAllFiltered() {
     const filters = getFilters();
     const incIgn = document.getElementById('f-ignored').checked ? 'true' : 'false';
@@ -1897,7 +1945,7 @@
     const n = state.selected.size;
     document.getElementById('sel-count').textContent = `${n.toLocaleString()} selected`;
     const dis = n === 0;
-    ['act-build', 'act-test', 'act-remove', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
+    ['act-run', 'act-build', 'act-test', 'act-remove', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
       document.getElementById(id).disabled = dis;
     });
   }
@@ -1992,8 +2040,8 @@
             const m = Math.floor((s % 3600) / 60);
             const sec = s % 60;
             const fmt = h > 0
-              ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
-              : `${m}:${String(sec).padStart(2,'0')}`;
+              ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+              : `${m}:${String(sec).padStart(2, '0')}`;
             opt.title = `${r.status}  ·  duur: ${fmt}`;
           } else if (r.status === 'running') {
             opt.title = 'nog bezig…';
@@ -2021,10 +2069,11 @@
 
   async function startActions() {
     if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
-    const actions = ['build', 'test', 'remove'].filter(a =>
+    const _actionMap = { run: 'run_container', build: 'build', test: 'test', remove: 'remove' };
+    const actions = ['run', 'build', 'test', 'remove'].filter(a =>
       document.getElementById(`act-${a}`).checked
-    );
-    if (!actions.length) { toast('Select at least one action (Build / Test / Remove)', 'err'); return; }
+    ).map(a => _actionMap[a]);
+    if (!actions.length) { toast('Select at least one action (Run / Build / Test / Remove)', 'err'); return; }
 
     const ids = [...state.selected];
     const opts = {
@@ -2039,6 +2088,7 @@
     function runNext(i) {
       if (i >= actions.length) {
         localStorage.removeItem('pqc-active-job');
+        if (document.getElementById('opt-deselect-after').checked) deselectAll();
         document.getElementById('btn-start').disabled = state.selected.size === 0;
         loadImages(state.page);
         loadStats();
@@ -2100,8 +2150,8 @@
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     const sec = s % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-    return `${m}:${String(sec).padStart(2,'0')}`;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    return `${m}:${String(sec).padStart(2, '0')}`;
   }
   // jobMeta = { pending_actions, image_ids, opts, run_name } — save to localStorage when set
   function openLog(title, jobId, action, onDone = null, jobMeta = null, keepLogs = false) {
@@ -2110,7 +2160,7 @@
 
     const elapsedEl = document.getElementById('log-elapsed');
     const prevTitle = document.getElementById('log-title').textContent;
-    const prevTime  = elapsedEl.textContent;
+    const prevTime = elapsedEl.textContent;
 
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
     const _runStart = Date.now();
@@ -2347,16 +2397,16 @@
     reportState.page = page;
     const isPending = state.reportType === 'pending';
     const base = {
-      language:          document.getElementById('rf-lang').value,
-      version:           document.getElementById('rf-ver').value,
-      framework:         document.getElementById('rf-fw').value,
+      language: document.getElementById('rf-lang').value,
+      version: document.getElementById('rf-ver').value,
+      framework: document.getElementById('rf-fw').value,
       framework_version: document.getElementById('rf-fwver').value,
-      library:           document.getElementById('rf-lib').value,
-      library_version:   document.getElementById('rf-libver').value,
+      library: document.getElementById('rf-lib').value,
+      library_version: document.getElementById('rf-libver').value,
     };
     const filters = isPending ? base : {
       ...base,
-      run:     document.getElementById('rf-run').value,
+      run: document.getElementById('rf-run').value,
       success: document.getElementById('rf-result').value,
     };
     const params = filtersToParams(filters, { page, per_page: reportState.perPage });
@@ -2379,7 +2429,7 @@
       if (isPending) {
         tbody.innerHTML = rows.map(r => {
           const bOk = r.build_success === 1, bRun = r.build_success !== null;
-          const tOk = r.test_success  === 1, tRun = r.test_success  !== null;
+          const tOk = r.test_success === 1, tRun = r.test_success !== null;
           const bDot = bRun
             ? `<span class="success-dot ${bOk ? 'dot-ok' : 'dot-fail'}" title="Build: ${bOk ? 'OK' : 'failed'}"></span>`
             : `<span class="success-dot" style="background:var(--border2)" title="Build: not run"></span>`;
@@ -2389,7 +2439,7 @@
           const img = `<span style="font-family:var(--mono);font-size:11px">${escHtml(r.image_tag)}</span>`;
           const missing = [
             !bRun ? '<span style="color:var(--muted2)">Build: not run</span>' : (!bOk ? '<span style="color:var(--danger)">Build: failed</span>' : null),
-            !tRun ? '<span style="color:var(--muted2)">Test: not run</span>'  : (!tOk ? '<span style="color:var(--danger)">Test: failed</span>'  : null),
+            !tRun ? '<span style="color:var(--muted2)">Test: not run</span>' : (!tOk ? '<span style="color:var(--danger)">Test: failed</span>' : null),
           ].filter(Boolean).join('  ');
           const dt = (r.synced_at || '').replace('T', ' ').slice(0, 16);
           return `<tr style="border-bottom:1px solid var(--border)">
@@ -2421,7 +2471,7 @@
 
         const dt = (r.tested_at || r.finished_at || '').replace('T', ' ').slice(0, 16);
         if (r.run_name) detail += ` <span style="font-size:10px;color:var(--muted2);margin-left:6px">[${escHtml(r.run_name)}]</span>`;
-        if (r.run_status === 'interrupted') detail += ` <span style="font-size:10px;color:var(--warning);font-weight:600;margin-left:2px" title="This run was cancelled by the user before all images were processed">⚠ interrupted</span>`;
+        if (r.run_status === 'interrupted') detail += ` <span style="font-size:10px;color:var(--warning);font-weight:600;margin-left:2px" title="This batch was cancelled by the user before all images were processed">⚠ interrupted</span>`;
         const hasOut = !ok && r.output;
         const outRow = hasOut
           ? `<tr id="${rid}" style="display:none;border-bottom:1px solid var(--border)">
@@ -2451,7 +2501,7 @@
   function renderReportPagination() {
     const { page, pages, total, perPage } = reportState;
     const from = Math.min((page - 1) * perPage + 1, total);
-    const to   = Math.min(page * perPage, total);
+    const to = Math.min(page * perPage, total);
     document.getElementById('pg-info').textContent =
       total ? `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}` : '–';
 
@@ -2660,6 +2710,13 @@
   document.getElementById('mnu-desel-all').addEventListener('click', () => {
     _selMenu.classList.remove('open');
     deselectAll();
+  });
+
+  ['not-built', 'build-failed', 'not-tested', 'test-failed'].forEach(s => {
+    document.getElementById(`mnu-sel-${s}`).addEventListener('click', () => {
+      _selMenu.classList.remove('open');
+      selectByStatus(s.replace(/-/g, '_'));
+    });
   });
 
   document.getElementById('btn-start').addEventListener('click', startActions);

@@ -315,13 +315,26 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
         )
+        # Drain pipes in background threads to prevent pipe-buffer deadlock
+        # (docker build can produce >64 KB of output, which blocks the process
+        # if the pipe is not read concurrently).
+        _out, _err = [], []
+        _t_out = threading.Thread(target=lambda: _out.extend(proc.stdout), daemon=True)
+        _t_err = threading.Thread(target=lambda: _err.extend(proc.stderr), daemon=True)
+        _t_out.start()
+        _t_err.start()
         while proc.poll() is None:
             if stop_event is not None and stop_event.is_set():
                 proc.kill()
                 proc.wait()
+                _t_out.join(timeout=2)
+                _t_err.join(timeout=2)
                 return
             time.sleep(0.3)
-        stdout, stderr = proc.communicate()
+        _t_out.join()
+        _t_err.join()
+        stdout = "".join(_out)
+        stderr = "".join(_err)
         elapsed  = time.monotonic() - t0
         finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         output   = (stderr or stdout or "").strip()

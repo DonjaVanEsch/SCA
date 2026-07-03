@@ -618,6 +618,31 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
 # ── Go module proxy version resolution ───────────────────────────────────────
 
 _GO_PROXY_CACHE: dict = {}
+_GO_MODVER_CACHE: dict = {}
+
+
+def _fetch_go_directive(module: str, version: str) -> tuple:
+    """Return the minimum Go version declared in a module's go.mod (cached).
+
+    Fetches https://proxy.golang.org/{module}/@v/{version}.mod and extracts
+    the 'go X.Y' line.  Returns (0,) on any failure so the version is treated
+    as compatible.
+    """
+    key = (module, version)
+    if key in _GO_MODVER_CACHE:
+        return _GO_MODVER_CACHE[key]
+    url = f"https://proxy.golang.org/{module}/@v/{version}.mod"
+    result = (0,)
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            for line in resp.read().decode().splitlines():
+                if line.startswith("go "):
+                    result = _parse(line.split()[1])
+                    break
+    except (URLError, OSError):
+        pass
+    _GO_MODVER_CACHE[key] = result
+    return result
 
 
 def _ver_key(v: str) -> tuple:
@@ -658,31 +683,42 @@ def _fetch_latest_go_version(module: str):
         return None
 
 
-def _resolve_go(module: str, registry_ver: str):
+def _resolve_go(module: str, registry_ver: str, max_toolchain: tuple = None):
     """Resolve a registry version like '1.8' to an actual Go module tag like 'v1.8.1'.
 
-    Returns the full version string (possibly with +incompatible), or None when
-    nothing can be found on the module proxy.
+    When max_toolchain is provided, candidate versions whose go.mod 'go' directive
+    exceeds max_toolchain are skipped (e.g. a patch that requires a newer Go than
+    the target image).  Returns the full version string (possibly with +incompatible),
+    or None when nothing compatible can be found.
     """
     versions = _fetch_go_versions(module)
+
+    def _compatible(v: str) -> bool:
+        return max_toolchain is None or _fetch_go_directive(module, v) <= max_toolchain
 
     prefix = "v" + registry_ver + "."
     candidates = [v for v in versions if v.startswith(prefix)]
     if candidates:
-        return candidates[-1]
+        for v in reversed(candidates):
+            if _compatible(v):
+                return v
+        return None
 
     exact = "v" + registry_ver
     if exact in versions:
-        return exact
+        return exact if _compatible(exact) else None
 
     # Try with explicit .0 patch suffix
     for v in versions:
         if v == f"v{registry_ver}.0" or v == f"v{registry_ver}.0+incompatible":
-            return v
+            return v if _compatible(v) else None
 
     # No matching semver tags → fall back to @latest (pseudo-version, e.g. mlkem768)
     if not versions or all(re.search(r"\d{8}", v) for v in versions):
-        return _fetch_latest_go_version(module)
+        latest = _fetch_latest_go_version(module)
+        if latest and not _compatible(latest):
+            return None
+        return latest
 
     return None
 
@@ -738,14 +774,16 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
             shutil.rmtree(out)
         return False
 
+    lang_tuple = _parse(lang_ver)
+
     # ── Resolve framework version ──────────────────────────────────────────
     fw_mod      = _fw_module(fw_name, fw_major)
     fw_resolved = ""  # go.mod require line fragment: "module version"
 
     if fw_mod and uses_modules:
-        tag = _resolve_go(fw_mod, fw_major)
+        tag = _resolve_go(fw_mod, fw_major, max_toolchain=lang_tuple)
         if tag is None:
-            print(f"  [SKIP] {fw_name} {fw_major} not found on Go proxy", flush=True)
+            print(f"  [SKIP] {fw_name} {fw_major} not compatible with Go {lang_ver}", flush=True)
             if out.exists():
                 shutil.rmtree(out)
             return False
@@ -761,9 +799,9 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         if lib_name == "liboqs-go" and lib_ver in _LIBOQS_GO_PSEUDO_VERSIONS:
             tag = _LIBOQS_GO_PSEUDO_VERSIONS[lib_ver]
         else:
-            tag = _resolve_go(lib_mod, lib_ver)
+            tag = _resolve_go(lib_mod, lib_ver, max_toolchain=lang_tuple)
         if tag is None:
-            print(f"  [SKIP] {lib_name} {lib_ver} not found on Go proxy", flush=True)
+            print(f"  [SKIP] {lib_name} {lib_ver} not compatible with Go {lang_ver}", flush=True)
             if out.exists():
                 shutil.rmtree(out)
             return False

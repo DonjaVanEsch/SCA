@@ -768,13 +768,27 @@ def get_images_by_ids(image_ids: list) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+_STATUS_CLAUSES = {
+    "not_built":    "build_success IS NULL",
+    "build_failed": "build_success = 0",
+    "not_tested":   "test_success IS NULL",
+    "test_failed":  "test_success = 0",
+}
+
+
 def get_all_ids_for_filter(filters: dict,
-                            include_ignored: bool = True) -> list[int]:
+                            include_ignored: bool = True,
+                            status: str = "") -> list[int]:
     """Return every image id matching filters (no pagination)."""
     where_sql, params = _build_where(filters)
+    extra = []
+    if status in _STATUS_CLAUSES:
+        extra.append(_STATUS_CLAUSES[status])
     if not include_ignored:
+        extra.append("ignored = 0")
+    for clause in extra:
         connector = "AND" if where_sql else "WHERE"
-        where_sql = f"{where_sql} {connector} ignored = 0"
+        where_sql = f"{where_sql} {connector} {clause}"
     with _connect() as conn:
         rows = conn.execute(
             f"SELECT id FROM image_details {where_sql}", params
