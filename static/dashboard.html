@@ -1,6 +1,6 @@
 <!doctype html>
-<title>PQC Image Manager</title>
-<meta name="description" content="Post-Quantum Cryptography image build, test, and management dashboard">
+<title>SCA Source Manager</title>
+<meta name="description" content="Side-Channel / Software Crypto Analysis image build, test, and management dashboard">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -143,6 +143,22 @@
 
   .stat-sep {
     color: var(--border2)
+  }
+
+  .stat-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border2);
+  }
+
+  .stat-group-label {
+    text-transform: uppercase;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    color: var(--muted2);
   }
 
   .tabs {
@@ -616,6 +632,7 @@
     border-bottom: 1px solid var(--border);
     transition: background .1s;
     cursor: pointer;
+    user-select: none;
   }
 
   tbody tr:hover {
@@ -1232,24 +1249,41 @@
 
 <!-- ── Header ─────────────────────────────────────────────────────────── -->
 <header id="header">
-  <h1>PQC <span class="header-accent">Image Manager</span></h1>
+  <h1><span title="Side-Channel / Software Crypto Analysis" style="cursor:help">SCA</span> <span
+      class="header-accent">Source Manager</span></h1>
   <div class="stats-bar" id="stats-bar">
-    <span class="stat"><b id="s-total">–</b> images</span>
-    <span class="stat-sep">·</span>
-    <span class="stat"><b id="s-built" style="color:var(--success)">–</b> built OK</span>
-    <span class="stat-sep">·</span>
-    <span class="stat"><b id="s-tested" style="color:var(--accent)">–</b> tested OK</span>
-    <span class="stat-sep">·</span>
-    <span class="stat"><b id="s-ignored" style="color:var(--muted2)">–</b> ignored</span>
+    <span class="stat"><b id="s-total">–</b> sources</span>
+
+    <span class="stat-group">
+      <span class="stat-group-label">Build</span>
+      <span class="stat"><b id="s-built" style="color:var(--success)">–</b> OK</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="s-built-fail" style="color:var(--danger)">–</b> failed</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="s-not-built" style="color:var(--muted2)">–</b> not built</span>
+    </span>
+
+    <span class="stat-group">
+      <span class="stat-group-label">Test</span>
+      <span class="stat"><b id="s-tested" style="color:var(--accent)">–</b> OK</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="s-tested-fail" style="color:var(--danger)">–</b> failed</span>
+    </span>
+
+    <span class="stat-group">
+      <span class="stat"><b id="s-not-tested" style="color:var(--muted2)">–</b> not tested</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="s-ignored" style="color:var(--muted2)">–</b> ignored</span>
+    </span>
   </div>
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="images">Images</button>
+    <button class="tab-btn active" data-tab="images">Sources</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
     <button class="tab-btn" data-tab="reference">Reference</button>
   </nav>
   <div class="header-actions">
-    <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync image list from disk">⟳ Sync</button>
-    <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync images from disk">⚙ Init
+    <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
+    <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
       DB</button>
     <div class="sel-menu-wrap" id="cleanup-wrap">
       <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
@@ -1314,7 +1348,7 @@
         <div class="filter-divider"></div>
         <label class="filter-check">
           <input type="checkbox" id="f-ignored" checked>
-          Show ignored images
+          Show ignored sources
         </label>
         <div class="filter-actions">
           <button class="btn btn-ghost btn-sm" id="btn-clear-filter" style="flex:1">Clear filters</button>
@@ -1324,7 +1358,7 @@
         <div class="filter-divider"></div>
         <span class="filter-label">Export</span>
         <div class="filter-actions">
-          <button class="btn btn-ghost btn-sm" id="btn-export-list" style="flex:1">Image list</button>
+          <button class="btn btn-ghost btn-sm" id="btn-export-list" style="flex:1">Source list</button>
           <button class="btn btn-ghost btn-sm" id="btn-export-ignore" style="flex:1">Ignore list</button>
         </div>
       </div>
@@ -1358,7 +1392,7 @@
               </div>
             </div>
             <div class="action-sep"></div>
-            <label class="opt-label" title="Deselect all images automatically when a run finishes">
+            <label class="opt-label" title="Deselect all sources automatically when a run finishes">
               <input type="checkbox" id="opt-deselect-after"> deselect after batch
             </label>
           </div>
@@ -1371,7 +1405,7 @@
           <div class="docker-group-inner">
             <label class="act-check" id="act-run-wrap"><input type="checkbox" id="act-run" disabled> Launch</label>
             <button class="btn btn-warning btn-sm" id="btn-stop" disabled
-              title="Stop containers for selected images">Stop</button>
+              title="Stop containers for selected sources">Stop</button>
             <button class="btn btn-ghost btn-sm" id="btn-stop-all" title="Stop all running pqc-* containers">Stop
               All</button>
             <label class="act-check" id="act-remove-wrap" style="color:var(--danger)"><input type="checkbox"
@@ -1382,7 +1416,7 @@
             <div class="action-sep"></div>
             <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox"
                 id="opt-no-cache"> no-cache</label>
-            <label class="opt-label" title="Skip images that are already built"><input type="checkbox"
+            <label class="opt-label" title="Skip sources that are already built"><input type="checkbox"
                 id="opt-skip-existing"> skip-existing</label>
             <div class="action-sep"></div>
             <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
@@ -1397,7 +1431,7 @@
                 style="width:46px;padding:3px 6px;text-align:center;background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text)">
               <div class="action-sep"></div>
               <button class="btn btn-success btn-sm" id="btn-mark-success" disabled
-                title="Flag selected images as build + test successful and store in the current batch">✓ Mark
+                title="Flag selected sources as build + test successful and store in the current batch">✓ Mark
                 Successful</button>
             </div>
           </div>
@@ -1409,7 +1443,7 @@
         <table id="img-table">
           <thead>
             <tr>
-              <th class="cb-cell"><input type="checkbox" id="header-cb" class="row-cb"></th>
+              <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="header-cb" class="row-cb"></th>
               <th class="sortable" data-sort="language">Language <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="lang_version">Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="framework">Framework <span class="sort-icon">⬍</span></th>
@@ -1515,7 +1549,7 @@
               </th>
               <th
                 style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
-                Image</th>
+                Source</th>
               <th
                 style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
                 Detail</th>
@@ -1562,7 +1596,8 @@
       <span id="log-progress"></span>
       <span id="log-elapsed" style="font-size:11px;font-family:var(--mono);color:var(--muted2)"></span>
       <span id="log-status" style="margin-left:auto;color:var(--muted2)">Running…</span>
-      <button class="btn btn-warning btn-sm" id="btn-cancel-job" style="display:none" title="Stop after current image">■
+      <button class="btn btn-warning btn-sm" id="btn-cancel-job" style="display:none"
+        title="Stop after current source">■
         Cancel</button>
       <button class="btn btn-ghost btn-sm" id="btn-collapse-log" title="Collapse">▼</button>
       <button class="btn btn-ghost btn-sm" id="btn-close-log" title="Close">✕</button>
@@ -1607,6 +1642,7 @@
     total: 0,
     pages: 1,
     selected: new Set(),      // image ids (numbers)
+    selectAnchor: null,       // id of last row clicked without shift, for shift+click ranges
     currentTab: 'images',
     reportType: 'test',
     allOptions: {},           // { languages, frameworks, libraries, ... }
@@ -1639,7 +1675,11 @@
       const s = await api('/api/stats');
       document.getElementById('s-total').textContent = s.total.toLocaleString();
       document.getElementById('s-built').textContent = s.built_ok.toLocaleString();
+      document.getElementById('s-built-fail').textContent = s.built_fail.toLocaleString();
+      document.getElementById('s-not-built').textContent = s.not_built.toLocaleString();
       document.getElementById('s-tested').textContent = s.test_ok.toLocaleString();
+      document.getElementById('s-tested-fail').textContent = s.test_fail.toLocaleString();
+      document.getElementById('s-not-tested').textContent = s.not_tested.toLocaleString();
       document.getElementById('s-ignored').textContent = s.ignored.toLocaleString();
     } catch { }
   }
@@ -1821,7 +1861,7 @@
       tbody.innerHTML = `<tr><td colspan="10">
       <div class="empty-state">
         <div style="font-size:28px;opacity:.3">⬜</div>
-        <p>No images match the current filters.</p>
+        <p>No sources match the current filters.</p>
       </div></td></tr>`;
       updateActionBar();
       return;
@@ -1834,7 +1874,7 @@
               onclick="rowClick(event,${r.id})">
       <td class="cb-cell">
         <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''}
-               onclick="event.stopPropagation();toggleSelect(${r.id})">
+               onclick="event.stopPropagation();toggleSelect(${r.id},event)">
       </td>
       <td>${r.language}</td>
       <td class="mono-cell">${r.lang_version}</td>
@@ -1856,17 +1896,36 @@
   }
 
   // ── Selection ─────────────────────────────────────────────────────────────
-  function toggleSelect(id) {
-    if (state.selected.has(id)) state.selected.delete(id);
-    else state.selected.add(id);
-    const row = document.querySelector(`tr[data-id="${id}"]`);
-    if (row) row.classList.toggle('selected', state.selected.has(id));
+  function selectRange(fromId, toId) {
+    const rows = [...document.querySelectorAll('#img-tbody tr[data-id]')];
+    const ids = rows.map(row => parseInt(row.dataset.id));
+    const i1 = ids.indexOf(fromId), i2 = ids.indexOf(toId);
+    if (i1 === -1 || i2 === -1) return;
+    const [lo, hi] = i1 < i2 ? [i1, i2] : [i2, i1];
+    for (let i = lo; i <= hi; i++) {
+      state.selected.add(ids[i]);
+      rows[i].classList.add('selected');
+      const cb = rows[i].querySelector('.row-cb');
+      if (cb) cb.checked = true;
+    }
+  }
+
+  function toggleSelect(id, e) {
+    if (e && e.shiftKey && state.selectAnchor !== null && state.selectAnchor !== id) {
+      selectRange(state.selectAnchor, id);
+    } else {
+      if (state.selected.has(id)) state.selected.delete(id);
+      else state.selected.add(id);
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      if (row) row.classList.toggle('selected', state.selected.has(id));
+    }
+    state.selectAnchor = id;
     updateActionBar();
   }
 
   function rowClick(e, id) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-    toggleSelect(id);
+    toggleSelect(id, e);
     const row = document.querySelector(`tr[data-id="${id}"]`);
     if (row) {
       const cb = row.querySelector('.row-cb');
@@ -1900,7 +1959,7 @@
           if (cb) cb.checked = true;
         }
       });
-      toast(`${data.ids.length.toLocaleString()} images selected`, 'ok');
+      toast(`${data.ids.length.toLocaleString()} sources selected`, 'ok');
       updateActionBar();
     } catch (e) {
       toast(`Error selecting: ${e.message}`, 'err');
@@ -1923,7 +1982,7 @@
           if (cb) cb.checked = true;
         }
       });
-      toast(`${data.ids.length.toLocaleString()} images selected`, 'ok');
+      toast(`${data.ids.length.toLocaleString()} sources selected`, 'ok');
       updateActionBar();
     } catch (e) {
       toast(`Error selecting all: ${e.message}`, 'err');
@@ -1932,6 +1991,7 @@
 
   function deselectAll() {
     state.selected.clear();
+    state.selectAnchor = null;
     document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
       row.classList.remove('selected');
       const cb = row.querySelector('.row-cb');
@@ -2059,7 +2119,7 @@
         method: 'POST',
         body: JSON.stringify({ action, image_ids: ids, options: opts, run_name }),
       });
-      openLog(`${action} — ${ids.length} image(s)`, res.job_id, action, onDone, jobMeta, keepLogs);
+      openLog(`${action} — ${ids.length} source(s)`, res.job_id, action, onDone, jobMeta, keepLogs);
     } catch (e) {
       toast(`Failed to start ${action}: ${e.message}`, 'err');
       localStorage.removeItem('pqc-active-job');
@@ -2068,7 +2128,7 @@
   }
 
   async function startActions() {
-    if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
     const _actionMap = { run: 'run_container', build: 'build', test: 'test', remove: 'remove' };
     const actions = ['run', 'build', 'test', 'remove'].filter(a =>
       document.getElementById(`act-${a}`).checked
@@ -2111,7 +2171,7 @@
   }
 
   async function markSuccess() {
-    if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
     const ids = [...state.selected];
     const run_name = document.getElementById('run-name').value.trim() || generateRunName();
     setRunName(run_name);
@@ -2125,13 +2185,13 @@
   }
 
   async function setIgnore(ignored) {
-    if (state.selected.size === 0) { toast('No images selected', 'err'); return; }
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
     try {
       const res = await api('/api/ignore', {
         method: 'POST',
         body: JSON.stringify({ image_ids: [...state.selected], ignored }),
       });
-      toast(`${res.count} image(s) ${ignored ? 'added to' : 'removed from'} ignore list`, 'ok');
+      toast(`${res.count} source(s) ${ignored ? 'added to' : 'removed from'} ignore list`, 'ok');
       loadImages(state.page);
       loadStats();
     } catch (e) {
@@ -2471,7 +2531,7 @@
 
         const dt = (r.tested_at || r.finished_at || '').replace('T', ' ').slice(0, 16);
         if (r.run_name) detail += ` <span style="font-size:10px;color:var(--muted2);margin-left:6px">[${escHtml(r.run_name)}]</span>`;
-        if (r.run_status === 'interrupted') detail += ` <span style="font-size:10px;color:var(--warning);font-weight:600;margin-left:2px" title="This batch was cancelled by the user before all images were processed">⚠ interrupted</span>`;
+        if (r.run_status === 'interrupted') detail += ` <span style="font-size:10px;color:var(--warning);font-weight:600;margin-left:2px" title="This batch was cancelled by the user before all sources were processed">⚠ interrupted</span>`;
         const hasOut = !ok && r.output;
         const outRow = hasOut
           ? `<tr id="${rid}" style="display:none;border-bottom:1px solid var(--border)">
@@ -2618,7 +2678,11 @@
       }
       document.getElementById('s-total').textContent = stats.total.toLocaleString();
       document.getElementById('s-built').textContent = stats.built_ok.toLocaleString();
+      document.getElementById('s-built-fail').textContent = stats.built_fail.toLocaleString();
+      document.getElementById('s-not-built').textContent = stats.not_built.toLocaleString();
       document.getElementById('s-tested').textContent = stats.test_ok.toLocaleString();
+      document.getElementById('s-tested-fail').textContent = stats.test_fail.toLocaleString();
+      document.getElementById('s-not-tested').textContent = stats.not_tested.toLocaleString();
       document.getElementById('s-ignored').textContent = stats.ignored.toLocaleString();
     } catch { }
 
@@ -2752,7 +2816,7 @@
     btn.textContent = '⟳ Syncing…';
     try {
       const r = await api('/api/sync', { method: 'POST' });
-      toast(`Sync complete: ${r.total.toLocaleString()} images, ${r.inserted} new, ${r.removed} removed`, 'ok');
+      toast(`Sync complete: ${r.total.toLocaleString()} sources, ${r.inserted} new, ${r.removed} removed`, 'ok');
       await loadFilterOptions();
       loadImages(state.page);
       loadStats();
@@ -2764,10 +2828,10 @@
   });
 
   document.getElementById('btn-init').addEventListener('click', async () => {
-    if (!confirm('Reload registry metadata and sync images from disk?')) return;
+    if (!confirm('Reload registry metadata and sync sources from disk?')) return;
     try {
       const r = await api('/api/init', { method: 'POST' });
-      toast(`Init complete: ${r.images.total.toLocaleString()} images`, 'ok');
+      toast(`Init complete: ${r.images.total.toLocaleString()} sources`, 'ok');
       await loadFilterOptions();
       loadImages(1);
       loadStats();

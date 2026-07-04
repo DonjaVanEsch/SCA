@@ -4,5 +4,5 @@ go 1.22
 
 require (
 	github.com/gorilla/mux v1.7.4
-	github.com/cloudflare/circl v1.6.4
+	github.com/cloudflare/circl v1.6.3
 )

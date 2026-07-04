@@ -17,11 +17,11 @@ RUN git clone --depth 1 --branch 0.4.0 \
 WORKDIR /build
 ENV GONOSUMDB=* GOTOOLCHAIN=local PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 COPY go.mod main.go ./
-RUN go mod tidy \
+RUN go mod download \
     && LDIR=$(go env GOMODCACHE)/$(go list -m github.com/open-quantum-safe/liboqs-go | tr ' ' '@') \
     && mkdir -p /usr/local/lib/pkgconfig/ \
     && cp "$LDIR/.config/liboqs.pc" /usr/local/lib/pkgconfig/ \
-    && go build -o app main.go
+    && go build -mod=mod -o app main.go
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -52,6 +52,7 @@ Version wildcard:
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -266,6 +267,36 @@ def _confirm(verb, n, yes):
     return answer in ("y", "yes")
 
 
+# ── Build error classification ────────────────────────────────────────────────
+
+_REGISTRY_PATTERNS = [
+    (re.compile(r"unexpected status from \w+ request[^\n]*?(\d{3})", re.I),
+     lambda m: f"Docker registry HTTP {m.group(1)}"),
+    (re.compile(r"failed to resolve source metadata[^\n]*?(\d{3})", re.I),
+     lambda m: f"Docker registry HTTP {m.group(1)}"),
+    (re.compile(r"failed to do request[^\n]*?(\d{3})", re.I),
+     lambda m: f"Docker registry HTTP {m.group(1)}"),
+    (re.compile(r"dial tcp[^\n]*?i/o timeout", re.I),
+     lambda _: "network timeout reaching Docker registry"),
+    (re.compile(r"no such host", re.I),
+     lambda _: "DNS failure — cannot reach Docker registry"),
+    (re.compile(r"net/http: TLS handshake timeout", re.I),
+     lambda _: "TLS handshake timeout to Docker registry"),
+    (re.compile(r"connection refused", re.I),
+     lambda _: "connection refused to Docker registry"),
+]
+
+
+def _registry_error(output):
+    """Return a short description when a build failed due to a Docker registry /
+    network problem.  Returns None for ordinary image build failures."""
+    for pattern, msg_fn in _REGISTRY_PATTERNS:
+        m = pattern.search(output)
+        if m:
+            return msg_fn(m)
+    return None
+
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
@@ -337,7 +368,7 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
         stderr = "".join(_err)
         elapsed  = time.monotonic() - t0
         finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        output   = (stderr or stdout or "").strip()
+        output   = "\n".join(s for s in (stderr, stdout) if s).strip()
 
         log_fn(f"[{i:{pad}}/{n}] {tag}")
         if proc.returncode == 0:
@@ -347,6 +378,10 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
                       "started_at": started, "finished_at": finished}
         else:
             log_fn(f"         FAILED  ({elapsed:.1f}s)")
+            reg_err = _registry_error(output)
+            if reg_err:
+                log_fn(f"         ! DOCKER INFRASTRUCTURE ERROR: {reg_err}")
+                log_fn(f"         ! This is not an image problem — retry the build.")
             for line in output.splitlines()[-15:]:
                 log_fn(f"         | {line}")
             result = {"success": False, "output": output,

@@ -4,5 +4,5 @@ go 1.22
 
 require (
 	github.com/beego/beego/v2 v2.0.3
-	github.com/cloudflare/circl v1.6.4
+	github.com/cloudflare/circl v1.6.3
 )

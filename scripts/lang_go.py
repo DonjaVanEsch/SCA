@@ -43,6 +43,19 @@ _INCOMPATIBLE_FW: frozenset = frozenset({
 })
 
 
+# Transitive dependencies that a framework version leaves unversioned in its
+# own go.mod — causing go mod tidy to resolve to the latest (potentially
+# incompatible) release.  Each entry is a list of (module, registry_major)
+# pairs resolved via _resolve_go with the same max_toolchain as the image.
+_FW_EXTRA_REQS: dict = {
+    # iris v12.0 and v12.1 depend on gavv/httpexpect which imports fasthttp
+    # without pinning it; go mod tidy fetches the latest, which requires
+    # go 1.25+ from v1.72 onwards.  iris v12.2+ dropped fasthttp entirely.
+    ("Iris", "12.0"): [("github.com/valyala/fasthttp", "1")],
+    ("Iris", "12.1"): [("github.com/valyala/fasthttp", "1")],
+}
+
+
 def _fw_module(fw_name: str, fw_major: str):
     """Go module root path used in the 'require' line of go.mod."""
     if fw_name == "net/http":
@@ -485,13 +498,15 @@ def make_main_go(lang_ver: str, fw_name: str, fw_major: str,
 # ── go.mod generation ─────────────────────────────────────────────────────────
 
 def make_go_mod(lang_ver: str, fw_name: str, fw_resolved: str,
-                lib_name: str, lib_resolved: str) -> str:
+                lib_name: str, lib_resolved: str, extra_reqs=None) -> str:
     lines = [f"module app\n\ngo {lang_ver}\n"]
     reqs  = []
     if fw_resolved:
         reqs.append(f"\t{fw_resolved}")
     if lib_resolved:
         reqs.append(f"\t{lib_resolved}")
+    for req in (extra_reqs or []):
+        reqs.append(f"\t{req}")
     if reqs:
         lines.append("require (\n" + "\n".join(reqs) + "\n)\n")
     return "\n".join(lines)
@@ -578,6 +593,16 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
     # The pkg-config file name changed from liboqs.pc to liboqs-go.pc in 0.10.0.
     pc_file = "liboqs-go.pc" if _parse(lib_ver) >= (0, 10) else "liboqs.pc"
 
+    # golang:1.18/1.19/1.20 are based on Debian Bullseye (OpenSSL 1.1).
+    # golang:1.21+ switched to Debian Bookworm (OpenSSL 3).
+    # The runtime image must match the builder so shared liboqs*.so files resolve.
+    if _parse(lang_ver) < (1, 21):
+        runtime_image = "debian:bullseye-slim"
+        ssl_pkg = "libssl1.1"
+    else:
+        runtime_image = "debian:bookworm-slim"
+        ssl_pkg = "libssl3"
+
     return (
         f"FROM golang:{lang_ver} AS builder\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
@@ -597,15 +622,15 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
         "WORKDIR /build\n"
         "ENV GONOSUMDB=* GOTOOLCHAIN=local PKG_CONFIG_PATH=/usr/local/lib/pkgconfig\n"
         "COPY go.mod main.go ./\n"
-        "RUN go mod tidy \\\n"
+        "RUN go mod download \\\n"
         "    && LDIR=$(go env GOMODCACHE)/$(go list -m github.com/open-quantum-safe/liboqs-go | tr ' ' '@') \\\n"
         "    && mkdir -p /usr/local/lib/pkgconfig/ \\\n"
         f"    && cp \"$LDIR/.config/{pc_file}\" /usr/local/lib/pkgconfig/ \\\n"
-        "    && go build -o app main.go\n"
+        "    && go build -mod=mod -o app main.go\n"
         "\n"
-        "FROM debian:bookworm-slim\n"
+        f"FROM {runtime_image}\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-        "    libssl3 \\\n"
+        f"    {ssl_pkg} \\\n"
         "    && rm -rf /var/lib/apt/lists/*\n"
         "COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\n"
         "RUN ldconfig\n"
@@ -619,6 +644,20 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
 
 _GO_PROXY_CACHE: dict = {}
 _GO_MODVER_CACHE: dict = {}
+
+
+def _tc_ok(directive: tuple, max_tc: tuple) -> bool:
+    """Return True if directive (a module's go version) is <= max_tc (target Go).
+
+    Pads the shorter tuple with large sentinel values so that a target of
+    (1, 24) is treated as (1, 24, ∞) — i.e. any patch of Go 1.24 satisfies
+    a module that requires go 1.24.2.
+    """
+    BIG = 99999
+    n = max(len(directive), len(max_tc))
+    d = directive + (0,)    * (n - len(directive))
+    m = max_tc   + (BIG,) * (n - len(max_tc))
+    return d <= m
 
 
 def _fetch_go_directive(module: str, version: str) -> tuple:
@@ -694,7 +733,7 @@ def _resolve_go(module: str, registry_ver: str, max_toolchain: tuple = None):
     versions = _fetch_go_versions(module)
 
     def _compatible(v: str) -> bool:
-        return max_toolchain is None or _fetch_go_directive(module, v) <= max_toolchain
+        return max_toolchain is None or _tc_ok(_fetch_go_directive(module, v), max_toolchain)
 
     prefix = "v" + registry_ver + "."
     candidates = [v for v in versions if v.startswith(prefix)]
@@ -807,6 +846,13 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
             return False
         lib_resolved = f"{lib_mod} {tag}"
 
+    # ── Resolve extra transitive dep pins ─────────────────────────────────
+    extra_resolved = []
+    for (extra_mod, extra_ver) in _FW_EXTRA_REQS.get((fw_name, fw_major), []):
+        tag = _resolve_go(extra_mod, extra_ver, max_toolchain=lang_tuple)
+        if tag:
+            extra_resolved.append(f"{extra_mod} {tag}")
+
     # ── Write files ────────────────────────────────────────────────────────
     out.mkdir(parents=True, exist_ok=True)
 
@@ -817,7 +863,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
 
     if uses_modules:
         (out / "go.mod").write_text(
-            make_go_mod(lang_ver, fw_name, fw_resolved, lib_name, lib_resolved),
+            make_go_mod(lang_ver, fw_name, fw_resolved, lib_name, lib_resolved,
+                        extra_reqs=extra_resolved),
             encoding="utf-8",
         )
 

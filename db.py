@@ -1047,6 +1047,14 @@ def get_stats() -> dict:
                    HAVING MAX(CASE WHEN success=1 THEN 1 ELSE 0 END)=0
                )"""
         ).fetchone()[0]
+        not_built = conn.execute(
+            """SELECT COUNT(*) FROM images
+               WHERE ignored=0 AND id NOT IN (SELECT image_id FROM build_results)"""
+        ).fetchone()[0]
+        not_tested = conn.execute(
+            """SELECT COUNT(*) FROM images
+               WHERE ignored=0 AND id NOT IN (SELECT image_id FROM test_results)"""
+        ).fetchone()[0]
         langs = conn.execute(
             "SELECT COUNT(DISTINCT language_id) FROM lang_versions WHERE include=1"
         ).fetchone()[0]
@@ -1054,5 +1062,6 @@ def get_stats() -> dict:
         "total": total, "ignored": ignored,
         "built_ok": built, "built_fail": built_f,
         "test_ok": tested, "test_fail": tested_f,
+        "not_built": not_built, "not_tested": not_tested,
         "languages": langs,
     }
