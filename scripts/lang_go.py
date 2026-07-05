@@ -263,10 +263,10 @@ __MOD_FN__
 
 func main() {
 \te := echo.New()
-\te.GET("/", func(c echo.Context) error {
+\te.GET("/", func(c __CTX_TYPE__) error {
 \t\treturn c.JSON(http.StatusOK, map[string]string{"message": "Hello World"})
 \t})
-\te.GET("/version", func(c echo.Context) error {
+\te.GET("/version", func(c __CTX_TYPE__) error {
 \t\treturn c.JSON(http.StatusOK, map[string]interface{}{
 \t\t\t"language":  map[string]string{"name": "Go", "version": runtime.Version()},
 \t\t\t"framework": map[string]string{"name": "Echo", "version": __FW_VER__},
@@ -478,6 +478,10 @@ def make_main_go(lang_ver: str, fw_name: str, fw_major: str,
         FW_IMPORT = fw_imp,
         LIB_NAME  = lib_name,
         LIB_VER   = lib_ve,
+        # Echo v5 made Context a struct (handlers take *echo.Context);
+        # v4 and earlier keep it as an interface passed by value.
+        CTX_TYPE  = "*echo.Context" if (fw_name == "Echo" and _parse(fw_major)[0] >= 5)
+                    else "echo.Context",
     )
 
     tpl = {

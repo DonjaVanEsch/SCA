@@ -103,8 +103,14 @@ def main() -> None:
         "--version", default=None,
         help="Only regenerate this language version (e.g. 1.2). Default: all included versions.",
     )
+    parser.add_argument(
+        "--out", default=None,
+        help="Write into this directory instead of ../images (e.g. for a dry-run "
+             "diff against the live tree without touching it).",
+    )
     args = parser.parse_args()
     lang_id = args.lang.lower()
+    images_base = Path(args.out) if args.out else IMAGES_BASE
 
     # Make lang_<id>.py importable from the same directory as this script.
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -158,7 +164,7 @@ def main() -> None:
                 fw_compat = fw_ver.get("compatibility")  # None → no restriction
 
                 if not _included(lang_ver, fw_compat):
-                    fw_dir = IMAGES_BASE / lang_id / lang_ver / fw_name / fw_major
+                    fw_dir = images_base / lang_id / lang_ver / fw_name / fw_major
                     if fw_dir.exists():
                         shutil.rmtree(fw_dir)
                     skipped += 1
@@ -172,21 +178,21 @@ def main() -> None:
                         # Optional lib-level compatibility (e.g. crypto/mlkem → 1.24+).
                         lib_compat = lib.get("compatibility")
                         if not _included(lang_ver, lib_compat):
-                            out = (IMAGES_BASE / lang_id / lang_ver
+                            out = (images_base / lang_id / lang_ver
                                    / fw_name / fw_major / lib_name / "builtin")
                             if out.exists():
                                 shutil.rmtree(out)
                             skipped += 1
                             continue
                         if lang.write_context(
-                            lang_ver, fw_name, fw_major, lib_name, "builtin", IMAGES_BASE
+                            lang_ver, fw_name, fw_major, lib_name, "builtin", images_base
                         ):
                             count += 1
                         continue
 
                     for lv in lib_versions:
                         lib_ver_nr = lv["nr"]
-                        out = (IMAGES_BASE / lang_id / lang_ver
+                        out = (images_base / lang_id / lang_ver
                                / fw_name / fw_major / lib_name / lib_ver_nr)
 
                         if not lv.get("available", True):
@@ -203,7 +209,7 @@ def main() -> None:
                             continue
 
                         if lang.write_context(
-                            lang_ver, fw_name, fw_major, lib_name, lib_ver_nr, IMAGES_BASE
+                            lang_ver, fw_name, fw_major, lib_name, lib_ver_nr, images_base
                         ):
                             count += 1
                         else:
@@ -213,7 +219,7 @@ def main() -> None:
     print(f"Skipped      : {skipped} incompatible combinations")
     if not_available:
         print(f"Not available: {not_available} version(s) removed/skipped")
-    print(f"Location     : {IMAGES_BASE}")
+    print(f"Location     : {images_base}")
 
 
 if __name__ == "__main__":
