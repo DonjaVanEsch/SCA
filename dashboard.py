@@ -453,6 +453,10 @@ if __name__ == "__main__":
     print("Initialising database …")
     db.init_db()
 
+    if not db.IMAGES_BASE.exists() or not any(db.IMAGES_BASE.rglob("Dockerfile")):
+        print(f"Warning: no image contexts found under '{db.IMAGES_BASE}'.")
+        print("Run 'python scripts/generate_images.py' first, then reload with /api/init.")
+
     if not (PROJECT_ROOT / "pqc_manager.db").exists() or \
        db._connect().execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0:
         print("Loading registry metadata …")

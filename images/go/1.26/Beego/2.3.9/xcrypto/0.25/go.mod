@@ -1,8 +1,0 @@
-module app
-
-go 1.26
-
-require (
-	github.com/beego/beego/v2 v2.3.9
-	golang.org/x/crypto v0.25.0
-)
