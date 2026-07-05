@@ -264,16 +264,39 @@ def _norm_version(v: str) -> str:
     return v.replace("-", "") if v == "built-in" else v
 
 
+def _prune_missing(conn, table: str, fk_col: str, fk_val: int,
+                   keep_col: str, keep_values: set) -> int:
+    """Delete rows from `table` scoped to fk_col=fk_val whose keep_col value
+    is no longer present in keep_values. Cascades to dependent rows (images,
+    build/test results) via the schema's ON DELETE CASCADE.
+    """
+    if keep_values:
+        placeholders = ",".join("?" * len(keep_values))
+        cur = conn.execute(
+            f"DELETE FROM {table} WHERE {fk_col}=? AND {keep_col} NOT IN ({placeholders})",
+            (fk_val, *keep_values),
+        )
+    else:
+        cur = conn.execute(f"DELETE FROM {table} WHERE {fk_col}=?", (fk_val,))
+    return cur.rowcount
+
+
 def load_registry() -> dict[str, int]:
     """Parse all registry_*.json files and populate the reference tables.
 
     Returns a dict with counts: {languages, lang_versions, frameworks,
-    fw_versions, libraries, lib_versions}.
+    fw_versions, libraries, lib_versions, *_removed}.
     Existing rows are updated (UPSERT) so the function is safe to re-run.
+    Rows no longer present in the registry (e.g. a language version that was
+    renamed or dropped) are pruned so stale entries don't linger in the
+    reference tables/dashboard forever.
     """
     counts = {k: 0 for k in
               ("languages", "lang_versions", "frameworks",
                "fw_versions", "libraries", "lib_versions")}
+    counts.update({f"{k}_removed": 0 for k in
+                   ("lang_versions", "frameworks", "fw_versions",
+                    "libraries", "lib_versions")})
 
     with _connect() as conn:
         for registry_path in _REGISTRY_FILES:
@@ -306,10 +329,12 @@ def load_registry() -> dict[str, int]:
                     counts["languages"] += 1
 
                 # ── Language versions ──────────────────────────────────────
+                seen_lang_versions = set()
                 for lv in lang_obj.get("versions", []):
                     nr      = str(lv.get("nr", ""))
                     rdate   = lv.get("release_date")
                     include = int(lv.get("include", True))
+                    seen_lang_versions.add(nr)
                     conn.execute(
                         """INSERT INTO lang_versions
                                (language_id, version_nr, release_date, include)
@@ -321,12 +346,19 @@ def load_registry() -> dict[str, int]:
                     )
                     counts["lang_versions"] += 1
 
+                counts["lang_versions_removed"] += _prune_missing(
+                    conn, "lang_versions", "language_id", lang_id,
+                    "version_nr", seen_lang_versions,
+                )
+
                 # ── Frameworks ─────────────────────────────────────────────
+                seen_frameworks = set()
                 for fw in lang_obj.get("frameworks", []):
                     fw_name  = fw.get("name", "")
                     module   = fw.get("module")
                     notes    = fw.get("notes")
                     include  = int(fw.get("include", True))
+                    seen_frameworks.add(fw_name)
 
                     conn.execute(
                         """INSERT INTO frameworks
@@ -350,10 +382,12 @@ def load_registry() -> dict[str, int]:
                         versions = [{"nr": versions, "release_date": None,
                                      "compatibility": []}]
 
+                    seen_fw_versions = set()
                     for fv in versions:
                         nr      = _norm_version(str(fv.get("nr", "")))
                         rdate   = fv.get("release_date")
                         compat  = json.dumps(fv.get("compatibility", []))
+                        seen_fw_versions.add(nr)
                         conn.execute(
                             """INSERT INTO fw_versions
                                    (framework_id, version_nr, release_date, compatibility)
@@ -365,12 +399,24 @@ def load_registry() -> dict[str, int]:
                         )
                         counts["fw_versions"] += 1
 
+                    counts["fw_versions_removed"] += _prune_missing(
+                        conn, "fw_versions", "framework_id", fw_id,
+                        "version_nr", seen_fw_versions,
+                    )
+
+                counts["frameworks_removed"] += _prune_missing(
+                    conn, "frameworks", "language_id", lang_id,
+                    "name", seen_frameworks,
+                )
+
                 # ── Crypto libraries ───────────────────────────────────────
+                seen_libraries = set()
                 for lib in lang_obj.get("cryptography_libs", []):
                     lib_name = lib.get("name", "")
                     module   = lib.get("module")
                     notes    = lib.get("notes")
                     include  = int(lib.get("include", True))
+                    seen_libraries.add(lib_name)
 
                     conn.execute(
                         """INSERT INTO libraries
@@ -394,10 +440,12 @@ def load_registry() -> dict[str, int]:
                         versions = [{"nr": versions, "release_date": None,
                                      "compatibility": lib.get("compatibility", [])}]
 
+                    seen_lib_versions = set()
                     for lv in versions:
                         nr      = _norm_version(str(lv.get("nr", "")))
                         rdate   = lv.get("release_date")
                         compat  = json.dumps(lv.get("compatibility", []))
+                        seen_lib_versions.add(nr)
                         conn.execute(
                             """INSERT INTO lib_versions
                                    (library_id, version_nr, release_date, compatibility)
@@ -408,6 +456,16 @@ def load_registry() -> dict[str, int]:
                             (lib_id, nr, rdate, compat),
                         )
                         counts["lib_versions"] += 1
+
+                    counts["lib_versions_removed"] += _prune_missing(
+                        conn, "lib_versions", "library_id", lib_id,
+                        "version_nr", seen_lib_versions,
+                    )
+
+                counts["libraries_removed"] += _prune_missing(
+                    conn, "libraries", "language_id", lang_id,
+                    "name", seen_libraries,
+                )
 
     return counts
 
@@ -805,7 +863,8 @@ def get_reference_data() -> dict:
         for lang in langs:
             lang_id = lang["id"]
             lang["versions"] = [dict(r) for r in conn.execute(
-                "SELECT * FROM lang_versions WHERE language_id=? ORDER BY version_nr",
+                "SELECT * FROM lang_versions WHERE language_id=? "
+                "ORDER BY release_date IS NULL, release_date, version_nr",
                 (lang_id,),
             )]
             lang["frameworks"] = []
@@ -815,7 +874,8 @@ def get_reference_data() -> dict:
             ):
                 fw_dict = dict(fw)
                 fw_dict["versions"] = [dict(r) for r in conn.execute(
-                    "SELECT * FROM fw_versions WHERE framework_id=? ORDER BY version_nr",
+                    "SELECT * FROM fw_versions WHERE framework_id=? "
+                    "ORDER BY release_date IS NULL, release_date, version_nr",
                     (fw["id"],),
                 )]
                 lang["frameworks"].append(fw_dict)
@@ -826,7 +886,8 @@ def get_reference_data() -> dict:
             ):
                 lib_dict = dict(lib)
                 lib_dict["versions"] = [dict(r) for r in conn.execute(
-                    "SELECT * FROM lib_versions WHERE library_id=? ORDER BY version_nr",
+                    "SELECT * FROM lib_versions WHERE library_id=? "
+                    "ORDER BY release_date IS NULL, release_date, version_nr",
                     (lib["id"],),
                 )]
                 lang["libraries"].append(lib_dict)

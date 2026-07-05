@@ -99,6 +99,10 @@ def main() -> None:
         "--lang", default="python",
         help="Language ID to generate (default: python).",
     )
+    parser.add_argument(
+        "--version", default=None,
+        help="Only regenerate this language version (e.g. 1.2). Default: all included versions.",
+    )
     args = parser.parse_args()
     lang_id = args.lang.lower()
 
@@ -121,6 +125,12 @@ def main() -> None:
         sys.exit(1)
 
     included_versions = [v["nr"] for v in lang_data["versions"] if v.get("include")]
+    if args.version:
+        if args.version not in included_versions:
+            print(f"ERROR: version '{args.version}' not found (or not included) "
+                  f"in {registry_path.name}")
+            sys.exit(1)
+        included_versions = [args.version]
     print(f"{lang_id} versions to build: {included_versions}")
 
     lang.prefetch(lang_data)

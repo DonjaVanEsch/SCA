@@ -2157,8 +2157,8 @@
         return;
       }
       const pending = actions.slice(i + 1);
-      runAction(actions[i], ids, opts, (err) => {
-        if (err) {
+      runAction(actions[i], ids, opts, (err, cancelled) => {
+        if (err || cancelled) {
           localStorage.removeItem('pqc-active-job');
           document.getElementById('btn-start').disabled = state.selected.size === 0;
         } else {
@@ -2285,7 +2285,7 @@
           document.getElementById('log-status').textContent = 'Done';
           toast(`${action} finished`, 'ok');
         }
-        if (onDone) { onDone(false); } else { loadImages(state.page); loadStats(); }
+        if (onDone) { onDone(false, _wasCancelled); } else { loadImages(state.page); loadStats(); }
         return;
       }
       if (line === '[CANCELLED]') {
@@ -2362,15 +2362,15 @@
         return;
       }
       const pending = pending_actions.slice(i + 1);
-      runAction(pending_actions[i], image_ids, opts, (err) => {
-        if (err) { localStorage.removeItem('pqc-active-job'); }
+      runAction(pending_actions[i], image_ids, opts, (err, cancelled) => {
+        if (err || cancelled) { localStorage.removeItem('pqc-active-job'); }
         else { runPending(i + 1); }
       }, run_name, { pending_actions: pending, image_ids, opts, run_name });
     }
 
     // Reconnect to existing stream; don't re-save to localStorage (already set)
-    openLog(saved.title + ' ↩', saved.job_id, saved.action, (err) => {
-      if (!err) runPending(0);
+    openLog(saved.title + ' ↩', saved.job_id, saved.action, (err, cancelled) => {
+      if (!err && !cancelled) runPending(0);
       else localStorage.removeItem('pqc-active-job');
     }, null /* don't overwrite localStorage */);
   }

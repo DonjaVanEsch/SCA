@@ -514,24 +514,38 @@ def make_go_mod(lang_ver: str, fw_name: str, fw_resolved: str,
 
 # ── Dockerfile generation ─────────────────────────────────────────────────────
 
-def make_dockerfile(lang_ver: str, lib_name: str, lib_ver: str) -> str:
+def make_dockerfile(lang_ver: str, lib_name: str, lib_ver: str,
+                    fw_mod: str = None, fw_git_ref: str = None, fw_pin_mode: str = None) -> str:
     uses_modules = _parse(lang_ver) >= _GO_MODULES_MIN
     cgo          = _lib_cgo(lib_name)
 
     if not uses_modules:
-        return _dockerfile_gopath(lang_ver)
+        if cgo:
+            return _dockerfile_liboqs_gopath(lang_ver, lib_ver)
+        return _dockerfile_gopath(lang_ver, fw_mod, fw_git_ref, fw_pin_mode)
     if cgo:
         return _dockerfile_liboqs(lang_ver, lib_ver)
     return _dockerfile_standard(lang_ver)
 
 
 def _dockerfile_standard(lang_ver: str) -> str:
+    # `go mod tidy` resolves the FULL module graph, including every
+    # dependency's test-only imports -- which can drag in much newer
+    # transitive versions than the actual build needs (e.g. Iris 12.0's
+    # test-only gavv/httpexpect -> ginkgo/gomega chain pulls a 2026
+    # golang.org/x/net that requires modern-Go-only stdlib packages,
+    # breaking the build on old Go). Plain `go build` only resolves what
+    # main.go actually imports, at much older/compatible versions.
+    #
+    # -mod=mod wasn't a recognized value before Go 1.16 (that's also the
+    # release that flipped the default from auto-update to "readonly").
+    mod_flag = "-mod=mod " if _parse(lang_ver) >= (1, 16) else ""
     return (
         f"FROM golang:{lang_ver} AS builder\n"
         "WORKDIR /build\n"
         "ENV CGO_ENABLED=0 GONOSUMDB=* GOTOOLCHAIN=local\n"
         "COPY go.mod main.go ./\n"
-        "RUN go mod tidy && go build -o app main.go\n"
+        f"RUN go build {mod_flag}-o app main.go\n"
         "\n"
         "FROM scratch\n"
         "COPY --from=builder /build/app /app\n"
@@ -540,14 +554,50 @@ def _dockerfile_standard(lang_ver: str) -> str:
     )
 
 
-def _dockerfile_gopath(lang_ver: str) -> str:
-    """Dockerfile for Go < 1.11 using GOPATH mode (no version pinning)."""
+def _dockerfile_gopath(lang_ver: str, fw_mod: str = None, fw_git_ref: str = None,
+                       fw_pin_mode: str = None) -> str:
+    """Dockerfile for Go < 1.11 using GOPATH mode (no go.mod, no version pinning
+    mechanism of its own).
+
+    A plain `go get` fetches whatever is on the framework's default branch
+    *today*, which can have drifted far past the pinned release -- e.g.
+    astaxie/beego's default branch is now a v2-compatibility shim with no
+    top-level Controller type, silently breaking every old Beego build.
+
+    fw_pin_mode selects how the exact version is pinned after the initial
+    `go get`:
+      "git"   -- a live git tag still exists on the upstream repo; check it out.
+      "proxy" -- the tag has been deleted/rewritten upstream (e.g. kataras/iris
+                 v10.x/v11.x), but the Go module proxy permanently caches every
+                 version it has ever served; fetch that exact zip instead and
+                 overwrite GOPATH with its contents. Python (present in the
+                 golang base image) unpacks it since `unzip` isn't installed.
+    """
+    pin = ""
+    if fw_mod and fw_git_ref and fw_pin_mode == "git":
+        pin = f"RUN cd $GOPATH/src/{fw_mod} && git fetch --tags && git checkout {fw_git_ref}\n"
+    elif fw_mod and fw_git_ref and fw_pin_mode == "proxy":
+        pin = (
+            f"RUN rm -rf $GOPATH/src/{fw_mod} && mkdir -p $GOPATH/src/{fw_mod} \\\n"
+            f"    && curl -sL -o /tmp/fw.zip \"https://proxy.golang.org/{fw_mod}/@v/{fw_git_ref}.zip\" \\\n"
+            "    && python -c \"import zipfile; zipfile.ZipFile('/tmp/fw.zip').extractall('/tmp/fwsrc')\" \\\n"
+            f"    && cp -r \"/tmp/fwsrc/{fw_mod}@{fw_git_ref}/.\" $GOPATH/src/{fw_mod}/ \\\n"
+            "    && rm -rf /tmp/fw.zip /tmp/fwsrc\n"
+        )
+    # Pinning to an older version can introduce transitive imports the first
+    # `go get` never saw (it ran against a different source tree) -- fetch
+    # again afterward now that the real version's import graph is in place.
+    refetch = "RUN go get -d ./... 2>/dev/null || true\n" if pin else ""
+
     return (
         f"FROM golang:{lang_ver}\n"
         "ENV GOPATH=/go CGO_ENABLED=0\n"
         "WORKDIR /go/src/myapp\n"
         "COPY main.go .\n"
-        "RUN go get ./... 2>/dev/null || true && go build -o /app .\n"
+        "RUN go get -d ./... 2>/dev/null || true\n"
+        f"{pin}"
+        f"{refetch}"
+        "RUN go build -o /app .\n"
         "EXPOSE 8000\n"
         'CMD ["/app"]\n'
     )
@@ -572,6 +622,41 @@ _LIBOQS_GO_PSEUDO_VERSIONS: dict = {
     "0.9":  "v0.0.0-20231030220805-55a1c61ca0f4",  # tag 0.9.0
     "0.10": "v0.0.0-20240327192735-f3526b7b43ba",  # tag 0.10.0
 }
+
+
+def _debian_archive_codename(lang_ver: str):
+    """Debian codename for golang:{lang_ver}'s base image, if it has been
+    pulled from the live Debian mirrors and only survives on archive.debian.org.
+
+    jessie (<1.9), stretch (1.9-1.10) and buster (1.11-1.15) have all been
+    dropped from deb.debian.org/security.debian.org (404s). bullseye (1.16+)
+    is still live at the time of writing.
+    """
+    v = _parse(lang_ver)
+    if v < (1, 9):
+        return "jessie"
+    if v < (1, 11):
+        return "stretch"
+    if v < (1, 16):
+        return "buster"
+    return None
+
+
+def _debian_archive_apt(lang_ver: str):
+    """Return (apt_sources, apt_flag, allow_unauth) Dockerfile fragments that
+    redirect apt to archive.debian.org and tolerate its expired Release
+    signatures, when golang:{lang_ver}'s base is no longer on the live mirrors.
+    All three are empty strings when the base is still live.
+    """
+    codename = _debian_archive_codename(lang_ver)
+    apt_sources = (
+        f"RUN echo 'deb http://archive.debian.org/debian {codename} main' > /etc/apt/sources.list \\\n"
+        f"    && echo 'deb http://archive.debian.org/debian-security {codename}/updates main' >> /etc/apt/sources.list\n"
+        if codename else ""
+    )
+    apt_flag     = "-o Acquire::Check-Valid-Until=false " if codename else ""
+    allow_unauth = "--allow-unauthenticated "              if codename else ""
+    return apt_sources, apt_flag, allow_unauth
 
 
 def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
@@ -603,9 +688,20 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
         runtime_image = "debian:bookworm-slim"
         ssl_pkg = "libssl3"
 
+    # golang:1.11-1.15 are Debian buster, also dropped from the live mirrors.
+    apt_sources, apt_flag, allow_unauth = _debian_archive_apt(lang_ver)
+
+    # Go 1.16 changed the default -mod behavior from auto-updating go.sum to
+    # "readonly" (hence needing an explicit -mod=mod to restore the old
+    # behavior for our go.sum-less go.mod) -- but "mod" wasn't a recognized
+    # -mod value before that same release, so passing it on Go < 1.16 is a
+    # hard CLI error, not a no-op.
+    mod_flag = "-mod=mod " if _parse(lang_ver) >= (1, 16) else ""
+
     return (
         f"FROM golang:{lang_ver} AS builder\n"
-        "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+        f"{apt_sources}"
+        f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
         "    cmake ninja-build gcc g++ libssl-dev git pkg-config \\\n"
         "    && rm -rf /var/lib/apt/lists/*\n"
         f"RUN git clone --depth 1 --branch {liboqs_tag} \\\n"
@@ -616,17 +712,21 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
         "       -DOQS_BUILD_ONLY_LIB=ON \\\n"
         f"{openssl_line}"
         "       -GNinja \\\n"
-        "    && cmake --build /tmp/liboqs/build \\\n"
-        "    && cmake --install /tmp/liboqs/build \\\n"
+        # `cmake --install` needs 3.15+; buster ships 3.13.4, so use the
+        # portable `--build --target install` form instead (works on any
+        # cmake new enough to have -S/-B, i.e. 3.13+).
+        "    && cmake --build /tmp/liboqs/build --target install \\\n"
         "    && rm -rf /tmp/liboqs\n"
         "WORKDIR /build\n"
         "ENV GONOSUMDB=* GOTOOLCHAIN=local PKG_CONFIG_PATH=/usr/local/lib/pkgconfig\n"
         "COPY go.mod main.go ./\n"
         "RUN go mod download \\\n"
-        "    && LDIR=$(go env GOMODCACHE)/$(go list -m github.com/open-quantum-safe/liboqs-go | tr ' ' '@') \\\n"
+        # GOMODCACHE wasn't queryable via `go env` until Go 1.15; $GOPATH/pkg/mod
+        # is the same location on every Go version that has modules (1.11+).
+        "    && LDIR=$(go env GOPATH)/pkg/mod/$(go list -m github.com/open-quantum-safe/liboqs-go | tr ' ' '@') \\\n"
         "    && mkdir -p /usr/local/lib/pkgconfig/ \\\n"
         f"    && cp \"$LDIR/.config/{pc_file}\" /usr/local/lib/pkgconfig/ \\\n"
-        "    && go build -mod=mod -o app main.go\n"
+        f"    && go build {mod_flag}-o app main.go\n"
         "\n"
         f"FROM {runtime_image}\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
@@ -635,6 +735,79 @@ def _dockerfile_liboqs(lang_ver: str, lib_ver: str) -> str:
         "COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\n"
         "RUN ldconfig\n"
         "COPY --from=builder /build/app /app\n"
+        "EXPOSE 8000\n"
+        'CMD ["/app"]\n'
+    )
+
+
+def _dockerfile_liboqs_gopath(lang_ver: str, lib_ver: str) -> str:
+    """Multi-stage Dockerfile that builds the liboqs C library then the Go app,
+    for Go < 1.11 (GOPATH mode).
+
+    Mirrors _dockerfile_liboqs() but without go.mod / `go mod download`: the
+    Go bindings have no go-proxy-servable tags of their own (see
+    _LIBOQS_GO_PSEUDO_VERSIONS), so fetch the pinned pseudo-version's zip
+    directly, the same way GOPATH-mode framework pinning works.
+    """
+    liboqs_tag = lib_ver if "." in lib_ver else f"{lib_ver}.0"
+    if liboqs_tag.count(".") == 1:
+        liboqs_tag += ".0"
+    liboqs_tag = _LIBOQS_C_TAG_MAP.get(liboqs_tag, liboqs_tag)
+
+    openssl_line = (
+        "       -DOQS_USE_OPENSSL=OFF \\\n"
+        "       \"-DCMAKE_C_FLAGS=-w\" \\\n"
+        if _parse(liboqs_tag) < (0, 8, 0) else ""
+    )
+    pc_file = "liboqs-go.pc" if _parse(lib_ver) >= (0, 10) else "liboqs.pc"
+
+    if _parse(lang_ver) < (1, 21):
+        runtime_image = "debian:bullseye-slim"
+        ssl_pkg = "libssl1.1"
+    else:
+        runtime_image = "debian:bookworm-slim"
+        ssl_pkg = "libssl3"
+
+    lib_mod = "github.com/open-quantum-safe/liboqs-go"
+    go_ref  = _LIBOQS_GO_PSEUDO_VERSIONS[lib_ver]
+
+    apt_sources, apt_flag, allow_unauth = _debian_archive_apt(lang_ver)
+
+    return (
+        f"FROM golang:{lang_ver} AS builder\n"
+        f"{apt_sources}"
+        f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
+        "    cmake ninja-build gcc g++ libssl-dev git pkg-config \\\n"
+        "    && rm -rf /var/lib/apt/lists/*\n"
+        f"RUN git clone --depth 1 --branch {liboqs_tag} \\\n"
+        "    https://github.com/open-quantum-safe/liboqs /tmp/liboqs \\\n"
+        "    && cmake -S /tmp/liboqs -B /tmp/liboqs/build \\\n"
+        "       -DCMAKE_BUILD_TYPE=Release \\\n"
+        "       -DBUILD_SHARED_LIBS=ON \\\n"
+        "       -DOQS_BUILD_ONLY_LIB=ON \\\n"
+        f"{openssl_line}"
+        "       -GNinja \\\n"
+        "    && cmake --build /tmp/liboqs/build --target install \\\n"
+        "    && rm -rf /tmp/liboqs\n"
+        "ENV GOPATH=/go CGO_ENABLED=1 PKG_CONFIG_PATH=/usr/local/lib/pkgconfig\n"
+        "WORKDIR /go/src/myapp\n"
+        "COPY main.go .\n"
+        f"RUN mkdir -p $GOPATH/src/{lib_mod} \\\n"
+        f"    && curl -sL -o /tmp/lib.zip \"https://proxy.golang.org/{lib_mod}/@v/{go_ref}.zip\" \\\n"
+        "    && python -c \"import zipfile; zipfile.ZipFile('/tmp/lib.zip').extractall('/tmp/libsrc')\" \\\n"
+        f"    && cp -r \"/tmp/libsrc/{lib_mod}@{go_ref}/.\" $GOPATH/src/{lib_mod}/ \\\n"
+        "    && rm -rf /tmp/lib.zip /tmp/libsrc \\\n"
+        "    && mkdir -p /usr/local/lib/pkgconfig/ \\\n"
+        f"    && cp \"$GOPATH/src/{lib_mod}/.config/{pc_file}\" /usr/local/lib/pkgconfig/\n"
+        "RUN go build -o /app .\n"
+        "\n"
+        f"FROM {runtime_image}\n"
+        "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+        f"    {ssl_pkg} \\\n"
+        "    && rm -rf /var/lib/apt/lists/*\n"
+        "COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\n"
+        "RUN ldconfig\n"
+        "COPY --from=builder /app /app\n"
         "EXPOSE 8000\n"
         'CMD ["/app"]\n'
     )
@@ -762,6 +935,53 @@ def _resolve_go(module: str, registry_ver: str, max_toolchain: tuple = None):
     return None
 
 
+_GIT_TAGS_CACHE: dict = {}
+
+
+def _fetch_git_tags(module: str) -> list:
+    """Fetch live git tags for a GitHub-hosted module (cached).
+
+    Used for GOPATH-mode framework pinning: pre-Go-modules releases often use
+    non-canonical tag names (e.g. 'v1.0', 'v1.1' with no patch component) that
+    the Go module proxy's @v/list refuses to serve, even though the tag is a
+    perfectly valid git ref.
+    """
+    if module in _GIT_TAGS_CACHE:
+        return _GIT_TAGS_CACHE[module]
+    tags = []
+    m = re.match(r"^github\.com/([^/]+)/([^/]+)", module)
+    if m:
+        url = f"https://api.github.com/repos/{m.group(1)}/{m.group(2)}/tags?per_page=100"
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                tags = [t["name"] for t in json.loads(resp.read())]
+        except (URLError, OSError, json.JSONDecodeError) as exc:
+            print(f"  [WARN] GitHub tags fetch failed for {module}: {exc}", flush=True)
+    _GIT_TAGS_CACHE[module] = tags
+    return tags
+
+
+def _resolve_git_tag(module: str, registry_ver: str):
+    """Resolve a registry version like '1.0' to a live git tag.
+
+    Tolerates the inconsistent tag naming used by pre-Go-modules framework
+    releases: with/without a 'v' prefix, with/without a patch component
+    (e.g. 'v1.0', 'v1.0.0', '1.0.0'). Returns None if no live tag matches --
+    the caller should then fall back to the Go proxy's cached zip (which can
+    still serve versions whose git tag has since been deleted/rewritten
+    upstream, e.g. kataras/iris v10.x/v11.x).
+    """
+    tags = _fetch_git_tags(module)
+    prefix = "v" + registry_ver + "."
+    candidates = [t for t in tags if t.startswith(prefix)]
+    if candidates:
+        return sorted(candidates, key=_ver_key)[-1]
+    for exact in ("v" + registry_ver, registry_ver):
+        if exact in tags:
+            return exact
+    return None
+
+
 # ── Pre-fetch ─────────────────────────────────────────────────────────────────
 
 def prefetch(lang_data: dict) -> None:
@@ -801,14 +1021,19 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     Returns False (and removes any stale directory) when a required module
     version cannot be resolved on the Go module proxy.
     """
-    safe_fw = fw_name.replace("/", "_")
-    out = images_base / "go" / lang_ver / safe_fw / fw_major / lib_name / lib_ver
+    out = images_base / "go" / lang_ver / fw_name / fw_major / lib_name / lib_ver
 
     uses_modules = _parse(lang_ver) >= _GO_MODULES_MIN
 
-    # Pre-module framework versions can't resolve transitive deps under Go modules
-    # (broken module paths, missing go.mod, etc.) — skip them entirely.
-    if (fw_name, fw_major) in _INCOMPATIBLE_FW and uses_modules:
+    # Pre-module framework versions are skipped everywhere, not just under Go
+    # modules: under Go modules they can't resolve transitive deps (broken
+    # module paths, missing go.mod); under GOPATH mode their own transitive
+    # deps have since moved on to modern, incompatible Go APIs (e.g. Beego
+    # 1.0's optional MySQL session backend now requires Go 1.21's `slices`).
+    # None of these pre-module versions can pair with any PQC crypto library
+    # anyway (circl/liboqs-go/mlkem768/tink-go all require Go 1.11+), so
+    # there's no research value in chasing their bit-rotted dependency trees.
+    if (fw_name, fw_major) in _INCOMPATIBLE_FW:
         if out.exists():
             shutil.rmtree(out)
         return False
@@ -817,7 +1042,9 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
 
     # ── Resolve framework version ──────────────────────────────────────────
     fw_mod      = _fw_module(fw_name, fw_major)
-    fw_resolved = ""  # go.mod require line fragment: "module version"
+    fw_resolved = ""    # go.mod require line fragment: "module version"
+    fw_git_ref  = None  # GOPATH mode: version/tag to pin the fetched framework to
+    fw_pin_mode = None  # GOPATH mode: "git" (live tag) or "proxy" (Go proxy zip)
 
     if fw_mod and uses_modules:
         tag = _resolve_go(fw_mod, fw_major, max_toolchain=lang_tuple)
@@ -829,6 +1056,22 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         if (fw_name, fw_major) in _INCOMPATIBLE_FW and "+incompatible" not in tag:
             tag += "+incompatible"
         fw_resolved = f"{fw_mod} {tag}"
+    elif fw_mod and not uses_modules:
+        # Prefer a live git tag (handles non-canonical tag names like 'v1.0'
+        # that the Go proxy won't serve). Fall back to the Go proxy's cached
+        # zip for versions whose tag has since been deleted/rewritten
+        # upstream (e.g. kataras/iris v10.x/v11.x).
+        git_tag = _resolve_git_tag(fw_mod, fw_major)
+        if git_tag:
+            fw_git_ref, fw_pin_mode = git_tag, "git"
+        else:
+            tag = _resolve_go(fw_mod, fw_major)
+            if tag is None:
+                print(f"  [SKIP] {fw_name} {fw_major} not resolvable (no git tag or proxy version)", flush=True)
+                if out.exists():
+                    shutil.rmtree(out)
+                return False
+            fw_git_ref, fw_pin_mode = tag, "proxy"
 
     # ── Resolve library version ────────────────────────────────────────────
     lib_mod      = _lib_module(lib_name, lib_ver)
@@ -869,7 +1112,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         )
 
     (out / "Dockerfile").write_text(
-        make_dockerfile(lang_ver, lib_name, lib_ver),
+        make_dockerfile(lang_ver, lib_name, lib_ver,
+                        fw_mod=fw_mod, fw_git_ref=fw_git_ref, fw_pin_mode=fw_pin_mode),
         encoding="utf-8",
     )
 

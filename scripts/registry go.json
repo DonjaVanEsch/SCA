@@ -4,12 +4,27 @@
       "id": "go",
       "display_name": "Go",
       "versions": [
-        { "nr": "1.0",  "release_date": "2012-03-28", "include": true },
-        { "nr": "1.5",  "release_date": "2015-08-19", "include": true },
+        { "nr": "1.0",  "release_date": "2012-03-28", "include": false },
+        { "nr": "1.1",  "release_date": "2013-05-13", "include": false },
+        { "nr": "1.2",  "release_date": "2013-12-01", "include": false },
+        { "nr": "1.3",  "release_date": "2014-06-18", "include": false },
+        { "nr": "1.4",  "release_date": "2014-12-10", "include": false },
+        { "nr": "1.5",  "release_date": "2015-08-19", "include": false },
+        { "nr": "1.6",  "release_date": "2016-02-17", "include": true },
+        { "nr": "1.7",  "release_date": "2016-08-15", "include": false },
+        { "nr": "1.8",  "release_date": "2017-02-16", "include": false },
+        { "nr": "1.9",  "release_date": "2017-08-24", "include": false },
+        { "nr": "1.10", "release_date": "2018-02-16", "include": false },
         { "nr": "1.11", "release_date": "2018-08-24", "include": true },
+        { "nr": "1.12", "release_date": "2019-02-25", "include": false },
         { "nr": "1.13", "release_date": "2019-09-03", "include": true },
+        { "nr": "1.14", "release_date": "2020-02-25", "include": false },
+        { "nr": "1.15", "release_date": "2020-08-11", "include": false },
         { "nr": "1.16", "release_date": "2021-02-16", "include": true },
+        { "nr": "1.17", "release_date": "2021-08-16", "include": false },
         { "nr": "1.18", "release_date": "2022-03-15", "include": true },
+        { "nr": "1.19", "release_date": "2022-08-02", "include": false },
+        { "nr": "1.20", "release_date": "2023-02-01", "include": false },
         { "nr": "1.21", "release_date": "2023-08-08", "include": true },
         { "nr": "1.22", "release_date": "2024-02-06", "include": true },
         { "nr": "1.23", "release_date": "2024-08-13", "include": true },
@@ -42,7 +57,7 @@
           "name": "Echo",
           "module": "github.com/labstack/echo",
           "version": [
-            { "nr": "4.0",  "release_date": "2019-01-30", "compatibility": [ "1.0+"  ] },
+            { "nr": "4.0",  "release_date": "2019-01-30", "compatibility": [ "1.11+" ] },
             { "nr": "4.1",  "release_date": "2019-04-29", "compatibility": [ "1.12+" ] },
             { "nr": "4.2",  "release_date": "2021-02-11", "compatibility": [ "1.15+" ] },
             { "nr": "4.3",  "release_date": "2021-05-08", "compatibility": [ "1.15+" ] },
@@ -211,7 +226,7 @@
           "name": "liboqs-go",
           "module": "github.com/open-quantum-safe/liboqs-go",
           "version": [
-            { "nr": "0.1",  "release_date": "2019-10-22", "compatibility": [ "1.0+"  ] },
+            { "nr": "0.1",  "release_date": "2019-10-22", "compatibility": [ "1.11+" ] },
             { "nr": "0.4",  "release_date": "2020-11-28", "compatibility": [ "1.11+" ] },
             { "nr": "0.7",  "release_date": "2022-01-05", "compatibility": [ "1.11+" ] },
             { "nr": "0.8",  "release_date": "2023-07-05", "compatibility": [ "1.15+" ] },
@@ -219,7 +234,7 @@
             { "nr": "0.10", "release_date": "2024-03-27", "compatibility": [ "1.21+" ] },
             { "nr": "0.12", "release_date": "2025-01-16", "compatibility": [ "1.21+" ] }
           ],
-          "notes": "CGo bindings to the liboqs C library. Versioning syncs with liboqs C (no 0.5/0.6/0.11). 0.10→go 1.21 + NIST PRNG removed; 0.12→ML-DSA context-string API (FIPS 204)."
+          "notes": "CGo bindings to the liboqs C library. Versioning syncs with liboqs C (no 0.5/0.6/0.11). 0.10→go 1.21 + NIST PRNG removed; 0.12→ML-DSA context-string API (FIPS 204). 0.1's nominal 'go 1.0+' support is GOPATH-mode only in theory: pre-modules Go bases (1.6-1.10) are Debian jessie/stretch, which ship cmake 3.0.2 -- too old for the -S/-B/--install syntax the liboqs C build uses (needs cmake 3.13+/3.15+). 0.1 is pinned to the same liboqs C tag (0.4.0) and Go pseudo-version as 0.4, so it's gated to 1.11+ here to match reality rather than leave a combination that always fails to build."
         },
         {
           "name": "tink-go",
