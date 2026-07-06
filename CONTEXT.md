@@ -39,24 +39,37 @@ SCA/
 │   │                       ├── Dockerfile
 │   │                       ├── main.go
 │   │                       └── go.mod
-│   └── node/
-│       └── {lang_version}/
+│   ├── node/
+│   │   └── {lang_version}/
+│   │       └── {Framework}/
+│   │           └── {fw_major}/
+│   │               └── {CryptoLib}/
+│   │                   └── {lib_version}/
+│   │                       ├── Dockerfile
+│   │                       ├── app.js
+│   │                       └── package.json
+│   └── java/
+│       └── {jdk_version}/
 │           └── {Framework}/
 │               └── {fw_major}/
 │                   └── {CryptoLib}/
 │                       └── {lib_version}/
 │                           ├── Dockerfile
-│                           ├── app.js
-│                           └── package.json
+│                           ├── pom.xml
+│                           └── src/main/
+│                               ├── java/app/Main.java
+│                               └── resources/versions.properties (+ application.properties)
 │
 ├── scripts/
 │   ├── generate_images.py          # Entry point: reads registry → writes images/
 │   ├── lang_python.py              # Python-specific templates + PyPI version resolver
 │   ├── lang_go.py                  # Go-specific templates + Go module version resolver
 │   ├── lang_node.py                # Node.js-specific templates + npm registry version resolver
+│   ├── lang_java.py                # Java-specific templates + Maven Central version resolver
 │   ├── registry python.json        # Python matrix: lang versions, frameworks, libs, compat rules
 │   ├── registry go.json            # Go matrix: lang versions, frameworks, libs, compat rules
-│   └── registry node.json          # Node matrix: lang versions, frameworks, libs, compat rules
+│   ├── registry node.json          # Node matrix: lang versions, frameworks, libs, compat rules
+│   └── registry java.json          # Java matrix: lang versions, frameworks, libs, compat rules
 │
 ├── static/
 │   └── dashboard.html              # Single-page dashboard UI (served by dashboard.py)
@@ -107,6 +120,7 @@ Run with:
 python scripts/generate_images.py --lang python
 python scripts/generate_images.py --lang go
 python scripts/generate_images.py --lang node
+python scripts/generate_images.py --lang java
 ```
 
 ### 3. Language modules (`lang_python.py`, `lang_go.py`)
@@ -326,6 +340,45 @@ Mitigations, in order of confidence:
 
 Always verify a fix landed by extracting the file from the *built* image (`docker run --rm --entrypoint cat <tag> /app/app.js`, prefix with `MSYS_NO_PATHCONV=1` in Git Bash so `/app/...` isn't mangled into a Windows path) rather than trusting a green build alone.
 
+### Java (5 lang versions × 5 frameworks × 4 libs × many versions ≈ 412 images)
+
+| Framework | Major versions | Maven anchor coordinate | Notes |
+|-----------|----------------|--------------------------|-------|
+| Spring Boot | 1 (Java 8), 2 (Java 8+), 3 (Java 17+), 4 (Java 17+) | `org.springframework.boot:spring-boot-starter-parent` | 1.x is ALWAYS suffixed `.RELEASE` (no clean version ever existed on that line) — the resolver's version filter has to explicitly allow that suffix, see below. `spring-boot-starter-web` is deprecated in 4.x in favor of `spring-boot-starter-webmvc` but still resolves and works (verified against Maven Central metadata), so no template change was needed there. |
+| Quarkus | 1 (Java 8), 2 (Java 11), 3 (Java 17+) | `io.quarkus:quarkus-bom` | 1.x/2.x are ALWAYS suffixed `.Final` (same filter issue as Spring Boot 1.x). Dependency coordinates AND the JAX-RS namespace both differ by major (`_quarkus_rest_coord()`/`_quarkus_jaxrs_pkg()` in `lang_java.py`): 1.x/2.x use the classic `quarkus-resteasy` + `quarkus-resteasy-jackson` (both existed since before 1.0, still published today — contrary to an earlier assumption that these were era-exclusive) with `javax.ws.rs`; 3.x uses `quarkus-rest-jackson` with `jakarta.ws.rs`. Quarkus 3's JDK floor jumped mid-line (Java 11 through 3.6, Java 17 from 3.7) — since this registry always resolves to the latest patch, the bucket reflects what's actually installed (17+). |
+| Micronaut | 1 (Java 8), 2 (Java 8+), 3 (Java 8+), 4 (Java 17+), 5 (Java 25) | version-dependent, see below | Three distinct parent-POM eras, not two — see below. |
+| Vert.x | 2 (Java 8), 3 (Java 8+), 4 (Java 8+), 5 (Java 11+) | `io.vertx:vertx-core` | `vertx-web` added alongside `vertx-core` for real path-based routing (present from 2.x onward too). 1.x is NOT tracked — see the structural-exclusion note below. |
+| Helidon | 1 (Java 8, SE), 2 (Java 11+, SE), 3 (Java 17+, SE), 4 (Java 21+, SE) | `io.helidon.webserver:helidon-webserver` | SE (functional/programmatic) throughout, not MP (JAX-RS/CDI). Three incompatible WebServer API shapes across these majors — see below. |
+
+| Crypto library | Version buckets | Maven coordinate | Notes |
+|-----------------|------------------|-------------------|-------|
+| JCA | built-in | — | `java.security`/`javax.crypto`, no dependency. |
+| BouncyCastle | `1.70` (legacy), `1.72` (draft PQC), `1.79` (final PQC names), `1` (rolling latest) | `org.bouncycastle:bcprov-jdk18on` (`bcprov-jdk15on` only for the `1.70` bucket) | Four pinned milestones instead of "latest of the only line that ever existed" — see the PQC-milestone note below. |
+| Tink | `1.21` (first PQC), `1` (rolling latest) | `com.google.crypto.tink:tink` | `1.21.0` added ML-DSA-87 — Tink's first post-quantum release. Still no ML-KEM/Kyber (KEM-side) as of the latest (1.22.0) — signatures only. |
+| Conscrypt | `1` (legacy, up to 1.4.2), `2` (current stable) | `org.conscrypt:conscrypt-openjdk-uber` | Native (glibc-linked) — paired only with the Ubuntu/glibc `-jammy` temurin tag, never Alpine. Latest published version overall is a prerelease (`2.6-alpha5`); the resolver filters qualifier-suffixed versions. **Neither tracked line bundles ARM64/aarch64 native libs** (checked jar contents directly for both 1.4.2 and 2.5.2) — only the still-prerelease 2.6-alpha5 adds those; not an issue on this project's amd64 builds, but would break on an Apple Silicon or ARM Docker host. |
+
+**Docker base images**: `maven:3-eclipse-temurin-{jdk}` (builder stage — bundles Maven + the matching JDK, avoids apt-installing Maven into a bare temurin image) → `eclipse-temurin:{jdk}-jre-jammy` (runtime stage). eclipse-temurin has **no `-slim` tags at all** (that's a Debian/apt convention from the old, unmaintained `openjdk` Docker Official Image — never adopted by Adoptium's replacement); every Java image in this project uses the Ubuntu/glibc `-jammy` variant, never Alpine.
+
+**JDK floor is 8, not an arbitrary scope cut.** Java 6 and 7 are listed in the registry as reference-only (`include: false`) rather than omitted outright, matching Node's treatment of 0.10/0.12 — but unlike Node's old base images (still pullable via an `archive.debian.org` redirect), there is **no Docker image at all, live or archived**, for Java 6/7: `eclipse-temurin` (Adoptium) never built JDK 6/7 in the first place (its own baseline starts at 8), and the older, now-deprecated `openjdk` Docker Official Image *did* historically ship 6/7/8, but those exact tags 404 today — verified directly against the Docker Hub registry API, not inferred. No archive mirror or redirect fixes this the way it did for Node/Go. Resurrecting them would mean self-building from an archived, proprietary Oracle JDK 6/7 distribution requiring license acceptance — a fundamentally different (and much riskier) category of effort than anything else in this project, so it wasn't pursued.
+
+**Every framework major documented on Maven Central is now tracked** — the original deliberate scope/time cut (only Spring 2/3, Micronaut 3/4, Vert.x 4/5, Helidon 3/4) has been removed and every older/newer major added, each with its own researched-and-verified JDK floor. The one remaining exclusion is **structural, not a scope cut**: Vert.x 1.x lived under a completely different, hyphenated Maven groupId (`org.vert-x`), only 4 releases ever, predating the `io.vertx:vertx-core` lineage entirely — not the same kind of gap as everything else.
+
+**Crypto library version buckets now include deliberately old-but-still-buildable lines, plus pinned post-quantum milestones** — the original "one bucket per lib" scope (justified at the time because BouncyCastle/Tink structurally never had a 2.0 release) has been expanded on request: BouncyCastle's dead pre-rename `bcprov-jdk15on` (frozen at 1.70) and Conscrypt's legacy 1.x line (up to 1.4.2) are both still resolvable from Maven Central today (confirmed live, HTTP 200) and are now tracked specifically because they're old-but-buildable, not because they're structurally distinct. Separately, BouncyCastle and Tink each gained a pinned milestone bucket at the version where post-quantum algorithm support first landed — see below.
+
+**Version-qualifier filter used to exclude entire majors, not just prereleases — a real bug, not a hypothetical.** The Maven version filter originally required a bare `x.y.z` (no suffix at all), which works for Spring Boot 2.x+/Quarkus 3.3+ but not for **Spring Boot 1.x, which is ALWAYS suffixed `.RELEASE`** (no clean version ever existed on that line) or **Quarkus 1.x/2.x, which are ALWAYS suffixed `.Final`** — confirmed live against Maven Central metadata. The old filter returned zero candidates for these majors ("not resolvable"), caught only once they were actually added and generation was run. Fixed by extending the filter to accept an optional trailing `.RELEASE`/`.Final`/`.GA` (case-insensitive) while still rejecting genuine prereleases (Alpha/Beta/CR/RC/M<n>/SNAPSHOT).
+
+**Helidon's WebServer API has three incompatible shapes across the tracked majors, not one break at 3.x.** Verified against real code snippets in Helidon's own docs at each version's branch: 1.x uses the static factory `WebServer.create(routing)` with a pre-built `Routing.builder()....build()`, blocking startup via a raw `CompletableFuture`; 2.x also uses `WebServer.create(...)` but takes an *un-built* `Routing.Builder` directly, blocking via Helidon's own `Single.await()`; 3.x/4.x use the fluent `WebServer.builder().routing(...).build().start()` shape. Implemented as three separate Main.java templates dispatched by major (`_helidon_main_tpl()` in `lang_java.py`).
+
+**Micronaut's parent-POM situation has three distinct eras, not two.** `io.micronaut:micronaut-parent` has ZERO 1.x releases (starts at 2.0.0) — Micronaut 1.x projects used `io.micronaut:micronaut-bom` via `<dependencyManagement>` import instead of a `<parent>` at all, which also means annotation processing (`micronaut-inject-java`) needs manual `annotationProcessorPaths` wiring (normally free from the parent for every other major). 2.x uses `io.micronaut:micronaut-parent` (same groupId as 3.x — a third, separate case from 4.x/5.x's `io.micronaut.platform:micronaut-parent`, whose own latest 4.x version, 4.10.16, is *not* lockstep with `micronaut-core`'s 4.10.25 — asking Maven for the wrong version under the wrong groupId fails outright). Also, `micronaut-serde-jackson` has zero 1.x/2.x releases (its own versioning starts 2022-03, after Micronaut 3.0) — those majors rely on Jackson support bundled directly in `micronaut-http`/`micronaut-core` instead. See `_micronaut_parent_coord()` / `_pom_micronaut_v1()` in `lang_java.py`.
+
+**BouncyCastle's post-quantum milestones were confirmed by diffing actual jar contents, not just reading release notes.** Draft Kyber/Dilithium first appear in `bcprov-jdk18on` **1.72** (2022, flagged experimental); the FINAL NIST-standardized ML-KEM/ML-DSA/SLH-DSA (FIPS 203/204/205) land together in **1.79** (2024) — 1.78 has none of the new parameter-spec classes, 1.79 introduces full provider implementations for all three while keeping the old draft names side-by-side. BC is actively sunsetting those draft names starting at 1.84, so the "1.79" and "1" (rolling latest) buckets will diverge more over time. **Tink's post-quantum support is a correction to an earlier assumption in this project**, not a new finding about Tink itself: v1.21.0 added Tink's first PQC support (ML-DSA-87 signatures) — verified by full-text search of every Tink Java release body (v1.8.0–v1.20.0 have zero PQC mentions). An earlier pass through this registry claimed Tink had no PQC support at all; that was true when written and is no longer true.
+
+**Version resolution uses `repo1.maven.org/.../maven-metadata.xml` directly, not `search.maven.org`'s solr index** — verified live that the solr index lags Maven Central's real repository by months to over a year in places (e.g. it topped out at `bcprov-jdk18on` 1.80 while 1.84 had long been published). The generated `maven-metadata.xml` under `repo1.maven.org` is Maven Central's own index and is authoritative.
+
+**Runtime version reading uses a plain baked-in `versions.properties` resource, not a framework API**, unlike Python/Go/Node's "read the actually-installed artifact's own metadata" pattern. Every framework-specific API for this turned out to have a sharp edge once checked: Quarkus ships an empty `MANIFEST.MF` since 3.1.0.Final; a shaded/uber jar merges every dependency's manifest into one, so `Package.getImplementationVersion()` on a class from an arbitrary dependency returns `null`; and each framework exposes its version through a different, framework-specific API. Sidestepped entirely: Maven pins an *exact* version per dependency (no npm-style range resolution), so whatever this generator resolves is exactly what gets installed. The resolved framework/library version strings are baked directly into a plain `versions.properties` file at generation time and read back identically across all five frameworks.
+
+**Build-verification status — not everything below has been independently confirmed with a real `docker build` yet.** Build-and-run verified in a real container (all 5 frameworks × JCA, plus BouncyCastle/Tink/Conscrypt spot-checked on Spring Boot): Spring Boot 2/3, Quarkus 3, Micronaut 3/4, Vert.x 4/5, Helidon 3/4, BC `1`, Tink `1`, Conscrypt `2`. Added later in the same pass and **research-based but not yet independently build-tested**: Spring Boot 1/4, Quarkus 1/2, Micronaut 1/2, Vert.x 2/3, Helidon 1/2, BC `1.70`/`1.72`/`1.79`, Tink `1.21`, Conscrypt `1`. If any of these fail to build, the error is most likely in the specific version-dependent branch just described for that framework/lib — the shared plumbing (Dockerfile, `versions.properties` mechanism, tag sanitization) is unchanged from the already-proven set.
+
 ---
 
 ## What still needs to be added
@@ -336,14 +389,6 @@ The following **common languages** are not yet covered. For each, add:
 3. A case in `generate_images.py` to dispatch to the new module
 
 ### Priority languages and their typical stacks
-
-#### Java
-- **Lang versions**: 11, 17, 21, 24 (LTS versions)
-- **Frameworks**: Spring Boot (3.x), Quarkus (3.x), Micronaut (4.x), Vert.x (4.x), Helidon (4.x)
-- **Crypto libs**: `Bouncy Castle` (1.7x), `Google Tink Java` (1.x), `JCA/JCE` (built-in), `conscrypt` (2.x)
-- **App file**: `Main.java` (or Maven/Gradle project)
-- **Deps file**: `pom.xml` or `build.gradle`
-- **Base image**: `eclipse-temurin:{version}-slim` or `amazoncorretto:{version}`
 
 #### Rust
 - **Lang versions**: 1.70, 1.75, 1.80, 1.85 (stable releases)
@@ -440,6 +485,7 @@ The version strings must be **runtime-detected** (not hardcoded) wherever possib
 python scripts/generate_images.py --lang python
 python scripts/generate_images.py --lang go
 python scripts/generate_images.py --lang node
+python scripts/generate_images.py --lang java
 
 # ── CLI (manager.py) ──────────────────────────────────────────────────────────
 

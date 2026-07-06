@@ -213,8 +213,8 @@ def _print_summary(entries):
 
 def _image_tag(e):
     """Deterministic, Docker-legal image name derived from a context entry."""
-    fw  = e["framework"].lower().replace("/", "_").replace("@", "")
-    lib = e["library"].lower().replace("/", "_").replace("@", "")
+    fw  = e["framework"].lower().replace("/", "_").replace("@", "").replace(" ", "")
+    lib = e["library"].lower().replace("/", "_").replace("@", "").replace(" ", "")
     return (
         f"pqc-{e['language']}-{e['lang_ver']}"
         f"-{fw}-{e['fw_ver']}"

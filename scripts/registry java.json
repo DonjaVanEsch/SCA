@@ -1,0 +1,113 @@
+{
+  "languages": [
+    {
+      "id": "java",
+      "display_name": "Java",
+      "versions": [
+        { "nr": "6",  "release_date": "2006-12-11", "include": false },
+        { "nr": "7",  "release_date": "2011-07-28", "include": false },
+        { "nr": "8",  "release_date": "2014-03-18", "include": true },
+        { "nr": "11", "release_date": "2018-09-25", "include": true },
+        { "nr": "17", "release_date": "2021-09-14", "include": true },
+        { "nr": "21", "release_date": "2023-09-19", "include": true },
+        { "nr": "25", "release_date": "2025-09-16", "include": true }
+      ],
+      "_comment_pre8": "6/7 kept as reference-only (include:false), unlike Node's 0.10/0.12 which are reference-only but still pullable via archive.debian.org redirects -- Java 6/7 have NO available Docker image at all, live or archived. eclipse-temurin (Adoptium) never built JDK 6/7 (its own baseline starts at 8); the older, now-deprecated 'openjdk' Docker Official Image DID historically ship 6/7/8, but those tags return a 404 today (verified directly against the registry API) -- fully removed, not just unmaintained. No archive mirror or redirect fixes this the way it did for Node/Go's old base images. 8 is therefore the practical floor for this language, not an arbitrary scope cut.",
+      "_comment_framework_scope": "Every framework major documented on Maven Central is now tracked (the earlier deliberate scope/time cut has been removed) except where noted otherwise below. Vert.x 1.x remains excluded for a STRUCTURAL reason: it was published under a completely different Maven groupId ('org.vert-x', hyphenated) with only 4 releases ever, predating the io.vertx:vertx-core lineage entirely -- not the same kind of gap as the other frameworks' missing majors.",
+      "frameworks": [
+        {
+          "name": "Spring Boot",
+          "module": "org.springframework.boot:spring-boot-starter-parent",
+          "version": [
+            { "nr": "1", "release_date": "2014-04-01", "compatibility": [ "8" ] },
+            { "nr": "2", "release_date": "2018-03-01", "compatibility": [ "8", "11", "17" ] },
+            { "nr": "3", "release_date": "2022-11-24", "compatibility": [ "17", "21", "25" ] },
+            { "nr": "4", "release_date": "2025-11-01", "compatibility": [ "17", "21", "25" ] }
+          ],
+          "notes": "Maven coordinate used for resolution is spring-boot-starter-parent (all spring-boot-* artifacts release in lockstep). 1.x's own docs (docs.spring.io/spring-boot/docs/1.5.x) state Java 7 required, Java 8 recommended -- kept at Java 8 only since that's this project's JDK floor; not verified against 11+ and likely too old to work there (pre-dates javax->jakarta and much else). 2.x's documented floor is Java 8, latest 2.7.x patch tested up to Java 18 -- not officially validated against 21/25, kept at Java 8/11/17 conservatively. 3.x requires Java 17+ throughout the whole line (docs.spring.io/spring-boot/system-requirements.html), no mid-major bump found. 4.x also requires Java 17+ (docs.spring.io confirms 4.1.0 supports up to Java 26) -- spring-boot-starter-web is deprecated there in favor of spring-boot-starter-webmvc but still resolves and works today (verified against Maven Central metadata), so no template change was needed to add this major."
+        },
+        {
+          "name": "Quarkus",
+          "module": "io.quarkus:quarkus-bom",
+          "version": [
+            { "nr": "1", "release_date": "2019-03-07", "compatibility": [ "8" ] },
+            { "nr": "2", "release_date": "2021-05-11", "compatibility": [ "11", "17" ] },
+            { "nr": "3", "release_date": "2022-07-14", "compatibility": [ "17", "21", "25" ] }
+          ],
+          "notes": "Resolution anchor is quarkus-bom (imported with scope=import to keep all io.quarkus:* artifacts on one consistent version, the idiomatic Quarkus setup). 1.x's Java 8 floor confirmed via Quarkus's own blog (the 2.0.0.Final post explicitly tells Java-8 users to stay on 1.13.x). 2.x requires Java 11 (quarkus.io/blog/quarkus-2-0-0-final-released), upper bound kept conservative at 17 since 2.x's actively-maintained window ended well before JDK 21/25 existed -- untested there. Quarkus 3's JDK floor actually jumped mid-line: Java 11 through 3.6, Java 17 from 3.7 (Jan 2024) onward -- since this registry always resolves to the LATEST patch of a tracked major, and latest 3.x is now Java-17-floor, the bucket is set to 17+ (not 11+) to match what's actually installed. Dependency coordinates differ by major -- see lang_java.py's _quarkus_rest_coord(): 1.x/2.x use the classic quarkus-resteasy + quarkus-resteasy-jackson (both existed since before Quarkus 1.0, still published today, contrary to an earlier assumption that these were era-exclusive), plus the javax.ws.rs namespace (pre-Jakarta rename); 3.x uses quarkus-rest-jackson (the post-3.9 rename of quarkus-resteasy-reactive-jackson) and jakarta.ws.rs. MANIFEST.MF-based version reading is broken since 3.1.0.Final (empty Implementation-Version) -- see lang_java.py for the workaround, applied uniformly across all majors."
+        },
+        {
+          "name": "Micronaut",
+          "module": "io.micronaut:micronaut-core",
+          "version": [
+            { "nr": "1", "release_date": "2018-05-24", "compatibility": [ "8" ] },
+            { "nr": "2", "release_date": "2020-09-24", "compatibility": [ "8", "11", "17" ] },
+            { "nr": "3", "release_date": "2021-09-30", "compatibility": [ "8", "11", "17" ] },
+            { "nr": "4", "release_date": "2023-05-30", "compatibility": [ "17", "21", "25" ] },
+            { "nr": "5", "release_date": "2026-04-27", "compatibility": [ "25" ] }
+          ],
+          "notes": "Both 1.x and 2.x confirmed Java 8 floor via archived official guides (micronaut-projects.github.io/micronaut-docs-mn1 and -mn2). 5.x's Java 25 baseline confirmed via an actual release blog (micronaut.io/2026/04/27/micronaut-framework-5-0-with-java-25-baseline) -- stronger sourcing than the GitHub-discussion-only claim this registry previously relied on. Parent-POM setup differs sharply by major (see _micronaut_parent_coord() / _pom_micronaut() in lang_java.py): io.micronaut:micronaut-parent has ZERO 1.x releases (starts at 2.0.0) -- Micronaut 1.x projects used io.micronaut:micronaut-bom via <dependencyManagement> import instead of a <parent> at all, which also means annotation processing (micronaut-inject-java) must be wired manually via the compiler plugin's annotationProcessorPaths rather than inherited from a parent. 2.x uses io.micronaut:micronaut-parent (not the io.micronaut.platform groupId used from 4.x onward -- 3.x already established this groupId split; 2.x is a THIRD distinct case). micronaut-serde-jackson has zero 1.x/2.x/3.x-era releases (its own versioning starts 2022, after Micronaut 3.0) -- 1.x/2.x rely on Jackson support bundled directly in micronaut-http/micronaut-core, no separate serde dependency at all."
+        },
+        {
+          "name": "Vert.x",
+          "module": "io.vertx:vertx-core",
+          "version": [
+            { "nr": "2", "release_date": "2013-06-01", "compatibility": [ "8" ] },
+            { "nr": "3", "release_date": "2015-05-15", "compatibility": [ "8", "11", "17" ] },
+            { "nr": "4", "release_date": "2020-04-27", "compatibility": [ "8", "11", "17", "21", "25" ] },
+            { "nr": "5", "release_date": "2025-04-01", "compatibility": [ "11", "17", "21", "25" ] }
+          ],
+          "notes": "vertx-web added alongside vertx-core for real path-based routing (Router) -- bare vertx-core only gives a low-level HttpServer with no routing (present from 2.x onward too). 2.x's Java 7 floor is confirmed via its actual build.gradle at tag v2.1.6 (sourceCompatibility 1.7) -- kept at Java 8 only in this registry since Java 7 isn't a tracked JDK here, and 2.x is old enough that 11+ compatibility wasn't verified. 3.x confirmed Java 8 floor via vertx-core:3.0.0's own parent POM; upper bound kept conservative at 17 (3.x's actively-maintained window predates 21/25). 4.x kept a Java 8 floor for its entire line; 5.x raised it to Java 11 (Java 21 is only needed opportunistically, for virtual threads). Vert.x 1.x is NOT tracked (see the language-level _comment_framework_scope) -- it lived under the org.vert-x groupId, a structurally different, long-dead lineage, not a scope cut."
+        },
+        {
+          "name": "Helidon",
+          "module": "io.helidon.webserver:helidon-webserver",
+          "version": [
+            { "nr": "1", "release_date": "2019-06-11", "compatibility": [ "8" ] },
+            { "nr": "2", "release_date": "2020-09-25", "compatibility": [ "11", "17" ] },
+            { "nr": "3", "release_date": "2022-11-16", "compatibility": [ "17", "21", "25" ] },
+            { "nr": "4", "release_date": "2024-03-19", "compatibility": [ "21", "25" ] }
+          ],
+          "notes": "Helidon SE flavor (functional/programmatic routing) throughout, not MP (JAX-RS/CDI) -- SE has no annotation-processing/bean-discovery startup overhead and needs no beans.xml. JDK floors confirmed against the official docs-as-code source at each version's own branch: 1.x = 'Java 8 or Java 11', 2.x = 'Java 11 or newer', 3.x = Java 17 (breaking change from 2.x), 4.x = Java 21 (Helidon 4's Nima core is built on virtual threads, mandatory not optional). The WebServer API itself has THREE distinct shapes across these majors, not just one break at 3.x as previously assumed (see _helidon_api_style() in lang_java.py): 1.x uses the static factory WebServer.create(routing) where routing comes from an explicitly-built Routing.builder()....build(), and blocks on startup via a raw CompletableFuture; 2.x also uses WebServer.create(...) but accepts an un-built Routing.Builder directly and blocks via Helidon's own Single.await(); 3.x/4.x use the fluent WebServer.builder().routing(...).build().start() shape this project's template was originally written against. All three confirmed against real code snippets in Helidon's own docs at each version's branch, and each variant was build-and-run verified in a real container, not just compiled."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "JCA",
+          "module": null,
+          "version": "built-in",
+          "notes": "Java Cryptography Architecture -- the JDK's own java.security/javax.crypto packages, always available, no Maven dependency. Provider name/version read via java.security.Security.getProviders()."
+        },
+        {
+          "name": "BouncyCastle",
+          "module": "org.bouncycastle:bcprov-jdk18on",
+          "version": [
+            { "nr": "1.70", "release_date": "2021-09-01", "compatibility": [ "8", "11", "17", "21", "25" ] },
+            { "nr": "1.72", "release_date": "2022-09-25", "compatibility": [ "8", "11", "17", "21", "25" ] },
+            { "nr": "1.79", "release_date": "2024-10-30", "compatibility": [ "8", "11", "17", "21", "25" ] },
+            { "nr": "1", "release_date": "2023-04-01", "compatibility": [ "8", "11", "17", "21", "25" ] }
+          ],
+          "notes": "Four buckets, each pinned to a specific verified milestone rather than 'latest of the only line that ever existed' (see _bc_coord() in lang_java.py for the per-bucket artifact switch): '1.70' is the LAST bcprov-jdk15on release (the old, now-frozen/unmaintained pre-rename artifact, per bc-java issue #1289) -- still resolvable from Maven Central today (confirmed live, HTTP 200 on both .pom and .jar), included here specifically because the user asked for old-but-still-buildable versions, not just the current line. '1.72' is bcprov-jdk18on's first release with DRAFT post-quantum support (Kyber/Dilithium, flagged experimental in BC's own release notes) -- confirmed by diffing actual jar contents, 1.71 has none of these classes. '1.79' is where the FINAL NIST-standardized names landed (ML-KEM/ML-DSA/FIPS 203+204, SLH-DSA/FIPS 205) -- confirmed the same way (1.78 lacks MLKEMParameterSpec/MLDSAParameterSpec/SLHDSAParameterSpec entirely, 1.79 introduces full provider implementations for all three while keeping the old draft Kyber/Dilithium names side-by-side for compatibility). '1' is the ongoing rolling-latest bucket (currently 1.84) -- note BC is actively sunsetting the draft wrapper names starting there (1.84's release notes announce their removal in a future release), so '1' and '1.79' will diverge more over time, not less."
+        },
+        {
+          "name": "Tink",
+          "module": "com.google.crypto.tink:tink",
+          "version": [
+            { "nr": "1.21", "release_date": "2026-03-24", "compatibility": [ "11", "17", "21", "25" ] },
+            { "nr": "1", "release_date": "2023-01-01", "compatibility": [ "11", "17", "21", "25" ] }
+          ],
+          "notes": "Tink dropped Java 8 support at 1.19.0 (per official GitHub release notes) -- both tracked buckets postdate that, so Java 8 is excluded from both. '1.21' pins Tink's FIRST post-quantum release: v1.21.0 added ML-DSA-87 signature support (confirmed via full-text search of every Tink Java release body on GitHub -- v1.8.0 through v1.20.0 have zero PQC mentions). This corrects an earlier, now-outdated assumption in this registry that Tink had no PQC support at all; it does, as of this exact version. '1' is the ongoing rolling-latest bucket (currently 1.22.0, which adds SLH-DSA and ML-DSA-44 on top of 1.21's ML-DSA-87). Note Tink still has NO KEM-side PQC (no ML-KEM/Kyber) as of 1.22.0 -- only signatures (ML-DSA, SLH-DSA); its hybrid/KEM package remains classical-only (ECIES, HPKE)."
+        },
+        {
+          "name": "Conscrypt",
+          "module": "org.conscrypt:conscrypt-openjdk-uber",
+          "version": [
+            { "nr": "1", "release_date": "2018-06-01", "compatibility": [ "8", "11", "17", "21", "25" ] },
+            { "nr": "2", "release_date": "2019-05-01", "compatibility": [ "8", "11", "17", "21", "25" ] }
+          ],
+          "notes": "conscrypt-openjdk-uber's latest published version (2.6-alpha5) is a prerelease -- the version resolver filters qualifier-suffixed versions the same way as the other languages, so '2' correctly resolves to the latest stable (2.5.2). Bundles native code (glibc-linked per standard OpenJDK toolchain convention) -- all Java Docker images in this project use eclipse-temurin's Ubuntu/glibc ('-jammy') tags rather than Alpine/musl specifically to avoid a suspected (not yet empirically confirmed) UnsatisfiedLinkError. '1' resolves to the highest published 1.x release, 1.4.2 (~2019) -- a genuinely legacy, superseded line (unlike BouncyCastle/Tink where only one line ever existed), included here because it's still resolvable today (confirmed live, HTTP 200) and the user asked for old-but-buildable versions. IMPORTANT caveat found while researching this, unrelated to the version split: neither the 1.x line (checked 1.4.2) nor the current stable 2.x line (checked 2.5.2) bundles ARM64/aarch64 native libraries at all -- only the still-prerelease 2.6-alpha5 adds those. Conscrypt will fail to load its native provider on an arm64 host with either tracked bucket; this project's builds target amd64 so it hasn't been an issue, but it would bite immediately on Apple Silicon or ARM Docker hosts."
+        }
+      ]
+    }
+  ]
+}

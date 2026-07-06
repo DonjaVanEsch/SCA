@@ -37,6 +37,7 @@ _REGISTRY_FILES = [
     SCRIPTS_DIR / "registry python.json",
     SCRIPTS_DIR / "registry go.json",
     SCRIPTS_DIR / "registry node.json",
+    SCRIPTS_DIR / "registry java.json",
 ]
 
 
@@ -481,8 +482,8 @@ def load_registry() -> dict[str, int]:
 def _image_tag_from_parts(language: str, lang_ver: str, framework: str,
                            fw_ver: str, library: str, lib_ver: str) -> str:
     """Compute the canonical Docker image tag from resolved component names."""
-    fw  = framework.lower().replace("/", "_").replace("@", "")
-    lib = library.lower().replace("/", "_").replace("@", "")
+    fw  = framework.lower().replace("/", "_").replace("@", "").replace(" ", "")
+    lib = library.lower().replace("/", "_").replace("@", "").replace(" ", "")
     return f"pqc-{language}-{lang_ver}-{fw}-{fw_ver}-{lib}-{lib_ver}"
 
 

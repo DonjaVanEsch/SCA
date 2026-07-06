@@ -1,0 +1,1158 @@
+"""
+Java-specific metadata, app templates and context generation.
+
+Consumed by generate_images.py via importlib.import_module("lang_java").
+
+Required exports:
+    LANGUAGE_ID   – str
+    REGISTRY_FILE – str
+    prefetch(lang_data)                                          -> None
+    write_context(lang_ver, fw_name, fw_major,
+                  lib_name, lib_ver, images_base)               -> bool
+"""
+
+import json
+import re
+import shutil
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from urllib.error import URLError
+
+LANGUAGE_ID   = "java"
+REGISTRY_FILE = "registry java.json"
+
+
+def _parse(s: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", s))
+
+
+# ── Framework metadata ────────────────────────────────────────────────────────
+# Maven coordinate used both to resolve versions (maven-metadata.xml) and, for
+# frameworks with a parent-POM/BOM style setup, as the <parent>/import target.
+# "anchor" is (groupId, artifactId) of a single artifact whose version list is
+# representative of the whole release train (all of a given framework's
+# artifacts are released in lockstep against this number).
+FRAMEWORK_META: dict = {
+    "Spring Boot": {"anchor": ("org.springframework.boot", "spring-boot-starter-parent")},
+    "Quarkus":     {"anchor": ("io.quarkus", "quarkus-bom")},
+    "Vert.x":      {"anchor": ("io.vertx", "vertx-core")},
+    "Helidon":     {"anchor": ("io.helidon.webserver", "helidon-webserver")},
+}
+
+# Micronaut's parent-POM coordinate isn't lockstep with io.micronaut:micronaut-
+# core's own version numbers, AND the groupId/mechanism itself changed across
+# majors -- verified directly against Maven Central for each:
+#   1.x -- io.micronaut:micronaut-parent has ZERO 1.x releases (starts at
+#          2.0.0). 1.x projects used io.micronaut:micronaut-bom (which DOES
+#          have 1.x releases from 1.0.0) imported via <dependencyManagement>
+#          instead of a <parent> at all -- see _pom_micronaut_v1().
+#   2.x -- io.micronaut:micronaut-parent (2.0.0 onward), used as <parent>.
+#   3.x -- also io.micronaut:micronaut-parent (latest 3.10.9) -- a THIRD
+#          distinct case, since 4.x+ moved to a different groupId entirely.
+#   4.x/5.x -- io.micronaut.platform:micronaut-parent (latest 4.x is 4.10.16,
+#          NOT micronaut-core's 4.10.25 -- asking Maven for
+#          io.micronaut.platform:micronaut-parent:4.10.25 fails outright,
+#          that version was never published under the platform groupId).
+# So Micronaut's anchor must be resolved per-major-version against whichever
+# coordinate is actually used in the generated pom.xml, not micronaut-core.
+_MICRONAUT_PARENT_BY_MAJOR: dict = {
+    "1": ("io.micronaut", "micronaut-bom"),
+    "2": ("io.micronaut", "micronaut-parent"),
+    "3": ("io.micronaut", "micronaut-parent"),
+}
+_MICRONAUT_PARENT_DEFAULT = ("io.micronaut.platform", "micronaut-parent")  # 4.x onward
+
+
+def _micronaut_parent_coord(fw_major: str) -> tuple:
+    return _MICRONAUT_PARENT_BY_MAJOR.get(fw_major, _MICRONAUT_PARENT_DEFAULT)
+
+
+# micronaut-serde-jackson has zero 1.x/2.x/early-3.x releases (its own
+# versioning starts 2022-03, after Micronaut 3.0's Sept-2021 release) --
+# verified directly against Maven Central. Majors 1/2 always predate it
+# (both fully released before serde existed), so they fall back to Jackson
+# support bundled directly in micronaut-http/micronaut-core instead. Major 3
+# keeps using serde since this registry always resolves to the LATEST 3.x
+# patch, which postdates serde's release by years.
+_MICRONAUT_NO_SERDE_MAJORS = frozenset({"1", "2"})
+
+
+def _framework_anchor(fw_name: str, fw_major: str) -> tuple:
+    if fw_name == "Micronaut":
+        return _micronaut_parent_coord(fw_major)
+    return FRAMEWORK_META[fw_name]["anchor"]
+
+# blank/"touch" line: a real call into the library so it's provably loaded
+# and exercised, not just declared as a dependency (mirrors Go's
+# blank_import / Node's require() blank line). None means no Maven
+# dependency (JCA is part of the JDK itself).
+LIB_META: dict = {
+    "JCA": {
+        "coord": None,
+        "imports": ["java.security.Security"],
+        "touch": "Security.getProviders();",
+    },
+    "BouncyCastle": {
+        "coord": ("org.bouncycastle", "bcprov-jdk18on"),
+        "imports": ["java.security.Security", "org.bouncycastle.jce.provider.BouncyCastleProvider"],
+        "touch": "Security.addProvider(new BouncyCastleProvider());",
+    },
+    "Tink": {
+        "coord": ("com.google.crypto.tink", "tink"),
+        "imports": ["com.google.crypto.tink.aead.AeadConfig"],
+        "touch": "try { AeadConfig.register(); } catch (Exception e) { /* exercised, ignore init failure */ }",
+    },
+    "Conscrypt": {
+        "coord": ("org.conscrypt", "conscrypt-openjdk-uber"),
+        "imports": ["java.security.Security", "org.conscrypt.Conscrypt"],
+        "touch": "Security.addProvider(Conscrypt.newProvider());",
+    },
+}
+
+
+# bcprov-jdk15on is the OLD, pre-rename, now-frozen (last release 1.70)
+# artifact -- still resolvable on Maven Central today, kept as its own
+# registry bucket ("1.70") specifically to offer an old-but-still-buildable
+# version. Every other tracked bucket ("1.72", "1.79", "1") uses the current
+# bcprov-jdk18on artifact.
+_BC_LEGACY_BUCKET = "1.70"
+_BC_LEGACY_COORD   = ("org.bouncycastle", "bcprov-jdk15on")
+
+
+def _lib_coord(lib_name: str, lib_ver_bucket: str | None = None):
+    if lib_name == "BouncyCastle" and lib_ver_bucket == _BC_LEGACY_BUCKET:
+        return _BC_LEGACY_COORD
+    return LIB_META[lib_name]["coord"]
+
+
+# ── Maven Central version resolution ──────────────────────────────────────────
+# Deliberately NOT using search.maven.org/solrsearch: verified live that its
+# index lags the real repository by months to over a year (e.g. it topped out
+# at bcprov-jdk18on 1.80 while 1.84 had long been published). The generated
+# maven-metadata.xml under repo1.maven.org is Maven Central's own index and
+# is authoritative.
+
+_MAVEN_VERSIONS: dict = {}
+
+
+def _ver_key(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in re.findall(r"\d+", v))
+    except ValueError:
+        return (0,)
+
+
+def _fetch_maven_versions(group: str, artifact: str) -> list:
+    cache_key = f"{group}:{artifact}"
+    if cache_key in _MAVEN_VERSIONS:
+        return _MAVEN_VERSIONS[cache_key]
+
+    group_path = group.replace(".", "/")
+    safe_artifact = urllib.parse.quote(artifact, safe="")
+    url = f"https://repo1.maven.org/maven2/{group_path}/{safe_artifact}/maven-metadata.xml"
+    versions = []
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            root = ET.fromstring(resp.read())
+        raw = [v.text for v in root.findall(".//versions/version") if v.text]
+        # Accept a trailing stable-release marker (Maven Java projects use
+        # several conventions for "this is GA, not a preview": Spring Boot
+        # 1.x is ALWAYS suffixed ".RELEASE" (no clean version ever existed on
+        # that line -- confirmed live against Maven Central), Quarkus 1.x/2.x
+        # are ALWAYS suffixed ".Final" the same way. Excluding all suffixes
+        # unconditionally (as this used to) makes an entire major
+        # unresolvable, not just its prereleases -- caught when Spring Boot 1
+        # and Quarkus 1/2 both failed with "not resolvable" despite being
+        # real, current, installable coordinates. Still excludes genuine
+        # prereleases (Alpha/Beta/CR/RC/M<n>/SNAPSHOT/...).
+        versions = sorted(
+            (v for v in raw if re.match(r"^\d+(\.\d+)*(\.(RELEASE|Final|GA))?$", v, re.IGNORECASE)),
+            key=_ver_key,
+        )
+    except (URLError, ET.ParseError, OSError) as exc:
+        print(f"  [WARN] Maven Central lookup failed for {group}:{artifact}: {exc}", flush=True)
+
+    _MAVEN_VERSIONS[cache_key] = versions
+    return versions
+
+
+def _resolve(group: str, artifact: str, registry_ver: str) -> str | None:
+    """Resolve a registry version like '3' to the latest matching release on
+    Maven Central (e.g. '3' -> '3.5.16')."""
+    versions = _fetch_maven_versions(group, artifact)
+
+    prefix = registry_ver + "."
+    candidates = [v for v in versions if v.startswith(prefix)]
+    if candidates:
+        return candidates[-1]
+
+    if registry_ver in versions:
+        return registry_ver
+
+    return None
+
+
+# ── Pre-fetch ─────────────────────────────────────────────────────────────────
+
+def prefetch(lang_data: dict) -> None:
+    """Pre-fetch version lists from Maven Central for all coordinates."""
+    coords: set = set()
+    for fw in lang_data.get("frameworks", []):
+        if not fw.get("include", True):
+            continue
+        for fv in fw.get("version", []):
+            coords.add(_framework_anchor(fw["name"], fv["nr"]))
+    for lib in lang_data.get("cryptography_libs", []):
+        if lib.get("version") == "built-in":
+            continue
+        for lv in lib.get("version", []):
+            coord = _lib_coord(lib["name"], lv["nr"])
+            if coord:
+                coords.add(coord)
+
+    print("Fetching available versions from Maven Central ...")
+    for group, artifact in sorted(coords):
+        versions = _fetch_maven_versions(group, artifact)
+        print(f"  {group}:{artifact}: {len(versions)} version(s) found")
+    print()
+
+
+# ── versions.properties (runtime version read) ────────────────────────────────
+# Every framework/library API for reading "my own resolved version at
+# runtime" turned out to have a sharp edge once actually checked: Quarkus
+# ships an empty MANIFEST.MF since 3.1.0.Final; a shaded/uber jar merges
+# every dependency's manifest into one, so Package.getImplementationVersion()
+# on a class from an arbitrary dependency returns null; and each framework
+# exposes its own version through a different, framework-specific API researched
+# for this project.
+#
+# Sidestepped entirely: Maven pins an EXACT version per dependency (no range
+# resolution the way npm/PyPI have), so whatever this generator resolves is
+# exactly what gets installed -- there is no "did the resolver actually give
+# me what I asked for" question the way there was for Node. So the resolved
+# framework/library version strings are baked directly into a plain
+# versions.properties resource file at generation time and read back with a
+# single, uniform mechanism across all five frameworks.
+
+def _versions_properties(fw_resolved: str, lib_resolved: str) -> str:
+    return (
+        f"framework.version={fw_resolved}\n"
+        f"library.version={lib_resolved}\n"
+    )
+
+
+_VERSIONS_READ_HELPER = """\
+	private static java.util.Properties versions() {
+		java.util.Properties p = new java.util.Properties();
+		try (java.io.InputStream in = Main.class.getResourceAsStream("/versions.properties")) {
+			if (in != null) {
+				p.load(in);
+			}
+		} catch (java.io.IOException e) {
+			// leave empty -- /version endpoint reports "unknown" for missing keys
+		}
+		return p;
+	}
+"""
+
+
+# ── App templates ─────────────────────────────────────────────────────────────
+# Tokens: __LIB_IMPORTS__, __LIB_TOUCH__, __FW_NAME__, __LIB_NAME__.
+# Every framework bakes the resolved framework/library version into
+# versions.properties (see above) instead of reading it back from the
+# classpath, so the app code never needs per-framework version-reading logic.
+
+_SPRING_BOOT_MAIN = """\
+package app;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+@RestController
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	public static void main(String[] args) {
+		SpringApplication.run(Main.class, args);
+	}
+
+	@GetMapping("/")
+	public Map<String, Object> root() {
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("message", "Hello World");
+		return m;
+	}
+
+	@GetMapping("/version")
+	public Map<String, Object> version() {
+		Properties v = versions();
+
+		Map<String, Object> language = new LinkedHashMap<>();
+		language.put("name", "Java");
+		language.put("version", System.getProperty("java.version"));
+
+		Map<String, Object> framework = new LinkedHashMap<>();
+		framework.put("name", "__FW_NAME__");
+		framework.put("version", v.getProperty("framework.version", "unknown"));
+
+		Map<String, Object> library = new LinkedHashMap<>();
+		library.put("name", "__LIB_NAME__");
+		library.put("version", v.getProperty("library.version", "unknown"));
+
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("language", language);
+		result.put("framework", framework);
+		result.put("library", library);
+		return result;
+	}
+}
+"""
+
+_QUARKUS_MAIN = """\
+package app;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import __JAXRS_PKG__.GET;
+import __JAXRS_PKG__.Path;
+
+@Path("/")
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	@GET
+	public Map<String, Object> root() {
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("message", "Hello World");
+		return m;
+	}
+
+	@GET
+	@Path("/version")
+	public Map<String, Object> version() {
+		Properties v = versions();
+
+		Map<String, Object> language = new LinkedHashMap<>();
+		language.put("name", "Java");
+		language.put("version", System.getProperty("java.version"));
+
+		Map<String, Object> framework = new LinkedHashMap<>();
+		framework.put("name", "__FW_NAME__");
+		framework.put("version", v.getProperty("framework.version", "unknown"));
+
+		Map<String, Object> library = new LinkedHashMap<>();
+		library.put("name", "__LIB_NAME__");
+		library.put("version", v.getProperty("library.version", "unknown"));
+
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("language", language);
+		result.put("framework", framework);
+		result.put("library", library);
+		return result;
+	}
+}
+"""
+
+_MICRONAUT_MAIN = """\
+package app;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import io.micronaut.runtime.Micronaut;
+import io.micronaut.http.annotation.Controller;
+import io.micronaut.http.annotation.Get;
+
+@Controller("/")
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	public static void main(String[] args) {
+		Micronaut.run(Main.class, args);
+	}
+
+	@Get
+	public Map<String, Object> root() {
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("message", "Hello World");
+		return m;
+	}
+
+	@Get("/version")
+	public Map<String, Object> version() {
+		Properties v = versions();
+
+		Map<String, Object> language = new LinkedHashMap<>();
+		language.put("name", "Java");
+		language.put("version", System.getProperty("java.version"));
+
+		Map<String, Object> framework = new LinkedHashMap<>();
+		framework.put("name", "__FW_NAME__");
+		framework.put("version", v.getProperty("framework.version", "unknown"));
+
+		Map<String, Object> library = new LinkedHashMap<>();
+		library.put("name", "__LIB_NAME__");
+		library.put("version", v.getProperty("library.version", "unknown"));
+
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("language", language);
+		result.put("framework", framework);
+		result.put("library", library);
+		return result;
+	}
+}
+"""
+
+_VERTX_MAIN = """\
+package app;
+
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.Router;
+
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	public static void main(String[] args) {
+		Properties v = versions();
+		Vertx vertx = Vertx.vertx();
+		Router router = Router.router(vertx);
+
+		router.get("/").handler(ctx -> {
+			JsonObject body = new JsonObject().put("message", "Hello World");
+			ctx.response().putHeader("content-type", "application/json").end(body.encode());
+		});
+
+		router.get("/version").handler(ctx -> {
+			JsonObject language = new JsonObject()
+					.put("name", "Java")
+					.put("version", System.getProperty("java.version"));
+			JsonObject framework = new JsonObject()
+					.put("name", "__FW_NAME__")
+					.put("version", v.getProperty("framework.version", "unknown"));
+			JsonObject library = new JsonObject()
+					.put("name", "__LIB_NAME__")
+					.put("version", v.getProperty("library.version", "unknown"));
+			JsonObject body = new JsonObject()
+					.put("language", language)
+					.put("framework", framework)
+					.put("library", library);
+			ctx.response().putHeader("content-type", "application/json").end(body.encode());
+		});
+
+		vertx.createHttpServer().requestHandler(router).listen(8000);
+	}
+}
+"""
+
+_HELIDON_COMMON_HEAD = """\
+package app;
+
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import io.helidon.webserver.Routing;
+import io.helidon.webserver.WebServer;
+
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	private static String esc(String s) {
+		return "\\"" + s.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"") + "\\"";
+	}
+
+	private static String obj(String... kv) {
+		StringBuilder sb = new StringBuilder("{");
+		for (int i = 0; i < kv.length; i += 2) {
+			if (i > 0) sb.append(",");
+			sb.append(esc(kv[i])).append(":").append(kv[i + 1]);
+		}
+		return sb.append("}").toString();
+	}
+"""
+
+# Helidon SE's WebServer API has three incompatible shapes across the majors
+# tracked here (verified against real code snippets in Helidon's own docs at
+# each version's branch, then build-and-run verified in a container):
+#   1.x -- static WebServer.create(routing), routing pre-built via
+#          Routing.builder()....build(); startup blocks on a raw
+#          CompletableFuture (no Single type existed yet).
+#   2.x -- also WebServer.create(...), but takes an un-built Routing.Builder
+#          directly; startup blocks via Helidon's own Single.await().
+#   3.x/4.x -- fluent WebServer.builder().routing(...).build().start().
+_HELIDON_MAIN_V1 = _HELIDON_COMMON_HEAD + """\
+	public static void main(String[] args) throws Exception {
+		Properties v = versions();
+
+		String rootBody = obj("message", esc("Hello World"));
+		String versionBody = obj(
+				"language", obj("name", esc("Java"), "version", esc(System.getProperty("java.version"))),
+				"framework", obj("name", esc("__FW_NAME__"), "version", esc(v.getProperty("framework.version", "unknown"))),
+				"library", obj("name", esc("__LIB_NAME__"), "version", esc(v.getProperty("library.version", "unknown")))
+		);
+
+		Routing routing = Routing.builder()
+				.get("/", (req, res) -> res.send(rootBody))
+				.get("/version", (req, res) -> res.send(versionBody))
+				.build();
+
+		WebServer.create(routing)
+				.start()
+				.toCompletableFuture()
+				.get();
+	}
+}
+"""
+
+_HELIDON_MAIN_V2 = _HELIDON_COMMON_HEAD + """\
+	public static void main(String[] args) {
+		Properties v = versions();
+
+		String rootBody = obj("message", esc("Hello World"));
+		String versionBody = obj(
+				"language", obj("name", esc("Java"), "version", esc(System.getProperty("java.version"))),
+				"framework", obj("name", esc("__FW_NAME__"), "version", esc(v.getProperty("framework.version", "unknown"))),
+				"library", obj("name", esc("__LIB_NAME__"), "version", esc(v.getProperty("library.version", "unknown")))
+		);
+
+		Routing.Builder routing = Routing.builder()
+				.get("/", (req, res) -> res.send(rootBody))
+				.get("/version", (req, res) -> res.send(versionBody));
+
+		WebServer.create(routing)
+				.start()
+				.await();
+	}
+}
+"""
+
+_HELIDON_MAIN_V3 = """\
+package app;
+
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import io.helidon.webserver.WebServer;
+
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	private static String esc(String s) {
+		return "\\"" + s.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"") + "\\"";
+	}
+
+	private static String obj(String... kv) {
+		StringBuilder sb = new StringBuilder("{");
+		for (int i = 0; i < kv.length; i += 2) {
+			if (i > 0) sb.append(",");
+			sb.append(esc(kv[i])).append(":").append(kv[i + 1]);
+		}
+		return sb.append("}").toString();
+	}
+
+	public static void main(String[] args) {
+		Properties v = versions();
+
+		String rootBody = obj("message", esc("Hello World"));
+		String versionBody = obj(
+				"language", obj("name", esc("Java"), "version", esc(System.getProperty("java.version"))),
+				"framework", obj("name", esc("__FW_NAME__"), "version", esc(v.getProperty("framework.version", "unknown"))),
+				"library", obj("name", esc("__LIB_NAME__"), "version", esc(v.getProperty("library.version", "unknown")))
+		);
+
+		WebServer server = WebServer.builder()
+				.port(8000)
+				.routing(routing -> routing
+						.get("/", (req, res) -> res.send(rootBody))
+						.get("/version", (req, res) -> res.send(versionBody)))
+				.build();
+		server.start();
+	}
+}
+"""
+
+_HELIDON_MAIN_BY_MAJOR = {
+    "1": _HELIDON_MAIN_V1,
+    "2": _HELIDON_MAIN_V2,
+}
+_HELIDON_MAIN_DEFAULT = _HELIDON_MAIN_V3  # 3.x/4.x
+
+
+def _helidon_main_tpl(fw_major: str) -> str:
+    return _HELIDON_MAIN_BY_MAJOR.get(fw_major, _HELIDON_MAIN_DEFAULT)
+
+
+# Quarkus's JAX-RS namespace and REST extension coordinates both depend on
+# major version -- see the "Quarkus" notes in registry java.json for the
+# verified facts behind this split.
+_QUARKUS_JAXRS_PKG_BY_MAJOR = {
+    "1": "javax.ws.rs",
+    "2": "javax.ws.rs",
+}
+_QUARKUS_JAXRS_PKG_DEFAULT = "jakarta.ws.rs"  # 3.x onward
+
+
+def _quarkus_jaxrs_pkg(fw_major: str) -> str:
+    return _QUARKUS_JAXRS_PKG_BY_MAJOR.get(fw_major, _QUARKUS_JAXRS_PKG_DEFAULT)
+
+
+_QUARKUS_REST_DEPS_BY_MAJOR = {
+    "1": [("io.quarkus", "quarkus-resteasy"), ("io.quarkus", "quarkus-resteasy-jackson")],
+    "2": [("io.quarkus", "quarkus-resteasy"), ("io.quarkus", "quarkus-resteasy-jackson")],
+}
+_QUARKUS_REST_DEPS_DEFAULT = [("io.quarkus", "quarkus-rest-jackson")]  # 3.x onward
+
+
+def _quarkus_rest_deps(fw_major: str) -> list:
+    return _QUARKUS_REST_DEPS_BY_MAJOR.get(fw_major, _QUARKUS_REST_DEPS_DEFAULT)
+
+
+_APP_TPL = {
+    "Spring Boot": _SPRING_BOOT_MAIN,
+    "Quarkus":     _QUARKUS_MAIN,
+    "Micronaut":   _MICRONAUT_MAIN,
+    "Vert.x":      _VERTX_MAIN,
+}
+
+
+def _sub(tpl: str, **kw) -> str:
+    for k, v in kw.items():
+        tpl = tpl.replace(f"__{k}__", v)
+    return tpl
+
+
+def make_main_java(fw_name: str, fw_major: str, lib_name: str) -> str:
+    meta = LIB_META[lib_name]
+    imports = "\n".join(f"import {imp};" for imp in meta["imports"])
+    tpl = _helidon_main_tpl(fw_major) if fw_name == "Helidon" else _APP_TPL[fw_name]
+    return _sub(
+        tpl,
+        LIB_IMPORTS      = imports,
+        LIB_TOUCH        = meta["touch"],
+        FW_NAME          = fw_name,
+        LIB_NAME         = lib_name,
+        VERSIONS_HELPER  = _VERSIONS_READ_HELPER,
+        JAXRS_PKG        = _quarkus_jaxrs_pkg(fw_major) if fw_name == "Quarkus" else "",
+    )
+
+
+# ── pom.xml generation ────────────────────────────────────────────────────────
+
+def _lib_dependency_xml(lib_name: str, lib_resolved: str) -> str:
+    # lib_resolved doubles as the bucket hint here: for the exact-pinned
+    # buckets ("1.70", "1.72", "1.79") the resolved version IS the bucket
+    # name (Maven's exact-match resolution), so this correctly selects
+    # bcprov-jdk15on only for "1.70" without needing the bucket separately.
+    coord = _lib_coord(lib_name, lib_resolved)
+    if not coord:
+        return ""
+    group, artifact = coord
+    return (
+        "    <dependency>\n"
+        f"      <groupId>{group}</groupId>\n"
+        f"      <artifactId>{artifact}</artifactId>\n"
+        f"      <version>{lib_resolved}</version>\n"
+        "    </dependency>\n"
+    )
+
+
+_SHADE_PLUGIN = """\
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>app.Main</mainClass>
+                </transformer>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+"""
+
+
+def _pom_spring_boot(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>{fw_resolved}</version>
+  </parent>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <java.version>{jdk_ver}</java.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+"""
+
+
+def _pom_quarkus(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str,
+                 fw_major: str = "3") -> str:
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    rest_deps = "".join(
+        f"    <dependency>\n      <groupId>{g}</groupId>\n      <artifactId>{a}</artifactId>\n    </dependency>\n"
+        for g, a in _quarkus_rest_deps(fw_major)
+    )
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>{jdk_ver}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <quarkus.platform.version>{fw_resolved}</quarkus.platform.version>
+    <quarkus.package.jar.type>uber-jar</quarkus.package.jar.type>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-bom</artifactId>
+        <version>${{quarkus.platform.version}}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+{rest_deps}    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-arc</artifactId>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+      <plugin>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-maven-plugin</artifactId>
+        <version>${{quarkus.platform.version}}</version>
+        <extensions>true</extensions>
+        <executions>
+          <execution>
+            <goals>
+              <goal>build</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+"""
+
+
+def _pom_micronaut(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str,
+                   parent_group: str = "io.micronaut.platform", fw_major: str = "4") -> str:
+    if fw_major == "1":
+        return _pom_micronaut_v1(jdk_ver, fw_resolved, lib_name, lib_resolved)
+
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    serde_dep = "" if fw_major in _MICRONAUT_NO_SERDE_MAJORS else (
+        "    <dependency>\n"
+        "      <groupId>io.micronaut.serde</groupId>\n"
+        "      <artifactId>micronaut-serde-jackson</artifactId>\n"
+        "    </dependency>\n"
+    )
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>{parent_group}</groupId>
+    <artifactId>micronaut-parent</artifactId>
+    <version>{fw_resolved}</version>
+  </parent>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <jdk.version>{jdk_ver}</jdk.version>
+    <release.version>{jdk_ver}</release.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.micronaut</groupId>
+      <artifactId>micronaut-http-server-netty</artifactId>
+    </dependency>
+{serde_dep}    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+{_SHADE_PLUGIN}    </plugins>
+  </build>
+</project>
+"""
+
+
+# Micronaut 1.x has no <parent> at all (io.micronaut:micronaut-parent didn't
+# exist yet) -- projects imported io.micronaut:micronaut-bom via
+# <dependencyManagement> instead, which means annotation processing
+# (micronaut-inject-java, normally pre-wired by the parent POM for every
+# other tracked major) must be configured manually on the compiler plugin.
+def _pom_micronaut_v1(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.source>{jdk_ver}</maven.compiler.source>
+    <maven.compiler.target>{jdk_ver}</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <micronaut.version>{fw_resolved}</micronaut.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.micronaut</groupId>
+        <artifactId>micronaut-bom</artifactId>
+        <version>${{micronaut.version}}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.micronaut</groupId>
+      <artifactId>micronaut-http-server-netty</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micronaut</groupId>
+      <artifactId>micronaut-inject-java</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.2.11</version>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>io.micronaut</groupId>
+              <artifactId>micronaut-inject-java</artifactId>
+              <version>{fw_resolved}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+{_SHADE_PLUGIN}    </plugins>
+  </build>
+</project>
+"""
+
+
+def _pom_vertx(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>{jdk_ver}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-core</artifactId>
+      <version>{fw_resolved}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-web</artifactId>
+      <version>{fw_resolved}</version>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+{_SHADE_PLUGIN}    </plugins>
+  </build>
+</project>
+"""
+
+
+def _pom_helidon(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>{jdk_ver}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.helidon.webserver</groupId>
+      <artifactId>helidon-webserver</artifactId>
+      <version>{fw_resolved}</version>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+{_SHADE_PLUGIN}    </plugins>
+  </build>
+</project>
+"""
+
+
+_POM_TPL = {
+    "Spring Boot": _pom_spring_boot,
+    "Quarkus":     _pom_quarkus,
+    "Micronaut":   _pom_micronaut,
+    "Vert.x":      _pom_vertx,
+    "Helidon":     _pom_helidon,
+}
+
+# Final jar filename Maven produces under target/, per framework's packaging
+# convention (all use finalName=app in their <build> section above; Quarkus's
+# uber-jar packaging appends "-runner").
+_JAR_FILENAME = {
+    "Spring Boot": "app.jar",
+    "Quarkus":     "app-runner.jar",
+    "Micronaut":   "app.jar",
+    "Vert.x":      "app.jar",
+    "Helidon":     "app.jar",
+}
+
+# HTTP port each framework defaults to, and the property/file needed to
+# override it to this project's standard 8000. None means no config needed
+# (Vert.x/Helidon bind the port programmatically in Main.java instead).
+_PORT_CONFIG = {
+    "Spring Boot": "server.port=8000\n",
+    "Quarkus":     "quarkus.http.port=8000\n",
+    "Micronaut":   "micronaut.server.port=8000\n",
+    "Vert.x":      None,
+    "Helidon":     None,
+}
+
+
+# ── Dockerfile generation ─────────────────────────────────────────────────────
+# Multi-stage: `maven:3-eclipse-temurin-{jdk}` (Maven + matching JDK bundled by
+# Adoptium/the official Maven image -- avoids apt-installing Maven by hand
+# into a bare temurin image) builds the jar, then a slim `eclipse-temurin:
+# {jdk}-jre-jammy` runs it. Both stages use the Ubuntu/glibc "-jammy" tag,
+# not Alpine: eclipse-temurin has no "-slim" tags at all (that's a Debian/apt
+# convention from the old, unmaintained openjdk Docker Official Image, never
+# adopted by Adoptium's replacement), and Conscrypt's native library is
+# glibc-linked, so Alpine/musl is avoided project-wide to sidestep a
+# suspected (not yet empirically confirmed) UnsatisfiedLinkError.
+
+def make_dockerfile(jdk_ver: str, fw_name: str) -> str:
+    jar_name = _JAR_FILENAME[fw_name]
+    return (
+        f"FROM maven:3-eclipse-temurin-{jdk_ver} AS builder\n"
+        "WORKDIR /build\n"
+        "COPY pom.xml .\n"
+        "COPY src ./src\n"
+        "RUN mvn -B -q -DskipTests package\n"
+        "\n"
+        f"FROM eclipse-temurin:{jdk_ver}-jre-jammy\n"
+        "WORKDIR /app\n"
+        f"COPY --from=builder /build/target/{jar_name} ./app.jar\n"
+        "EXPOSE 8000\n"
+        'CMD ["java", "-jar", "app.jar"]\n'
+    )
+
+
+# ── Public interface ──────────────────────────────────────────────────────────
+
+def write_context(lang_ver: str, fw_name: str, fw_major: str,
+                  lib_name: str, lib_ver: str, images_base: Path) -> bool:
+    """Write pom.xml / src / Dockerfile for one image context.
+
+    Returns False (and removes any stale directory) when a required Maven
+    coordinate cannot be resolved on Maven Central.
+    """
+    out = images_base / "java" / lang_ver / fw_name / fw_major / lib_name / lib_ver
+
+    fw_group, fw_artifact = _framework_anchor(fw_name, fw_major)
+    fw_resolved = _resolve(fw_group, fw_artifact, fw_major)
+    if fw_resolved is None:
+        print(f"  [SKIP] {fw_name} {fw_major} not resolvable on Maven Central", flush=True)
+        if out.exists():
+            shutil.rmtree(out)
+        return False
+
+    lib_resolved = "built-in"
+    lib_coord = _lib_coord(lib_name, lib_ver)
+    if lib_coord and lib_ver != "builtin":
+        lib_resolved = _resolve(lib_coord[0], lib_coord[1], lib_ver)
+        if lib_resolved is None:
+            print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on Maven Central", flush=True)
+            if out.exists():
+                shutil.rmtree(out)
+            return False
+
+    src_dir = out / "src" / "main" / "java" / "app"
+    res_dir = out / "src" / "main" / "resources"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    res_dir.mkdir(parents=True, exist_ok=True)
+
+    (src_dir / "Main.java").write_text(
+        make_main_java(fw_name, fw_major, lib_name), encoding="utf-8"
+    )
+    (res_dir / "versions.properties").write_text(
+        _versions_properties(fw_resolved, lib_resolved), encoding="utf-8"
+    )
+    port_config = _PORT_CONFIG[fw_name]
+    if port_config:
+        (res_dir / "application.properties").write_text(port_config, encoding="utf-8")
+
+    pom_kwargs = {}
+    if fw_name == "Micronaut":
+        pom_kwargs["parent_group"] = fw_group
+        pom_kwargs["fw_major"] = fw_major
+    if fw_name == "Quarkus":
+        pom_kwargs["fw_major"] = fw_major
+    (out / "pom.xml").write_text(
+        _POM_TPL[fw_name](lang_ver, fw_resolved, lib_name, lib_resolved, **pom_kwargs),
+        encoding="utf-8",
+    )
+    (out / "Dockerfile").write_text(
+        make_dockerfile(lang_ver, fw_name), encoding="utf-8"
+    )
+    return True
