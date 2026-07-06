@@ -1,0 +1,139 @@
+{
+  "languages": [
+    {
+      "id": "node",
+      "display_name": "Node.js",
+      "versions": [
+        { "nr": "0.10", "release_date": "2013-03-11", "include": false },
+        { "nr": "0.12", "release_date": "2015-02-06", "include": false },
+        { "nr": "4",    "release_date": "2015-09-08", "include": true  },
+        { "nr": "5",    "release_date": "2015-10-29", "include": false },
+        { "nr": "6",    "release_date": "2016-04-26", "include": true  },
+        { "nr": "7",    "release_date": "2016-10-25", "include": false },
+        { "nr": "8",    "release_date": "2017-05-30", "include": true  },
+        { "nr": "9",    "release_date": "2017-10-31", "include": false },
+        { "nr": "10",   "release_date": "2018-04-24", "include": true  },
+        { "nr": "11",   "release_date": "2018-10-23", "include": false },
+        { "nr": "12",   "release_date": "2019-04-23", "include": true  },
+        { "nr": "13",   "release_date": "2019-10-22", "include": false },
+        { "nr": "14",   "release_date": "2020-04-21", "include": true  },
+        { "nr": "15",   "release_date": "2020-10-20", "include": false },
+        { "nr": "16",   "release_date": "2021-04-20", "include": true  },
+        { "nr": "17",   "release_date": "2021-10-19", "include": false },
+        { "nr": "18",   "release_date": "2022-04-19", "include": true  },
+        { "nr": "19",   "release_date": "2022-10-18", "include": false },
+        { "nr": "20",   "release_date": "2023-04-18", "include": true  },
+        { "nr": "21",   "release_date": "2023-10-17", "include": false },
+        { "nr": "22",   "release_date": "2024-04-24", "include": true  },
+        { "nr": "23",   "release_date": "2024-10-16", "include": false },
+        { "nr": "24",   "release_date": "2025-05-06", "include": true  },
+        { "nr": "25",   "release_date": "2025-10-21", "include": false },
+        { "nr": "26",   "release_date": "2026-04-21", "include": true  }
+      ],
+      "_comment_compat": "Node's own major numbers are flat integers (4,6,8,...), not major.minor like Go/Python, so the shared is_compatible() 'same-major-bucket' matching can't use '+'/'-' range syntax across majors (a compat entry's leading digit must equal the tested version's leading digit). Compatibility arrays below therefore enumerate every satisfying major literally instead of using 'X+' shorthand. Sub-patch thresholds (e.g. '>=10.16.0') are reduced to their integer major, since each major's Docker tag always resolves to that release line's final/latest patch.",
+      "frameworks": [
+        {
+          "name": "Express",
+          "module": "express",
+          "version": [
+            { "nr": "4", "release_date": "2014-04-09", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2024-09-10", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "4.x is the long-lived stable line (2014-present), requires Node >=0.8 (satisfied by everything tracked). 5.x (Sept 2024) requires Node 18+, drops callback-based error handling. Basic req/res handler API is unchanged between 4.x/5.x. Pre-4.x (0.x-3.x) used a materially different API (express.createServer(), etc.) and is out of scope for this pass."
+        },
+        {
+          "name": "Fastify",
+          "module": "fastify",
+          "version": [
+            { "nr": "1", "release_date": "2018-03-06", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2019-02-25", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2020-07-07", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2022-06-08", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2024-09-17", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "package.json stopped declaring 'engines' from v3's later patches onward; 4.x/5.x minimums (Node 14.19+, 20+) are per Fastify's documented LTS support policy, not machine-verifiable via npm metadata. Fastify 1.x's dependency tree deterministically hits an npm@3 bug on Node 6 (npm 3.10.10, the version Node 6 bundles) -- `npm install` fails with `ENOTDIR: not a directory, open '.../node_modules/.staging/@types/events-.../package.json'`, a known npm3 '.staging' race that npm5 (bundled from Node 8 onward) doesn't have. Verified directly: fails 5/5 tries on node:6-slim, succeeds 2/2 on node:8-slim, independent of which crypto library is paired with it. Fastify 2.x's smaller/different dependency tree doesn't trigger it (8/8 successes on Node 6), so only major 1 is narrowed to start at Node 8."
+        },
+        {
+          "name": "Koa",
+          "module": "koa",
+          "version": [
+            { "nr": "2", "release_date": "2016-03-23", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2025-04-28", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "2.x is the long-lived stable line (2016-2025), uses async/await-shaped middleware (koa-compose wraps every call in Promise.resolve(), so our own generated middleware avoids async -- see lang_node.py notes). 3.x (Apr 2025) requires Node 18+, same middleware shape. 1.x used generator-function middleware (pre-async/await) and is out of scope for this pass. Despite the package.json claiming Node >=4, koa 2.x's own dependency tree (`http-errors`, resolved as of the latest 2.x patch) uses object destructuring (`const { HttpError } = require(...)`) that old V8 can't parse -- verified directly: `require(\"koa\")` throws `SyntaxError: Unexpected token {` on node:6-slim, loads fine on node:8-slim. Narrowed to Node 8+."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "crypto",
+          "module": "built-in",
+          "version": "built-in",
+          "notes": "Node.js standard library crypto module (OpenSSL-backed) — always available."
+        },
+        {
+          "name": "node-forge",
+          "module": "node-forge",
+          "version": [
+            { "nr": "0.1",  "release_date": "2013-06-19", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "0.10", "release_date": "2020-05-19", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.0",  "release_date": "2022-01-05", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.4",  "release_date": "2024-11-25", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Pure-JS TLS/crypto implementation (RSA, AES, legacy hashes). Popular pre-WebCrypto compatibility shim. Package.json claims 1.x needs only Node >=6.13.0, but that's wrong: 1.0.0's lib/log.js unconditionally calls the global `URLSearchParams` (added in Node 10.0.0) at require-time whenever `console` exists -- guaranteed crash on Node <10 (verified against the actual npm tarball). Fixed upstream by 1.4.0 (query-var block now gated behind `typeof window !== 'undefined'`, so it's a no-op under Node). 1.0's compat therefore starts at 10, not 6."
+        },
+        {
+          "name": "jose",
+          "module": "jose",
+          "version": [
+            { "nr": "1", "release_date": "2019-10-01", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2020-09-08", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2020-11-14", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2021-10-14", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2023-10-25", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "6", "release_date": "2025-02-22", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "JWT/JWS/JWE/JWK implementation. v3+ stopped declaring 'engines' in package.json; minimums here follow the project's documented Node support policy per major."
+        },
+        {
+          "name": "crypto-js",
+          "module": "crypto-js",
+          "version": [
+            { "nr": "3", "release_date": "2013-05-07", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2020-02-12", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Dependency-free pure-JS classic crypto (MD5, SHA, AES, DES, RC4). No declared Node engine requirement in either major — included as an SCA weak/legacy-algorithm reference point. 4.x's blowfish.js (and likely other cipher files) use bare `let`/`const` with no \"use strict\" pragma -- verified by actually building/running crypto-js@4.2.0 against real node:4/6/8-slim containers: throws `SyntaxError: Block-scoped declarations ... not yet supported outside strict mode` on Node 4 (old V8 required strict mode for block-scoped declarations), works from Node 6 onward. 3.x (verified same way with 3.3.0) is plain ES5 and works fine down to Node 4."
+        },
+        {
+          "name": "sodium-native",
+          "module": "sodium-native",
+          "version": [
+            { "nr": "2", "release_date": "2017-11-07", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2020-02-20", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2023-01-09", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2025-04-01", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Native libsodium bindings (N-API + prebuildify) — the only planned library needing a C toolchain (node-gyp: python3/make/g++, plus autoconf/automake/libtool for the from-source libsodium build used when no prebuilt binary exists for the exact Node ABI, e.g. old sodium-native major x very new Node major) in the image. v5 primarily targets the Bare runtime but still supports Node 18+. v3's node-gyp fallback build script requires the 'fs/promises' subpath (only importable as its own module since Node 14, though the fs.promises property existed since Node 10) — bumped to 14+ after a real build failure on Node 10."
+        },
+        {
+          "name": "@noble/curves",
+          "module": "@noble/curves",
+          "version": [
+            { "nr": "0.1", "release_date": "2022-12-04", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.0", "release_date": "2023-04-12", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2.0", "release_date": "2025-08-25", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Auditable pure-JS elliptic curves (secp256k1, ed25519, NIST curves). Sibling project to @noble/post-quantum, same author (paulmillr). 2.x requires Node >=20.19.0 (reduces to major 20 at our granularity)."
+        },
+        {
+          "name": "@noble/post-quantum",
+          "module": "@noble/post-quantum",
+          "version": [
+            { "nr": "0.1", "release_date": "2024-04-02", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "0.6", "release_date": "2025-11-10", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Auditable pure-JS ML-KEM/ML-DSA/SLH-DSA/FN-DSA (FIPS 203/204/205 + Falcon). The Node.js equivalent of Go's circl/liboqs-go — primary PQC library for this language."
+        }
+      ]
+    }
+  ]
+}

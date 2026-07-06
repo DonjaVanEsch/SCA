@@ -30,22 +30,33 @@ SCA/
 │   │                       ├── Dockerfile
 │   │                       ├── app.py
 │   │                       └── requirements.txt
-│   └── go/
+│   ├── go/
+│   │   └── {lang_version}/
+│   │       └── {Framework}/
+│   │           └── {fw_major}/
+│   │               └── {CryptoLib}/
+│   │                   └── {lib_version}/
+│   │                       ├── Dockerfile
+│   │                       ├── main.go
+│   │                       └── go.mod
+│   └── node/
 │       └── {lang_version}/
 │           └── {Framework}/
 │               └── {fw_major}/
 │                   └── {CryptoLib}/
 │                       └── {lib_version}/
 │                           ├── Dockerfile
-│                           ├── main.go
-│                           └── go.mod
+│                           ├── app.js
+│                           └── package.json
 │
 ├── scripts/
 │   ├── generate_images.py          # Entry point: reads registry → writes images/
 │   ├── lang_python.py              # Python-specific templates + PyPI version resolver
 │   ├── lang_go.py                  # Go-specific templates + Go module version resolver
+│   ├── lang_node.py                # Node.js-specific templates + npm registry version resolver
 │   ├── registry python.json        # Python matrix: lang versions, frameworks, libs, compat rules
-│   └── registry go.json            # Go matrix: lang versions, frameworks, libs, compat rules
+│   ├── registry go.json            # Go matrix: lang versions, frameworks, libs, compat rules
+│   └── registry node.json          # Node matrix: lang versions, frameworks, libs, compat rules
 │
 ├── static/
 │   └── dashboard.html              # Single-page dashboard UI (served by dashboard.py)
@@ -95,6 +106,7 @@ Run with:
 ```bash
 python scripts/generate_images.py --lang python
 python scripts/generate_images.py --lang go
+python scripts/generate_images.py --lang node
 ```
 
 ### 3. Language modules (`lang_python.py`, `lang_go.py`)
@@ -158,7 +170,7 @@ Manages a SQLite database (`pqc_manager.db`) with the following schema:
 | Table | Contents |
 |-------|----------|
 | `build_results` | Latest build outcome per image (1:1 with `images`); linked to a `run` |
-| `test_results` | Full test-run history per image (1:N); `root_ok`, `version_ok`, `response_data` (JSON), linked to a `run` |
+| `test_results` | Full test-run history per image (1:N); `root_ok`, `version_ok`, `response_data` (JSON), `output` (container logs), linked to a `run` |
 
 **Convenience view** `image_details` — flat join of all tables; used for all queries in the dashboard.
 
@@ -174,7 +186,7 @@ db.get_cascading_filter_options(active)  # Cascaded options (child narrows on pa
 db.get_all_ids_for_filter(filters, include_ignored)
 db.get_images_by_ids(image_ids)
 db.save_build_result(image_id, success, output, started_at, finished_at, run_id)
-db.save_test_result(image_id, success, root_ok, version_ok, error_msg, response_data, run_id)
+db.save_test_result(image_id, success, root_ok, version_ok, error_msg, response_data, output, run_id)
 db.set_ignored(image_ids, ignored, reason)
 db.get_or_create_run(name)            # Returns run_id
 db.update_run_status(run_id, status)
@@ -271,6 +283,49 @@ The `run_name` field in the action body associates all results with a named `run
 | crypto | built-in | |
 | crypto/mlkem | built-in (Go ≥ 1.24) | |
 
+### Node.js (12 lang versions × 3 frameworks × 7 libs × many versions ≈ 1,319 images)
+
+| Framework | Major versions | npm package | Notes |
+|-----------|---------------|--------------|-------|
+| Express | 4, 5 | express | 5.x requires Node 18+ |
+| Fastify | 1 (Node 8+), 2–5 | fastify | `.listen({port,host}, cb)` object form works across all majors. Handlers avoid `async` (Node <7.6 can't parse it) and call `reply.send()` explicitly instead of `return`ing a value — `return` as the response only works for async/Promise handlers; a plain sync handler that `return`s just hangs forever with no error (verified against a real container). Major 1's dependency tree also deterministically fails `npm install` on Node 6 (npm@3 `.staging` bug) — narrowed to Node 8+ in the registry. |
+| Koa | 2 (Node 8+), 3 | koa | Sync middleware (sets `ctx.body`, no `async`) for the same Node <7.6 reason — safe because `koa-compose` wraps every middleware call in `Promise.resolve()` regardless of whether it's async. 1.x (generator-based) out of scope. Major 2's dependency tree (`http-errors`) also uses object destructuring that old V8 can't parse — `require("koa")` itself throws `SyntaxError: Unexpected token {` on Node 6, works from Node 8. Narrowed to Node 8+. |
+
+| Crypto library | Version range | npm package | Notes |
+|----------------|--------------|-------------|-------|
+| crypto | built-in | — | Node standard library |
+| node-forge | 0.1 – 1.4 | node-forge | |
+| jose | 1.x – 6.x | jose | v6 is ESM-only |
+| crypto-js | 3.x, 4.x | crypto-js | 4.x needs Node 6+ — its cipher files use bare `let`/`const` with no `"use strict"`, which old V8 (Node 4) rejects outside strict mode |
+| sodium-native | 2.x – 5.x | sodium-native | needs node-gyp (python3/make/g++); v3 needs Node 14+ (`fs/promises`) |
+| @noble/curves | 0.x – 2.x | @noble/curves | v2 is ESM-only |
+| @noble/post-quantum | 0.1 – 0.6 | @noble/post-quantum | ML-KEM/ML-DSA/SLH-DSA/FN-DSA; v0.6+ is ESM-only; Node.js equivalent of Go's circl/liboqs-go |
+
+Node versions span 4–26 (even/LTS majors included; odd majors reference-only). Debian base ages out the same way as Go's: jessie (Node <6), stretch (6–12), buster (14–16) all need the `archive.debian.org` redirect — only exercised by `sodium-native`'s native build, since every other library is pure JS with no system deps.
+
+#### Known environment quirk: Docker build cache serving stale `COPY app.js` content
+
+Recurring symptom, not a code bug — logged here because it keeps resurfacing and looks like a generator bug at first glance:
+
+```
+Error: Cannot find module 'crypto-js'
+Require stack:
+- /app/app.js
+    ...
+  code: 'MODULE_NOT_FOUND',
+```
+
+The image's `package.json` is correct (lists the right dependency, e.g. `jose`), but the *running container's* `app.js` still contains an unrelated library's content (e.g. `require('crypto-js')`) — a combination the generator can never produce in one `write_context()` call, so it isn't a source-tree bug. Confirmed root cause: Docker (observed with Docker Desktop on Windows/WSL2) reuses a stale cached `COPY app.js .` layer from that image tag's build history while still re-running `COPY package.json .` fresh. `docker build --no-cache` on the exact same context immediately produces the correct file — proving the source is fine and the daemon's layer cache is the problem.
+
+It has recurred even after `docker builder prune`, and even after being fixed once for a given tag it can reappear on a later rebuild of that same tag — this points at something concurrency-related (`manager.py`'s `_do_build` runs up to `workers` parallel `docker build` processes) rather than simple stale-cache-from-long-ago. Not yet root-caused to a specific Docker/BuildKit version bug.
+
+Mitigations, in order of confidence:
+1. Restart Docker Desktop before a big rebuild after a template/registry change.
+2. Rebuild with "no cache" checked in the dashboard.
+3. If it still recurs, drop the build "Workers" option to 1 (serializes `docker build` calls) — untested whether this fully eliminates it, but removes the concurrency that's the leading suspect.
+
+Always verify a fix landed by extracting the file from the *built* image (`docker run --rm --entrypoint cat <tag> /app/app.js`, prefix with `MSYS_NO_PATHCONV=1` in Git Bash so `/app/...` isn't mangled into a Windows path) rather than trusting a green build alone.
+
 ---
 
 ## What still needs to be added
@@ -281,14 +336,6 @@ The following **common languages** are not yet covered. For each, add:
 3. A case in `generate_images.py` to dispatch to the new module
 
 ### Priority languages and their typical stacks
-
-#### Node.js / JavaScript
-- **Lang versions**: 18, 20, 22, 23 (LTS + current)
-- **Frameworks**: Express (4, 5), Fastify (4, 5), Koa (2), Hapi (21), NestJS (10)
-- **Crypto libs**: `node:crypto` (built-in), `node-forge` (1.x), `jose` (5.x), `crypto-js` (4.x), `sodium-native` (4.x), `noble/curves` (1.x)
-- **App file**: `app.js` or `app.mjs`
-- **Deps file**: `package.json`
-- **Base image**: `node:{version}-slim`
 
 #### Java
 - **Lang versions**: 11, 17, 21, 24 (LTS versions)
@@ -392,6 +439,7 @@ The version strings must be **runtime-detected** (not hardcoded) wherever possib
 # Generate all image contexts for a language
 python scripts/generate_images.py --lang python
 python scripts/generate_images.py --lang go
+python scripts/generate_images.py --lang node
 
 # ── CLI (manager.py) ──────────────────────────────────────────────────────────
 

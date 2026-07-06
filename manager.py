@@ -213,8 +213,8 @@ def _print_summary(entries):
 
 def _image_tag(e):
     """Deterministic, Docker-legal image name derived from a context entry."""
-    fw  = e["framework"].lower().replace("/", "_")
-    lib = e["library"].lower().replace("/", "_")
+    fw  = e["framework"].lower().replace("/", "_").replace("@", "")
+    lib = e["library"].lower().replace("/", "_").replace("@", "")
     return (
         f"pqc-{e['language']}-{e['lang_ver']}"
         f"-{fw}-{e['fw_ver']}"
@@ -681,7 +681,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
     save_fn(entry, result_dict) is called immediately after each image completes.
     stop_event (threading.Event) can be set externally to cancel the loop early.
     Returns {tag: {"success": bool, "root_ok": bool, "version_ok": bool,
-                   "error": str, "version_data": dict|None}}.
+                   "error": str, "version_data": dict|None, "output": str}}.
     """
     n   = len(entries)
     pad = len(str(n))
@@ -701,7 +701,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             log_fn(f"         SKIP  (build failed)")
             results[tag] = {"success": False, "root_ok": False,
                             "version_ok": False, "error": "build failed",
-                            "version_data": None}
+                            "version_data": None, "output": ""}
             if save_fn is not None:
                 save_fn(e, results[tag])
             continue
@@ -710,7 +710,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             log_fn(f"         SKIP  (not built)")
             results[tag] = {"success": False, "root_ok": False,
                             "version_ok": False, "error": "image not found",
-                            "version_data": None}
+                            "version_data": None, "output": ""}
             if save_fn is not None:
                 save_fn(e, results[tag])
             continue
@@ -728,7 +728,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
             results[tag] = {"success": False, "root_ok": False,
                             "version_ok": False, "error": "container start failed",
-                            "version_data": None}
+                            "version_data": None, "output": proc.stderr.strip()}
             if save_fn is not None:
                 save_fn(e, results[tag])
             continue
@@ -745,11 +745,16 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                 ["docker", "inspect", "--format", "{{.State.Status}}", name],
                 capture_output=True, text=True,
             ).stdout.strip()
+            logs = subprocess.run(
+                ["docker", "logs", name],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            output_text = (logs.stdout + logs.stderr).strip()
             log_fn(f"         FAIL  (port not assigned, container state: {state})")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
             results[tag] = {"success": False, "root_ok": False,
                             "version_ok": False, "error": f"port not assigned ({state})",
-                            "version_data": None}
+                            "version_data": None, "output": output_text}
             if save_fn is not None:
                 save_fn(e, results[tag])
             continue
@@ -782,18 +787,19 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                 fail_reason = path
                 break
 
+        logs = subprocess.run(
+            ["docker", "logs", name],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        output_text = (logs.stdout + logs.stderr).strip()
+
         if not (root_ok and version_ok):
             state = subprocess.run(
                 ["docker", "inspect", "--format", "{{.State.Status}}", name],
                 capture_output=True, text=True,
             ).stdout.strip()
-            logs = subprocess.run(
-                ["docker", "logs", name],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-            )
-            all_lines = (logs.stdout + logs.stderr).strip().splitlines()
             log_fn(f"         container state: {state}  last-err: {last_err}")
-            for line in all_lines[:30]:
+            for line in output_text.splitlines()[:30]:
                 log_fn(f"         | {line}")
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
@@ -810,6 +816,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             "version_ok":   version_ok,
             "error":        fail_reason if not ok else "",
             "version_data": version_data,
+            "output":       output_text,
         }
         if save_fn is not None:
             save_fn(e, results[tag])

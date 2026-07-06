@@ -648,7 +648,31 @@
   }
 
   tbody tr.ignored-row {
-    opacity: .55
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(74, 85, 104, .12),
+      rgba(74, 85, 104, .12) 6px,
+      rgba(74, 85, 104, .28) 6px,
+      rgba(74, 85, 104, .28) 12px
+    );
+  }
+
+  tbody tr.ignored-row:hover {
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(74, 85, 104, .2),
+      rgba(74, 85, 104, .2) 6px,
+      rgba(74, 85, 104, .36) 6px,
+      rgba(74, 85, 104, .36) 12px
+    );
+  }
+
+  tbody tr.ignored-row td:first-child {
+    border-left: 2px solid var(--ignored-c)
+  }
+
+  tbody tr.ignored-row td:not(.cb-cell) {
+    color: var(--muted)
   }
 
   td {
@@ -726,9 +750,9 @@
     color: #e3b341
   }
 
-  .ignored-icon {
-    color: var(--muted);
-    font-size: 11px
+  .badge-ignored {
+    background: rgba(74, 85, 104, .3);
+    color: #a8b3c4
   }
 
   .empty-state {
@@ -1855,6 +1879,11 @@
     return '<span class="badge badge-fail">FAIL</span>';
   }
 
+  function ignoredBadge(reason) {
+    const title = reason ? escHtml(reason) : 'No reason given';
+    return `<span class="badge badge-ignored" title="${title}">IGNORED</span>`;
+  }
+
   function renderTable(items) {
     const tbody = document.getElementById('img-tbody');
     if (!items.length) {
@@ -1885,8 +1914,11 @@
       <td>${buildBadge(r.build_success)}</td>
       <td>${testBadge(r.test_success)}</td>
       <td style="padding:0 6px">
-        <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
-                onclick="event.stopPropagation();openDetail(${r.id})" title="Details">⋯</button>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+          ${ign ? ignoredBadge(r.ignore_reason) : ''}
+          <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
+                  onclick="event.stopPropagation();openDetail(${r.id})" title="Details">⋯</button>
+        </div>
       </td>
     </tr>`;
     }).join('');
@@ -2186,10 +2218,15 @@
 
   async function setIgnore(ignored) {
     if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
+    let reason = '';
+    if (ignored) {
+      reason = prompt(`Reason for ignoring ${state.selected.size} source(s) (optional):`, '');
+      if (reason === null) return; // cancelled
+    }
     try {
       const res = await api('/api/ignore', {
         method: 'POST',
-        body: JSON.stringify({ image_ids: [...state.selected], ignored }),
+        body: JSON.stringify({ image_ids: [...state.selected], ignored, reason }),
       });
       toast(`${res.count} source(s) ${ignored ? 'added to' : 'removed from'} ignore list`, 'ok');
       loadImages(state.page);
@@ -2444,6 +2481,23 @@
                 onclick="copyOutput('${oid}',this)">Copy</button>
       </div>
       <pre id="${oid}" class="detail-output${failed ? ' detail-output-err' : ''}">${escHtml(imgData.build_output)}</pre>
+    </div>`;
+    }
+
+    // Test output (always shown when available, highlighted red on failure)
+    if (imgData.test_output) {
+      const testFailed = imgData.test_success === 0;
+      const oid = `tout-${id}`;
+      body.innerHTML += `
+    <div class="detail-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+        <span class="detail-key" style="color:${testFailed ? 'var(--danger)' : 'var(--muted2)'}">
+          Test output${testFailed ? ' (failed)' : ''}
+        </span>
+        <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px"
+                onclick="copyOutput('${oid}',this)">Copy</button>
+      </div>
+      <pre id="${oid}" class="detail-output${testFailed ? ' detail-output-err' : ''}">${escHtml(imgData.test_output)}</pre>
     </div>`;
     }
 

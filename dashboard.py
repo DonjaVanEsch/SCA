@@ -214,6 +214,7 @@ def action():
                         r.get("version_ok", False),
                         r.get("error",      ""),
                         r.get("version_data"),
+                        r.get("output",     ""),
                         run_id,
                     )
                 manager._do_test(
@@ -244,7 +245,7 @@ def action():
                                          "Manually marked as successful",
                                          now, now, run_id)
                     db.save_test_result(img_id, True, True, True,
-                                        "", None, run_id)
+                                        "", None, "", run_id)
                     log(f"[{idx}/{total_imgs}] {img_tag} — MARKED OK")
 
         except Exception as exc:

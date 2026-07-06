@@ -36,6 +36,7 @@ SCRIPTS_DIR  = PROJECT_ROOT / "scripts"
 _REGISTRY_FILES = [
     SCRIPTS_DIR / "registry python.json",
     SCRIPTS_DIR / "registry go.json",
+    SCRIPTS_DIR / "registry node.json",
 ]
 
 
@@ -148,6 +149,7 @@ CREATE TABLE IF NOT EXISTS test_results (
     version_ok    INTEGER,
     error_msg     TEXT,
     response_data TEXT,
+    output        TEXT,
     tested_at     TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -221,7 +223,10 @@ SELECT
        ORDER BY tested_at DESC LIMIT 1) AS test_success,
     (SELECT tested_at
        FROM test_results WHERE image_id = i.id
-       ORDER BY tested_at DESC LIMIT 1) AS tested_at
+       ORDER BY tested_at DESC LIMIT 1) AS tested_at,
+    (SELECT output
+       FROM test_results WHERE image_id = i.id
+       ORDER BY tested_at DESC LIMIT 1) AS test_output
 
 FROM images i
 JOIN lang_versions lv  ON lv.id  = i.lang_version_id
@@ -243,6 +248,7 @@ def init_db() -> None:
         for ddl in [
             "ALTER TABLE build_results ADD COLUMN run_id INTEGER REFERENCES runs(id)",
             "ALTER TABLE test_results  ADD COLUMN run_id INTEGER REFERENCES runs(id)",
+            "ALTER TABLE test_results  ADD COLUMN output TEXT",
             "ALTER TABLE runs ADD COLUMN status TEXT NOT NULL DEFAULT 'running'",
             "ALTER TABLE runs ADD COLUMN finished_at TEXT",
         ]:
@@ -475,8 +481,8 @@ def load_registry() -> dict[str, int]:
 def _image_tag_from_parts(language: str, lang_ver: str, framework: str,
                            fw_ver: str, library: str, lib_ver: str) -> str:
     """Compute the canonical Docker image tag from resolved component names."""
-    fw  = framework.lower().replace("/", "_")
-    lib = library.lower().replace("/", "_")
+    fw  = framework.lower().replace("/", "_").replace("@", "")
+    lib = library.lower().replace("/", "_").replace("@", "")
     return f"pqc-{language}-{lang_ver}-{fw}-{fw_ver}-{lib}-{lib_ver}"
 
 
@@ -596,11 +602,22 @@ def sync_images() -> tuple[int, int, int]:
                     continue  # try next parse strategy
 
                 lv_id, fv_id, libv_id = ids
+                # ON CONFLICT DO UPDATE (not INSERT OR IGNORE): if the tag-
+                # computation logic changes (e.g. a new character needs
+                # sanitizing), the FK triple already has a row under the OLD
+                # tag. IGNORE would silently drop the corrected tag, and the
+                # stale-row cleanup below wouldn't recreate it since deletion
+                # happens after this loop -- so the image would vanish
+                # entirely until a second sync_images() call.
                 conn.execute(
-                    """INSERT OR IGNORE INTO images
+                    """INSERT INTO images
                            (lang_version_id, fw_version_id, lib_version_id,
                             image_tag, context_path, synced_at)
-                       VALUES (?,?,?,?,?,?)""",
+                       VALUES (?,?,?,?,?,?)
+                       ON CONFLICT(lang_version_id, fw_version_id, lib_version_id)
+                       DO UPDATE SET image_tag=excluded.image_tag,
+                                     context_path=excluded.context_path,
+                                     synced_at=excluded.synced_at""",
                     (lv_id, fv_id, libv_id, tag, cand["path"], now),
                 )
                 inserted += 1
@@ -929,18 +946,19 @@ def save_build_result(image_id: int, success: bool,
 def save_test_result(image_id: int, success: bool,
                      root_ok: bool, version_ok: bool,
                      error_msg: str, response_data,
+                     output: str = "",
                      run_id: int | None = None) -> None:
     tested_at = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
             """INSERT INTO test_results
                    (image_id, success, root_ok, version_ok,
-                    error_msg, response_data, tested_at, run_id)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                    error_msg, response_data, output, tested_at, run_id)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (image_id, int(success), int(bool(root_ok)), int(bool(version_ok)),
              error_msg,
              json.dumps(response_data) if response_data is not None else None,
-             tested_at, run_id),
+             output, tested_at, run_id),
         )
 
 
