@@ -1015,6 +1015,38 @@
     margin-top: 2px
   }
 
+  .constraint-tag {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--surface3);
+    color: var(--muted2);
+    border: 1px solid var(--border2);
+    margin-right: 6px;
+    white-space: nowrap;
+  }
+
+  .agility-row {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .agility-row:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .migration-arrow {
+    color: var(--muted2);
+    margin: 0 6px;
+    font-family: var(--mono);
+  }
+
   .ref-item-note {
     font-size: 11px;
     color: var(--muted);
@@ -1304,6 +1336,7 @@
     <button class="tab-btn active" data-tab="images">Sources</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
     <button class="tab-btn" data-tab="reference">Reference</button>
+    <button class="tab-btn" data-tab="agility">Crypto Agility</button>
   </nav>
   <div class="header-actions">
     <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
@@ -1601,6 +1634,16 @@
     </div>
     <div id="ref-content" class="ref-grid">
       <div style="padding:32px;color:var(--muted);font-size:12px">Loading reference data…</div>
+    </div>
+  </div>
+
+  <div id="tab-agility" class="tab-panel">
+    <div class="panel-header" style="flex-shrink:0">
+      <h2>Crypto Agility</h2>
+      <span style="font-size:12px;color:var(--muted2);margin-left:4px">Algorithms, PQC migration paths, and platform constraints per library/version — structured from verified research, not a new research effort</span>
+    </div>
+    <div id="agility-content" class="ref-grid">
+      <div style="padding:32px;color:var(--muted);font-size:12px">Loading crypto agility data…</div>
     </div>
   </div>
 
@@ -2706,6 +2749,108 @@
     }
   }
 
+  // ── Crypto Agility (C.A.M. Component 2) ─────────────────────────────────────
+  function algoBadge(supportLevel) {
+    const cls = supportLevel === 'final' ? 'badge-ok'
+              : supportLevel === 'draft' ? 'badge-warn'
+              : 'badge-skip'; // deprecated / native / anything else
+    return `<span class="badge ${cls}" title="${escHtml(supportLevel)}">${escHtml(supportLevel)}</span>`;
+  }
+
+  async function loadCryptoAgility() {
+    const el = document.getElementById('agility-content');
+    try {
+      const [agility, paths, langConstraints, fwConstraints, vulns] = await Promise.all([
+        api('/api/crypto-agility'),
+        api('/api/migration-paths'),
+        api('/api/platform-constraints/languages'),
+        api('/api/platform-constraints/frameworks'),
+        api('/api/vulnerabilities'),
+      ]);
+
+      // Group agility rows by language + library
+      const byLib = new Map();
+      for (const row of agility) {
+        const key = `${row.language}::${row.library}`;
+        if (!byLib.has(key)) byLib.set(key, { language: row.language, library: row.library, versions: [] });
+        byLib.get(key).versions.push(row);
+      }
+
+      const libCards = [...byLib.values()].map(lib => {
+        const versionRows = lib.versions.map(v => {
+          const algoBadges = v.algorithms.map(a =>
+            `<span title="${escHtml(a.source_note || '')}">${escHtml(a.name)} ${algoBadge(a.support_level)}</span>`
+          ).join(' &nbsp; ');
+          const constraints = v.platform_constraints.map(c =>
+            `<div class="ref-item-note"><span class="constraint-tag">${escHtml(c.constraint_type)}</span>${escHtml(c.description)}</div>`
+          ).join('');
+          return `<div class="agility-row">
+            <div class="ref-item-name">v${escHtml(v.version_nr)}</div>
+            ${algoBadges ? `<div style="margin-top:4px;font-size:11px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">${algoBadges}</div>` : ''}
+            ${constraints}
+          </div>`;
+        }).join('');
+        return `<div class="ref-card">
+          <div class="ref-card-header">
+            <h3>${escHtml(lib.library)}</h3>
+            <span class="ref-lang-badge">${escHtml(lib.language)}</span>
+          </div>
+          <div class="ref-section">${versionRows}</div>
+        </div>`;
+      }).join('');
+
+      const migrationCard = `<div class="ref-card">
+        <div class="ref-card-header"><h3>PQC Migration Paths</h3></div>
+        <div class="ref-section">
+          ${paths.length ? paths.map(p => `<div class="agility-row">
+            <span class="ref-lang-badge" style="background:var(--surface3);color:var(--muted2)">${escHtml(p.language)}/${escHtml(p.library)}</span>
+            <div style="margin-top:6px;font-size:12px">
+              ${p.from_algorithm ? escHtml(p.from_algorithm) : '<em style="color:var(--muted)">(new capability)</em>'}
+              <span class="migration-arrow">→</span>
+              <strong>${escHtml(p.to_algorithm)}</strong>
+              ${p.from_version || p.to_version ? `<span style="color:var(--muted2);font-family:var(--mono);font-size:11px;margin-left:8px">${p.from_version ? 'v'+escHtml(p.from_version) : '?'} → v${escHtml(p.to_version)}</span>` : ''}
+            </div>
+            <div class="ref-item-note">${escHtml(p.description)}</div>
+          </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No migration paths recorded yet.</div>'}
+        </div>
+      </div>`;
+
+      const langCard = `<div class="ref-card">
+        <div class="ref-card-header"><h3>Language Runtime Platform Constraints</h3></div>
+        <div class="ref-section">
+          ${langConstraints.length ? langConstraints.map(c => `<div class="agility-row">
+            <div class="ref-item-name">${escHtml(c.language)} v${escHtml(c.version_nr)}</div>
+            <div class="ref-item-note"><span class="constraint-tag">${escHtml(c.constraint_type)}</span>${escHtml(c.description)}</div>
+          </div>`).join('') : '<div style="color:var(--muted);font-size:12px">None recorded.</div>'}
+        </div>
+      </div>`;
+
+      const fwCard = `<div class="ref-card">
+        <div class="ref-card-header"><h3>Framework Platform Constraints</h3></div>
+        <div class="ref-section">
+          ${fwConstraints.length ? fwConstraints.map(c => `<div class="agility-row">
+            <div class="ref-item-name">${escHtml(c.framework)} v${escHtml(c.version_nr)} <span style="color:var(--muted2);font-weight:400">(${escHtml(c.language)})</span></div>
+            <div class="ref-item-note"><span class="constraint-tag">${escHtml(c.constraint_type)}</span>${escHtml(c.description)}</div>
+          </div>`).join('') : '<div style="color:var(--muted);font-size:12px">None recorded.</div>'}
+        </div>
+      </div>`;
+
+      const vulnCard = `<div class="ref-card">
+        <div class="ref-card-header"><h3>Vulnerabilities</h3></div>
+        <div class="ref-section">
+          <div style="color:var(--muted);font-size:12px">
+            ${vulns.length ? vulns.length + ' recorded.' :
+              'Schema is ready (per-library CVE/severity/affected-range), but no vulnerability data has been entered yet — nothing here is fabricated.'}
+          </div>
+        </div>
+      </div>`;
+
+      el.innerHTML = libCards + migrationCard + langCard + fwCard + vulnCard;
+    } catch (e) {
+      el.innerHTML = `<div style="padding:20px;color:var(--danger)">Error: ${e.message}</div>`;
+    }
+  }
+
   // ── Tab switching ─────────────────────────────────────────────────────────
   function switchTab(name) {
     state.currentTab = name;
@@ -2714,7 +2859,8 @@
     document.getElementById('pagination').style.display = (name === 'images' || name === 'reports') ? '' : 'none';
     if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
     if (name === 'reports') renderReportPagination();
-    if (name === 'reference' && !document.querySelector('.ref-card')) loadReference();
+    if (name === 'reference' && !document.querySelector('#ref-content .ref-card')) loadReference();
+    if (name === 'agility') loadCryptoAgility();
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────

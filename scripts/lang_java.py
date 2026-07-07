@@ -480,6 +480,78 @@ __VERSIONS_HELPER__
 }
 """
 
+# Vert.x 2.x predates the 3.0 core rewrite: packages are org.vertx.java.core.*
+# (not io.vertx.core.*), there is no Router/vertx-web module at all (routing is
+# done via the bundled RouteMatcher), and JsonObject uses put<Type> methods
+# (putString/putObject) instead of the overloaded put() from 3.x onward --
+# verified directly against the vertx-core 2.1.6 jar's class files on Maven
+# Central, since Vert.x's own docs for this era are largely gone from the web.
+_VERTX_MAIN_V2 = """\
+package app;
+
+import java.util.Properties;
+__LIB_IMPORTS__
+
+import org.vertx.java.core.Vertx;
+import org.vertx.java.core.VertxFactory;
+import org.vertx.java.core.http.HttpServerRequest;
+import org.vertx.java.core.http.RouteMatcher;
+import org.vertx.java.core.json.JsonObject;
+
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	public static void main(String[] args) throws InterruptedException {
+		Properties v = versions();
+		Vertx vertx = VertxFactory.newVertx();
+		RouteMatcher routeMatcher = new RouteMatcher();
+
+		routeMatcher.get("/", (HttpServerRequest req) -> {
+			JsonObject body = new JsonObject().putString("message", "Hello World");
+			req.response().putHeader("content-type", "application/json").end(body.encode());
+		});
+
+		routeMatcher.get("/version", (HttpServerRequest req) -> {
+			JsonObject language = new JsonObject()
+					.putString("name", "Java")
+					.putString("version", System.getProperty("java.version"));
+			JsonObject framework = new JsonObject()
+					.putString("name", "__FW_NAME__")
+					.putString("version", v.getProperty("framework.version", "unknown"));
+			JsonObject library = new JsonObject()
+					.putString("name", "__LIB_NAME__")
+					.putString("version", v.getProperty("library.version", "unknown"));
+			JsonObject body = new JsonObject()
+					.putObject("language", language)
+					.putObject("framework", framework)
+					.putObject("library", library);
+			req.response().putHeader("content-type", "application/json").end(body.encode());
+		});
+
+		vertx.createHttpServer().requestHandler(routeMatcher).listen(8000);
+
+		// Vert.x 2.x's event-loop/worker threads are daemon threads (unlike 3.x+'s
+		// Netty-backed threads), so main() must block or the JVM exits immediately
+		// after registering the handlers, before ever serving a request.
+		new java.util.concurrent.CountDownLatch(1).await();
+	}
+}
+"""
+
+_VERTX_MAIN_BY_MAJOR = {
+    "2": _VERTX_MAIN_V2,
+}
+_VERTX_MAIN_DEFAULT = _VERTX_MAIN  # 3.x onward
+
+
+def _vertx_main_tpl(fw_major: str) -> str:
+    return _VERTX_MAIN_BY_MAJOR.get(fw_major, _VERTX_MAIN_DEFAULT)
+
+
 _HELIDON_COMMON_HEAD = """\
 package app;
 
@@ -487,6 +559,7 @@ import java.util.Properties;
 __LIB_IMPORTS__
 
 import io.helidon.webserver.Routing;
+import io.helidon.webserver.ServerConfiguration;
 import io.helidon.webserver.WebServer;
 
 public class Main {
@@ -535,7 +608,7 @@ _HELIDON_MAIN_V1 = _HELIDON_COMMON_HEAD + """\
 				.get("/version", (req, res) -> res.send(versionBody))
 				.build();
 
-		WebServer.create(routing)
+		WebServer.create(ServerConfiguration.builder().port(8000), routing)
 				.start()
 				.toCompletableFuture()
 				.get();
@@ -558,7 +631,7 @@ _HELIDON_MAIN_V2 = _HELIDON_COMMON_HEAD + """\
 				.get("/", (req, res) -> res.send(rootBody))
 				.get("/version", (req, res) -> res.send(versionBody));
 
-		WebServer.create(routing)
+		WebServer.create(ServerConfiguration.builder().port(8000), routing)
 				.start()
 				.await();
 	}
@@ -667,7 +740,12 @@ def _sub(tpl: str, **kw) -> str:
 def make_main_java(fw_name: str, fw_major: str, lib_name: str) -> str:
     meta = LIB_META[lib_name]
     imports = "\n".join(f"import {imp};" for imp in meta["imports"])
-    tpl = _helidon_main_tpl(fw_major) if fw_name == "Helidon" else _APP_TPL[fw_name]
+    if fw_name == "Helidon":
+        tpl = _helidon_main_tpl(fw_major)
+    elif fw_name == "Vert.x":
+        tpl = _vertx_main_tpl(fw_major)
+    else:
+        tpl = _APP_TPL[fw_name]
     return _sub(
         tpl,
         LIB_IMPORTS      = imports,
@@ -681,6 +759,42 @@ def make_main_java(fw_name: str, fw_major: str, lib_name: str) -> str:
 
 # ── pom.xml generation ────────────────────────────────────────────────────────
 
+_TINK_PROTOBUF_VERSIONS: dict = {}
+
+
+def _tink_protobuf_java_version(tink_resolved: str) -> str | None:
+    """Tink declares protobuf-java as a required (non-optional) transitive
+    dependency pinned via its own POM's ${protobuf-java.version} property.
+    Explicitly re-declaring that exact version as a direct dependency in the
+    generated pom.xml guarantees Maven resolves it correctly regardless of
+    anything deeper in a framework's own dependency tree -- found necessary
+    after a real NoClassDefFoundError (`com/google/protobuf/RuntimeVersion
+    $RuntimeDomain`, a class that does genuinely exist in the version Tink
+    asks for) surfaced with Micronaut specifically; Spring Boot + Tink had
+    already been verified working without this, narrowing the problem to
+    something version-resolution- or shading-related rather than Tink
+    itself being broken. Fetched dynamically (not hardcoded) so this stays
+    correct if a future Tink bucket changes its required protobuf version.
+    """
+    if tink_resolved in _TINK_PROTOBUF_VERSIONS:
+        return _TINK_PROTOBUF_VERSIONS[tink_resolved]
+
+    url = f"https://repo1.maven.org/maven2/com/google/crypto/tink/tink/{tink_resolved}/tink-{tink_resolved}.pom"
+    version = None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            pom_text = resp.read().decode("utf-8")
+        match = re.search(r"<protobuf-java\.version>([^<]+)</protobuf-java\.version>", pom_text)
+        if match:
+            version = match.group(1)
+    except (URLError, OSError) as exc:
+        print(f"  [WARN] Could not read Tink {tink_resolved}'s own protobuf-java version: {exc}", flush=True)
+
+    _TINK_PROTOBUF_VERSIONS[tink_resolved] = version
+    return version
+
+
 def _lib_dependency_xml(lib_name: str, lib_resolved: str) -> str:
     # lib_resolved doubles as the bucket hint here: for the exact-pinned
     # buckets ("1.70", "1.72", "1.79") the resolved version IS the bucket
@@ -690,15 +804,54 @@ def _lib_dependency_xml(lib_name: str, lib_resolved: str) -> str:
     if not coord:
         return ""
     group, artifact = coord
-    return (
+    xml = (
         "    <dependency>\n"
         f"      <groupId>{group}</groupId>\n"
         f"      <artifactId>{artifact}</artifactId>\n"
         f"      <version>{lib_resolved}</version>\n"
         "    </dependency>\n"
     )
+    if lib_name == "Tink":
+        protobuf_ver = _tink_protobuf_java_version(lib_resolved)
+        if protobuf_ver:
+            xml += (
+                "    <dependency>\n"
+                "      <groupId>com.google.protobuf</groupId>\n"
+                "      <artifactId>protobuf-java</artifactId>\n"
+                f"      <version>{protobuf_ver}</version>\n"
+                "    </dependency>\n"
+            )
+    return xml
 
 
+# Excluding META-INF/*.SF|.DSA|.RSA is required, not optional, whenever any
+# dependency's own jar is signed (e.g. BouncyCastle signs its jars) --
+# shading merges that jar's contents into the uber-jar without updating its
+# now-stale signature files, and the JVM refuses to load ANY class from the
+# result at runtime with "SecurityException: Invalid signature file digest
+# for Manifest main attributes". Confirmed via a real failing build+run
+# before adding this filter, not applied speculatively.
+#
+# ServicesResourceTransformer is required for Micronaut 1.x/2.x specifically
+# (harmless no-op for the others) -- confirmed by downloading the actual
+# micronaut-http-server-netty-2.5.13.jar and finding its bean registrations
+# listed in a plain java.util.ServiceLoader-style file,
+# META-INF/services/io.micronaut.inject.BeanDefinitionReference (one shared
+# text file, multiple class names, one per line). Shading multiple jars that
+# each carry their OWN copy of that exact path silently keeps only the LAST
+# one seen instead of merging them -- observed live as a real failure:
+# Micronaut 2.5.13 started with zero exceptions but logged "No bean
+# candidates found for type: interface io.micronaut.runtime.EmbeddedApplication"
+# / "No embedded container found. Running as CLI application" -- the HTTP
+# server's own bean-definition file had been clobbered, so Netty never
+# started at all despite a completely clean-looking startup log (a repeat of
+# the Helidon port lesson: "started with no errors" is not "works" -- read
+# what the log actually says). Micronaut 3.x+ moved to a different, per-bean-
+# file registration scheme specifically immune to this (confirmed by
+# downloading micronaut-http-server-netty-4.10.16.jar: each bean gets its
+# own uniquely-named, separate file under META-INF/micronaut/<interface>/,
+# so there's nothing to clobber) -- which is why this went unnoticed until
+# 1.x/2.x were added.
 _SHADE_PLUGIN = """\
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -709,10 +862,21 @@ _SHADE_PLUGIN = """\
             <phase>package</phase>
             <goals><goal>shade</goal></goals>
             <configuration>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>app.Main</mainClass>
                 </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
               </transformers>
             </configuration>
           </execution>
@@ -771,6 +935,8 @@ def _pom_quarkus(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: st
         f"    <dependency>\n      <groupId>{g}</groupId>\n      <artifactId>{a}</artifactId>\n    </dependency>\n"
         for g, a in _quarkus_rest_deps(fw_major)
     )
+    # Renamed in Quarkus 3.0: pre-3.x uses quarkus.package.type, 3.x+ uses quarkus.package.jar.type
+    package_prop = "quarkus.package.type" if fw_major in ("1", "2") else "quarkus.package.jar.type"
     return f"""\
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -787,7 +953,7 @@ def _pom_quarkus(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: st
     <maven.compiler.release>{jdk_ver}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <quarkus.platform.version>{fw_resolved}</quarkus.platform.version>
-    <quarkus.package.jar.type>uber-jar</quarkus.package.jar.type>
+    <{package_prop}>uber-jar</{package_prop}>
   </properties>
 
   <dependencyManagement>
@@ -962,8 +1128,19 @@ def _pom_micronaut_v1(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolve
 """
 
 
-def _pom_vertx(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
+def _pom_vertx(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str,
+               fw_major: str = "4") -> str:
     lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    # vertx-web was introduced at the 3.0 core rewrite -- it has no 1.x/2.x
+    # releases at all (confirmed against Maven Central), so 2.x routes via
+    # the RouteMatcher bundled in vertx-core itself instead (see _VERTX_MAIN_V2).
+    web_dep = "" if fw_major == "2" else (
+        "    <dependency>\n"
+        "      <groupId>io.vertx</groupId>\n"
+        "      <artifactId>vertx-web</artifactId>\n"
+        f"      <version>{fw_resolved}</version>\n"
+        "    </dependency>\n"
+    )
     return f"""\
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -987,12 +1164,7 @@ def _pom_vertx(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str)
       <artifactId>vertx-core</artifactId>
       <version>{fw_resolved}</version>
     </dependency>
-    <dependency>
-      <groupId>io.vertx</groupId>
-      <artifactId>vertx-web</artifactId>
-      <version>{fw_resolved}</version>
-    </dependency>
-{lib_dep}  </dependencies>
+{web_dep}{lib_dep}  </dependencies>
 
   <build>
     <finalName>app</finalName>
@@ -1147,6 +1319,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         pom_kwargs["parent_group"] = fw_group
         pom_kwargs["fw_major"] = fw_major
     if fw_name == "Quarkus":
+        pom_kwargs["fw_major"] = fw_major
+    if fw_name == "Vert.x":
         pom_kwargs["fw_major"] = fw_major
     (out / "pom.xml").write_text(
         _POM_TPL[fw_name](lang_ver, fw_resolved, lib_name, lib_resolved, **pom_kwargs),

@@ -410,6 +410,38 @@ def build_reports():
     return jsonify(db.get_build_reports(filters, page, per_page))
 
 
+# ── Crypto Agility (C.A.M. Component 2) ───────────────────────────────────────
+
+@app.route("/api/crypto-agility")
+def crypto_agility():
+    filters = {k: request.args.get(k, "") for k in ("language", "library")}
+    return jsonify(db.get_crypto_agility(filters))
+
+
+@app.route("/api/migration-paths")
+def migration_paths():
+    filters = {k: request.args.get(k, "") for k in ("language", "library")}
+    return jsonify(db.get_migration_paths(filters))
+
+
+@app.route("/api/platform-constraints/languages")
+def language_platform_constraints():
+    filters = {k: request.args.get(k, "") for k in ("language",)}
+    return jsonify(db.get_language_platform_constraints(filters))
+
+
+@app.route("/api/platform-constraints/frameworks")
+def framework_platform_constraints():
+    filters = {k: request.args.get(k, "") for k in ("language", "framework")}
+    return jsonify(db.get_framework_platform_constraints(filters))
+
+
+@app.route("/api/vulnerabilities")
+def vulnerabilities():
+    filters = {k: request.args.get(k, "") for k in ("language", "library")}
+    return jsonify(db.get_vulnerabilities(filters))
+
+
 # ── Export helpers ────────────────────────────────────────────────────────────
 
 @app.route("/api/export/ignore-list")
