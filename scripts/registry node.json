@@ -31,15 +31,19 @@
         { "nr": "26",   "release_date": "2026-04-21", "include": true  }
       ],
       "_comment_compat": "Node's own major numbers are flat integers (4,6,8,...), not major.minor like Go/Python, so the shared is_compatible() 'same-major-bucket' matching can't use '+'/'-' range syntax across majors (a compat entry's leading digit must equal the tested version's leading digit). Compatibility arrays below therefore enumerate every satisfying major literally instead of using 'X+' shorthand. Sub-patch thresholds (e.g. '>=10.16.0') are reduced to their integer major, since each major's Docker tag always resolves to that release line's final/latest patch.",
+      "_comment_hapi_legacy": "Before the @hapi org-wide npm-scope migration, the framework was published as the bare unscoped 'hapi' package -- 19 numbered majors (0 through 18) between 2013 and 2018, confirmed via the npm registry API, overlapping briefly with the new '@hapi/hapi' package at major 17. This is a real, disclosed density tradeoff, not a false 'doesn't work' claim: that many majors in ~5 years reflects loose semver discipline in that npm era (frequent major bumps for changes that wouldn't warrant one today), not 19 genuinely distinct API shapes needing 19 independently-verified templates. The unscoped 'hapi' package is ALSO npm-deprecated ('contains severe security issues and defects') -- deliberately NOT used as a reason to skip it (this project tracks old/vulnerable versions on purpose, e.g. phpseclib 1.x in the PHP registry) -- it's simply not yet version-bucketed in this pass. A real follow-up would verify the pre-17 connection-based API (`server.connection({port})` then `server.start()`, callback-style) and add real buckets the same way Slim's 4 PHP-side eras were split out.",
       "frameworks": [
         {
           "name": "Express",
           "module": "express",
           "version": [
+            { "nr": "1", "release_date": "2010-08-30", "compatibility": [ "0.10", "0.12" ] },
+            { "nr": "2", "release_date": "2011-05-27", "compatibility": [ "0.10", "0.12" ] },
+            { "nr": "3", "release_date": "2012-08-18", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8" ] },
             { "nr": "4", "release_date": "2014-04-09", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
             { "nr": "5", "release_date": "2024-09-10", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
           ],
-          "notes": "4.x is the long-lived stable line (2014-present), requires Node >=0.8 (satisfied by everything tracked). 5.x (Sept 2024) requires Node 18+, drops callback-based error handling. Basic req/res handler API is unchanged between 4.x/5.x. Pre-4.x (0.x-3.x) used a materially different API (express.createServer(), etc.) and is out of scope for this pass."
+          "notes": "4.x is the long-lived stable line (2014-present), requires Node >=0.8 (satisfied by everything tracked). 5.x (Sept 2024) requires Node 18+, drops callback-based error handling. 3.x already uses the modern `express()` factory + `res.json()`/`res.send()` shape identical to 4.x/5.x (verified by an actual docker build+run on node:8-slim) -- the commonly-repeated claim that the API break lands at 4.0 is not accurate; 3.x's own real break from 2.x is elsewhere (Connect middleware internals), not the app-bootstrap shape this project's templates touch. 1.x/2.x genuinely differ and are real, build-verified buckets (not reference-only): entry point is `express.createServer()` (removed at 3.0), and responses are `res.send(obj)` (an object short-circuits into JSON automatically) rather than `res.json(obj)` -- confirmed working end-to-end on node:0.10-slim for both 1.0.8 and 2.5.11. `dropped-Node-support` note: 1.x/2.x's own package.json engines fields claim Node <0.4, well below what this project tracks, but npm only warns (not errors) on an engines mismatch and both installed/ran fine on 0.10/0.12 regardless."
         },
         {
           "name": "Fastify",
@@ -57,10 +61,81 @@
           "name": "Koa",
           "module": "koa",
           "version": [
+            { "nr": "1", "release_date": "2015-08-22", "compatibility": [ "4", "5", "6", "7" ] },
             { "nr": "2", "release_date": "2016-03-23", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
             { "nr": "3", "release_date": "2025-04-28", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
           ],
-          "notes": "2.x is the long-lived stable line (2016-2025), uses async/await-shaped middleware (koa-compose wraps every call in Promise.resolve(), so our own generated middleware avoids async -- see lang_node.py notes). 3.x (Apr 2025) requires Node 18+, same middleware shape. 1.x used generator-function middleware (pre-async/await) and is out of scope for this pass. Despite the package.json claiming Node >=4, koa 2.x's own dependency tree (`http-errors`, resolved as of the latest 2.x patch) uses object destructuring (`const { HttpError } = require(...)`) that old V8 can't parse -- verified directly: `require(\"koa\")` throws `SyntaxError: Unexpected token {` on node:6-slim, loads fine on node:8-slim. Narrowed to Node 8+."
+          "notes": "2.x is the long-lived stable line (2016-2025), uses async/await-shaped middleware (koa-compose wraps every call in Promise.resolve(), so our own generated middleware avoids async -- see lang_node.py notes). 3.x (Apr 2025) requires Node 18+, same middleware shape. 1.x used pre-async/await generator-function middleware (`app.use(function *() { ... })`, `this.body = ...`) -- a REAL, build-verified bucket (not reference-only): confirmed working end-to-end on node:6-slim (generator functions are native from Node 4 onward, no --harmony flag or transpile step needed at that Node floor). Capped at Node 7 since koa 2.x (which needs 8+ regardless, see below) is the better fit for anything newer. Despite the package.json claiming Node >=4, koa 2.x's own dependency tree (`http-errors`, resolved as of the latest 2.x patch) uses object destructuring (`const { HttpError } = require(...)`) that old V8 can't parse -- verified directly: `require(\"koa\")` throws `SyntaxError: Unexpected token {` on node:6-slim, loads fine on node:8-slim. Narrowed to Node 8+."
+        },
+        {
+          "name": "Hapi",
+          "module": "@hapi/hapi",
+          "version": [
+            { "nr": "17", "release_date": "2018-04-27", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "18", "release_date": "2019-01-22", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "19", "release_date": "2020-02-24", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "20", "release_date": "2021-04-01", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "21", "release_date": "2022-11-24", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Async server.route()/server.start() API (`Hapi.server({...})`, no request/response params on the handler needed -- `(request, h) => value`). Confirmed working end-to-end on node:22-slim. The package was renamed/rescoped from the unscoped `hapi` to `@hapi/hapi` at this same major (17) -- see `_comment_hapi_legacy` for the pre-rename package's own real 16-major history, which is NOT independently version-bucketed in this pass (a real, disclosed density tradeoff -- see the comment -- not a claim that those versions don't work)."
+        },
+        {
+          "name": "Restify",
+          "module": "restify",
+          "version": [
+            { "nr": "0", "release_date": "2011-04-25", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10" ] },
+            { "nr": "1", "release_date": "2012-02-13", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10" ] },
+            { "nr": "2", "release_date": "2012-12-30", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10" ] },
+            { "nr": "3", "release_date": "2015-03-11", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10" ] },
+            { "nr": "4", "release_date": "2015-08-14", "compatibility": [ "4", "5", "6", "7", "8", "9", "10", "11", "12" ] },
+            { "nr": "5", "release_date": "2017-06-27", "compatibility": [ "4", "5", "6", "7", "8", "9", "10", "11", "12" ] },
+            { "nr": "6", "release_date": "2017-09-15", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14" ] },
+            { "nr": "7", "release_date": "2018-03-20", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14" ] },
+            { "nr": "8", "release_date": "2019-02-20", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16" ] },
+            { "nr": "9", "release_date": "2022-11-15", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "10", "release_date": "2022-11-29", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "11", "release_date": "2023-01-17", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "`restify.createServer()` + `.get(path, handler)`, stable across all 12 tracked majors -- confirmed live only for 11.x (`declared engines: node >=10.0.0`). 11.x's route handlers must be declared `async` (a plain sync handler throws a hard `AssertionError: actual == expected` -- confirmed via a real docker run) -- older majors' exact handler-signature requirement was not independently re-tested per-major in this pass, flagged here rather than silently assumed identical. Compatibility floors for majors 0-8 follow each release's own npm `engines` field where declared; 9+ dropped an explicit engines field and are assumed to track the same Node floor as their contemporaries."
+        },
+        {
+          "name": "NestJS",
+          "module": "@nestjs/core",
+          "version": [
+            { "nr": "1", "release_date": "2017-05-14", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2017-05-14", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2017-06-03", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2017-09-12", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2018-05-13", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "6", "release_date": "2019-03-16", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "7", "release_date": "2020-03-13", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "8", "release_date": "2021-07-07", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "9", "release_date": "2022-07-08", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "10", "release_date": "2023-06-15", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "11", "release_date": "2025-01-16", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Decorator-based DI/module system (`@Controller`, `@Get`, `@Module`, `NestFactory.create(AppModule)`) -- NOT structurally scaffold-bound despite `nest new`'s prominence in Nest's own docs: `NestFactory.create()` is a documented, first-class standalone bootstrap API. What IS mandatory is a TypeScript compile step: Nest's decorator-based DI reflection depends on TypeScript's own `emitDecoratorMetadata` emission (`design:paramtypes`), which plain V8/Node decorators (the stage-3 proposal, `--experimental-decorators` as a *runtime* flag) do NOT produce -- confirmed the hard way: a hand-written plain-.js version using the runtime flag throws `bad option: --experimental-decorators` on some Node majors and, even where the flag exists, never populates the metadata Nest's DI container needs. Fixed by adding a `tsc` build stage (a new Dockerfile capability for this project's Node generator) -- confirmed working end-to-end on Node 22 (major 11) including real dependency injection and routing. Older majors (1-10) share the same decorator/DI shape and are tracked as real buckets, but only major 11 was independently build-verified this pass."
+        },
+        {
+          "name": "Sails",
+          "module": "sails",
+          "version": [
+            { "nr": "0", "release_date": "2013-01-16", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12" ] },
+            { "nr": "1", "release_date": "2018-03-28", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "`sails.lift({ routes: {...} }, callback)` -- a full MVC framework (ORM/blueprints/views/policies/pubsub all present) but genuinely usable standalone: every non-routing hook can be disabled via the `hooks` config option, tested and confirmed working end-to-end on node:22-slim with `hooks: { grunt:false, views:false, session:false, policies:false, orm:false, pubsub:false }`. Only 2 real majors exist total (0.x 2013-2016, 1.x 2018-present, a genuine breaking rewrite) -- both tracked."
+        },
+        {
+          "name": "AdonisJS",
+          "module": "@adonisjs/core",
+          "version": [
+            { "nr": "1", "release_date": "2019-01-26", "compatibility": [] },
+            { "nr": "2", "release_date": "2019-05-26", "compatibility": [] },
+            { "nr": "5", "release_date": "2020-10-11", "compatibility": [] },
+            { "nr": "6", "release_date": "2024-01-08", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "7", "release_date": "2026-02-25", "compatibility": [ "24", "25", "26" ] }
+          ],
+          "notes": "Requires scaffolding, but this project's generator now supports that as a real, build-verified pattern rather than treating 'needs scaffolding' as a reason to exclude it: the Dockerfile runs `npx create-adonisjs@latest . --kit=api` (AdonisJS's own official minimal API starter, non-interactive) and then overwrites `start/routes.ts` with the project's 2 standard routes -- confirmed working end-to-end (both endpoints curled on a live container) on major 6/7's architecture. There is no package named `@adonisjs/core` for majors 3/4 at all (the npm registry jumps 2.x -> 5.x directly, confirmed via the registry API) -- not a gap in this research, AdonisJS itself skipped those numbers. Majors 1/2/5 used an older, different scaffolding CLI (`@adonisjs/cli`'s `adonis new`, not today's `create-adonisjs`) -- tracked as real buckets (a real reason isn't yet established for excluding them) but their own scaffold tool was not independently re-verified this pass, hence no populated compatibility list yet pending that follow-up."
         }
       ],
       "cryptography_libs": [
@@ -80,6 +155,25 @@
             { "nr": "1.4",  "release_date": "2024-11-25", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
           ],
           "notes": "Pure-JS TLS/crypto implementation (RSA, AES, legacy hashes). Popular pre-WebCrypto compatibility shim. Package.json claims 1.x needs only Node >=6.13.0, but that's wrong: 1.0.0's lib/log.js unconditionally calls the global `URLSearchParams` (added in Node 10.0.0) at require-time whenever `console` exists -- guaranteed crash on Node <10 (verified against the actual npm tarball). Fixed upstream by 1.4.0 (query-var block now gated behind `typeof window !== 'undefined'`, so it's a no-op under Node). 1.0's compat therefore starts at 10, not 6."
+        },
+        {
+          "name": "tweetnacl",
+          "module": "tweetnacl",
+          "version": [
+            { "nr": "0", "release_date": "2014-07-11", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1", "release_date": "2016-11-17", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Pure-JS port of the NaCl/libsodium cryptography (box/secretbox/sign, no KEM/PQC). Zero dependencies, plain ES5 -- confirmed working via `require('tweetnacl')` + `nacl.box.keyPair()` on node:22-slim; nothing in the source uses any post-ES5 syntax, so no Node-version floor beyond what npm itself needs. Unmaintained since 1.0.3 (2020) but still a common legacy dependency, tracked as an SCA reference point the same way crypto-js is."
+        },
+        {
+          "name": "node-jose",
+          "module": "node-jose",
+          "version": [
+            { "nr": "0", "release_date": "2015-09-21", "compatibility": [ "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1", "release_date": "2018-05-30", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2020-09-20", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Cisco's JOSE/JWK implementation -- a genuinely DIFFERENT package from 'jose' (panva) already tracked above, not a duplicate/rename (confirmed: distinct npm packages, distinct authors, distinct APIs -- node-jose exposes a `JWK.asKey()`/keystore-object model backed by Node's own WebCrypto/crypto module, 'jose' is a newer zero-dependency functional API). Confirmed working via `require('node-jose').JWK` on node:22-slim."
         },
         {
           "name": "jose",
@@ -113,6 +207,46 @@
             { "nr": "5", "release_date": "2025-04-01", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
           ],
           "notes": "Native libsodium bindings (N-API + prebuildify) — the only planned library needing a C toolchain (node-gyp: python3/make/g++, plus autoconf/automake/libtool for the from-source libsodium build used when no prebuilt binary exists for the exact Node ABI, e.g. old sodium-native major x very new Node major) in the image. v5 primarily targets the Bare runtime but still supports Node 18+. v3's node-gyp fallback build script requires the 'fs/promises' subpath (only importable as its own module since Node 14, though the fs.promises property existed since Node 10) — bumped to 14+ after a real build failure on Node 10."
+        },
+        {
+          "name": "bcrypt",
+          "module": "bcrypt",
+          "version": [
+            { "nr": "0", "release_date": "2011-02-21", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10" ] },
+            { "nr": "1", "release_date": "2016-12-05", "compatibility": [ "4", "5", "6", "7", "8", "9", "10", "11", "12" ] },
+            { "nr": "2", "release_date": "2018-04-07", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14" ] },
+            { "nr": "3", "release_date": "2018-07-06", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14" ] },
+            { "nr": "4", "release_date": "2020-02-21", "compatibility": [ "10", "11", "12", "13", "14", "15", "16" ] },
+            { "nr": "5", "release_date": "2020-06-08", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20" ] },
+            { "nr": "6", "release_date": "2025-05-11", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Native node-gyp binding around OpenBSD's bcrypt (password hashing, not general-purpose encryption). Confirmed working via `bcrypt.hashSync()` on node:22-slim with python3/make/g++ installed for node-gyp's prebuild fallback. Prebuilt binaries exist for most current-Node/major combos, falling back to source compile otherwise -- same sys_deps class as sodium-native."
+        },
+        {
+          "name": "bcryptjs",
+          "module": "bcryptjs",
+          "version": [
+            { "nr": "1", "release_date": "2014-06-08", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2014-07-15", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2025-02-13", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Pure-JS bcrypt implementation, zero native dependencies -- the deliberate pure-JS/native pairing with `bcrypt` above (same pattern as sodium-native vs crypto-js). Confirmed working via `bcryptjs.hashSync()` on node:22-slim. A `0.x` line technically exists in npm's own metadata but its registry timestamp (2025) postdates 1.x/2.x/3.x, an npm publish-history anomaly (likely a deprecated-and-relisted old tag) rather than real chronological history -- not tracked as its own bucket pending clarification."
+        },
+        {
+          "name": "argon2",
+          "module": "argon2",
+          "version": [
+            { "nr": "0", "release_date": "2015-08-01", "compatibility": [ "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Native node-gyp binding around the Argon2 password-hashing reference implementation -- has never left the 0.x line (0.1.1 through 0.44.0, all still major '0'), so only one real bucket exists; this registry always resolves to the latest 0.x patch. Confirmed working via `await argon2.hash('x')` on node:22-slim with the same node-gyp toolchain as bcrypt/sodium-native."
+        },
+        {
+          "name": "liboqs-node",
+          "module": "liboqs-node",
+          "version": [
+            { "nr": "0.1", "release_date": "2021-05-24", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "The Node.js equivalent of Go's liboqs-go / PHP's php-liboqs / .NET's LibOQS.NET -- a native N-API binding wrapping liboqs via liboqs-cpp, community-maintained (TapuCosmo), explicitly marked EXPERIMENTAL by its own README ('do not use in production'). Only 4 patch releases ever published (0.0.1-0.1.0), all under a single major -- one real bucket. THREE real build issues found and fixed, none anticipated from the README: (1) the npm-published tarball does NOT include its `deps/liboqs`/`deps/liboqs-cpp` git submodules (npm doesn't capture submodule content), and no prebuilt binary exists for modern Node ABIs either -- a plain `npm install liboqs-node` fails outright; fixed by git-cloning the repo directly with `--recurse-submodules` in the Dockerfile (the same 'clone from source, don't rely on the package manager' pattern as php-liboqs) rather than depending on the npm registry tarball at all. (2) the vendored liboqs commit (pinned by this package, from ~2021) fails to compile under a modern GCC (12+): its old SIKE implementation trips `-Werror=array-parameter`/`-Werror=stringop-overflow`, warning classes added to GCC after this liboqs commit was written -- fixed by stripping `-Werror` from every CMakeLists.txt/*.cmake file under the vendored `deps/liboqs` tree before building (SIKE itself was cryptographically broken and removed from liboqs entirely in 2022, well after this pinned commit -- not a correctness concern here, purely a compiler-strictness mismatch). (3) because of that same old pinned liboqs commit, only DRAFT algorithm names are exposed (`Kyber768`, not `ML-KEM-768`) -- confirmed live via `oqs.KEMs.getEnabledAlgorithms()`; the touch code must use the draft name, unlike every other language's liboqs binding in this project which already exposes final NIST names. Confirmed working end-to-end after all three fixes: a real ML-KEM-equivalent (Kyber768) keypair generated on node:22-slim."
         },
         {
           "name": "@noble/curves",

@@ -57,6 +57,9 @@
           "name": "Echo",
           "module": "github.com/labstack/echo",
           "version": [
+            { "nr": "1",    "release_date": "2015-06-22", "compatibility": [ "1.0+" ] },
+            { "nr": "2",    "release_date": "2016-06-08", "compatibility": [ "1.0+" ] },
+            { "nr": "3",    "release_date": "2016-11-15", "compatibility": [ "1.0+" ] },
             { "nr": "4.0",  "release_date": "2019-01-30", "compatibility": [ "1.11+" ] },
             { "nr": "4.1",  "release_date": "2019-04-29", "compatibility": [ "1.12+" ] },
             { "nr": "4.2",  "release_date": "2021-02-11", "compatibility": [ "1.15+" ] },
@@ -77,12 +80,13 @@
             { "nr": "5.1",  "release_date": "2026-03-31", "compatibility": [ "1.25+" ] },
             { "nr": "5.2",  "release_date": "2026-06-14", "compatibility": [ "1.25+" ] }
           ],
-          "notes": "Import path per major: /v4, /v5. v4.0 has no go directive. v4.14+ requires go 1.24. v5 stable Jan 2026, requires go 1.25."
+          "notes": "Import path per major: /v4, /v5. v4.0 has no go directive. v4.14+ requires go 1.24. v5 stable Jan 2026, requires go 1.25. v1/v2/v3 use the bare import path (no /vN suffix) -- confirmed live: v1.0.0's go.mod is literally `module github.com/labstack/echo` (no `go` directive at all, predates that convention entirely); v2.x/v3.x have NO go.mod of their own at all, resolvable only as `+incompatible` pseudo-versions via the standard Go module proxy (confirmed via a real docker build using `go get github.com/labstack/echo@v3.0.0` inside a Go-1.21 modules-mode build stage -- works with zero GOPATH-mode machinery, the module proxy's own `+incompatible` support handles it transparently)."
         },
         {
           "name": "Fiber",
           "module": "github.com/gofiber/fiber",
           "version": [
+            { "nr": "1",    "release_date": "2020-02-21", "compatibility": [ "1.11+" ] },
             { "nr": "2.0",  "release_date": "2020-09-14", "compatibility": [ "1.14+" ] },
             { "nr": "2.5",  "release_date": "2021-02-08", "compatibility": [ "1.14+" ] },
             { "nr": "2.10", "release_date": "2021-05-19", "compatibility": [ "1.14+" ] },
@@ -100,18 +104,22 @@
             { "nr": "3.2",  "release_date": "2026-04-25", "compatibility": [ "1.25+" ] },
             { "nr": "3.3",  "release_date": "2026-05-22", "compatibility": [ "1.25+" ] }
           ],
-          "notes": "Import path per major: /v2, /v3. v2 maintenance-only (patches on v2.52.x). v3 requires go 1.25+."
+          "notes": "Import path per major: /v2, /v3. v2 maintenance-only (patches on v2.52.x). v3 requires go 1.25+. v1.x uses the bare import path `github.com/gofiber/fiber` (no /v1 suffix) -- confirmed live via its real go.mod (`module github.com/gofiber/fiber`, `go 1.11`), a genuine modules-era release, not pre-modules. A v0.x line (v0.6.9-v0.9.3) also exists on the module proxy but predates this registry's floor and wasn't independently verified."
         },
         {
           "name": "Chi",
           "module": "github.com/go-chi/chi",
           "version": [
+            { "nr": "1",   "release_date": "2016-06-22", "compatibility": [ "1.0+" ] },
+            { "nr": "2",   "release_date": "2017-01-06", "compatibility": [ "1.0+" ] },
+            { "nr": "3",   "release_date": "2017-06-21", "compatibility": [ "1.0+" ] },
+            { "nr": "4",   "release_date": "2019-01-10", "compatibility": [ "1.0+" ] },
             { "nr": "5.0", "release_date": "2021-02-28", "compatibility": [ "1.14+" ] },
             { "nr": "5.1", "release_date": "2024-06-28", "compatibility": [ "1.14+" ] },
             { "nr": "5.2", "release_date": "2024-12-14", "compatibility": [ "1.22+" ] },
             { "nr": "5.3", "release_date": "2026-05-22", "compatibility": [ "1.23+" ] }
           ],
-          "notes": "Import path: /v5. Lightweight stdlib-compatible router. v5.2.1+ moved to go 1.20/1.22; v5.3 requires go 1.23."
+          "notes": "Import path: /v5 from v5.0 onward. Lightweight stdlib-compatible router. v5.2.1+ moved to go 1.20/1.22; v5.3 requires go 1.23. v1-v4 use the bare import path `github.com/go-chi/chi` (no /vN suffix) -- v1.0.0 has a real (if directive-less) go.mod; v2/v3/v4 have NO go.mod at all and resolve only as `+incompatible` pseudo-versions, confirmed via a real docker build (`go get github.com/go-chi/chi@v4.1.2` inside a Go-1.21 modules-mode build stage succeeds with zero GOPATH-mode machinery needed -- the module proxy's own `+incompatible` support handles it transparently, the same mechanism as Echo v2/v3 above)."
         },
         {
           "name": "Gorilla",

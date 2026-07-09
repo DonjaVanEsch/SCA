@@ -65,6 +65,36 @@ LIB_META = {
         "version_expr": '"built-in"',
         "sys_deps": [],
     },
+    "pyOpenSSL": {
+        "pip": "pyOpenSSL",
+        "import_stmt": "import OpenSSL",
+        "version_expr": "OpenSSL.__version__",
+        "sys_deps": [],
+    },
+    "ecdsa": {
+        "pip": "ecdsa",
+        "import_stmt": "import ecdsa",
+        "version_expr": "ecdsa.__version__",
+        "sys_deps": [],
+    },
+    "Authlib": {
+        "pip": "Authlib",
+        "import_stmt": "import authlib",
+        "version_expr": "authlib.__version__",
+        "sys_deps": [],
+    },
+    # liboqs-python is a ctypes wrapper -- no C-extension build of its own,
+    # but it needs the liboqs C library present at runtime (built from
+    # source in make_dockerfile()'s LIBOQS_PYTHON stage, the same recipe
+    # already used for this project's other liboqs bindings) and
+    # LD_LIBRARY_PATH pointed at it so the ctypes loader can find
+    # liboqs.so. Confirmed working end-to-end via a real docker run.
+    "liboqs-python": {
+        "pip": "liboqs-python",
+        "import_stmt": "import oqs",
+        "version_expr": "__import__('importlib.metadata', fromlist=['version']).version('liboqs-python')",
+        "sys_deps": [],
+    },
 }
 
 FW_PIP = {
@@ -78,6 +108,21 @@ FW_PIP = {
     ("Django",  "4"): "Django>=4.0,<5.0",
     ("Django",  "5"): "Django>=5.0,<6.0",
     ("FastAPI", "0"): "fastapi>=0.1,<1.0",
+    ("Tornado", "1"): "tornado>=1.0,<2.0",
+    ("Tornado", "2"): "tornado>=2.0,<3.0",
+    ("Tornado", "3"): "tornado>=3.0,<4.0",
+    ("Tornado", "4"): "tornado>=4.0,<5.0",
+    ("Tornado", "5"): "tornado>=5.0,<6.0",
+    ("Tornado", "6"): "tornado>=6.0,<7.0",
+    ("aiohttp", "1"): "aiohttp>=1.0,<2.0",
+    ("aiohttp", "2"): "aiohttp>=2.0,<3.0",
+    ("aiohttp", "3"): "aiohttp>=3.0,<4.0",
+    ("CherryPy", "3"):  "CherryPy>=3.0,<4.0",
+    ("CherryPy", "17"): "CherryPy>=17.0,<18.0",
+    ("CherryPy", "18"): "CherryPy>=18.0,<19.0",
+    ("Bottle",  "0"): "bottle>=0.4,<0.14",
+    ("Pyramid", "1"): "pyramid>=1.0,<2.0",
+    ("Pyramid", "2"): "pyramid>=2.0,<3.0",
 }
 
 FW_EXTRA = {
@@ -94,6 +139,14 @@ FW_VERSION_EXTRA = {
     # Flask 1.x does not support Werkzeug 2.0+ (Flask 2.0 was released alongside it).
     # Flask 1.x also uses `from itsdangerous import json as _json` (removed in 2.1.0).
     ("Flask", "1"): ["Jinja2<3.1.0", "MarkupSafe<2.1.0", "Werkzeug<2.0", "itsdangerous<2.1"],
+    # aiohttp 1.x/2.x leave `async-timeout` completely unversioned in their
+    # own setup.py -- pip resolves it to the latest release (4.0.2), which
+    # needs a newer Python than these majors target, causing a real
+    # `TypeError: function() argument 1 must be code, not str` at import
+    # time. Pinned to 3.0.1 (2018), contemporaneous with aiohttp 2.x's own
+    # era -- confirmed working via a real docker build+run.
+    ("aiohttp", "1"): ["async-timeout==3.0.1"],
+    ("aiohttp", "2"): ["async-timeout==3.0.1"],
 }
 
 
@@ -210,10 +263,177 @@ if __name__ == "__main__":
 """
 
 
+def tornado_app(lib_name: str) -> str:
+    m = LIB_META[lib_name]
+    return f"""\
+import sys
+import json
+import importlib.metadata
+import tornado.ioloop
+import tornado.web
+{m['import_stmt']}
+
+
+class HelloHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.write({{"message": "Hello World"}})
+
+
+class VersionHandler(tornado.web.RequestHandler):
+    def get(self):
+        lib_version = {m['version_expr']}
+        self.write({{
+            "language": {{"name": "Python", "version": sys.version.split()[0]}},
+            "framework": {{"name": "Tornado", "version": importlib.metadata.version("tornado")}},
+            "library": {{"name": "{lib_name}", "version": str(lib_version)}},
+        }})
+
+
+if __name__ == "__main__":
+    app = tornado.web.Application([(r"/", HelloHandler), (r"/version", VersionHandler)])
+    app.listen(8000)
+    tornado.ioloop.IOLoop.current().start()
+"""
+
+
+def aiohttp_app(lib_name: str) -> str:
+    m = LIB_META[lib_name]
+    return f"""\
+import sys
+import importlib.metadata
+from aiohttp import web
+{m['import_stmt']}
+
+
+async def hello(request):
+    return web.json_response({{"message": "Hello World"}})
+
+
+async def version(request):
+    lib_version = {m['version_expr']}
+    return web.json_response({{
+        "language": {{"name": "Python", "version": sys.version.split()[0]}},
+        "framework": {{"name": "aiohttp", "version": importlib.metadata.version("aiohttp")}},
+        "library": {{"name": "{lib_name}", "version": str(lib_version)}},
+    }})
+
+
+app = web.Application()
+app.add_routes([web.get("/", hello), web.get("/version", version)])
+
+if __name__ == "__main__":
+    web.run_app(app, host="0.0.0.0", port=8000)
+"""
+
+
+def cherrypy_app(lib_name: str) -> str:
+    m = LIB_META[lib_name]
+    return f"""\
+import sys
+import importlib.metadata
+import cherrypy
+{m['import_stmt']}
+
+
+class Root:
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def index(self):
+        return {{"message": "Hello World"}}
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def version(self):
+        lib_version = {m['version_expr']}
+        return {{
+            "language": {{"name": "Python", "version": sys.version.split()[0]}},
+            "framework": {{"name": "CherryPy", "version": importlib.metadata.version("cherrypy")}},
+            "library": {{"name": "{lib_name}", "version": str(lib_version)}},
+        }}
+
+
+if __name__ == "__main__":
+    cherrypy.config.update({{"server.socket_host": "0.0.0.0", "server.socket_port": 8000}})
+    cherrypy.quickstart(Root())
+"""
+
+
+def bottle_app(lib_name: str) -> str:
+    m = LIB_META[lib_name]
+    return f"""\
+import sys
+import importlib.metadata
+from bottle import route, run
+{m['import_stmt']}
+
+
+@route("/")
+def hello():
+    return {{"message": "Hello World"}}
+
+
+@route("/version")
+def version():
+    lib_version = {m['version_expr']}
+    return {{
+        "language": {{"name": "Python", "version": sys.version.split()[0]}},
+        "framework": {{"name": "Bottle", "version": importlib.metadata.version("bottle")}},
+        "library": {{"name": "{lib_name}", "version": str(lib_version)}},
+    }}
+
+
+if __name__ == "__main__":
+    run(host="0.0.0.0", port=8000)
+"""
+
+
+def pyramid_app(lib_name: str) -> str:
+    m = LIB_META[lib_name]
+    return f"""\
+import sys
+import json
+import importlib.metadata
+from wsgiref.simple_server import make_server
+from pyramid.config import Configurator
+from pyramid.response import Response
+{m['import_stmt']}
+
+
+def hello(request):
+    return Response(json.dumps({{"message": "Hello World"}}), content_type="application/json", charset="UTF-8")
+
+
+def version(request):
+    lib_version = {m['version_expr']}
+    body = json.dumps({{
+        "language": {{"name": "Python", "version": sys.version.split()[0]}},
+        "framework": {{"name": "Pyramid", "version": importlib.metadata.version("pyramid")}},
+        "library": {{"name": "{lib_name}", "version": str(lib_version)}},
+    }})
+    return Response(body, content_type="application/json", charset="UTF-8")
+
+
+if __name__ == "__main__":
+    with Configurator() as config:
+        config.add_route("hello", "/")
+        config.add_route("version", "/version")
+        config.add_view(hello, route_name="hello")
+        config.add_view(version, route_name="version")
+        app = config.make_wsgi_app()
+    server = make_server("0.0.0.0", 8000, app)
+    server.serve_forever()
+"""
+
+
 APP_MAKER = {
-    "Flask":   flask_app,
-    "Django":  django_app,
-    "FastAPI": fastapi_app,
+    "Flask":    flask_app,
+    "Django":   django_app,
+    "FastAPI":  fastapi_app,
+    "Tornado":  tornado_app,
+    "aiohttp":  aiohttp_app,
+    "CherryPy": cherrypy_app,
+    "Bottle":   bottle_app,
+    "Pyramid":  pyramid_app,
 }
 
 
@@ -238,6 +458,27 @@ def _needs_legacy_openssl(lib_name: str, lib_ver: str) -> bool:
 
 # ── Dockerfile ────────────────────────────────────────────────────────────────
 
+# liboqs-python is a ctypes wrapper -- no C-extension build of the Python
+# package itself, but the liboqs C library must be built from source and
+# installed system-wide (same cmake/ninja recipe already reused for this
+# project's other liboqs bindings), with LD_LIBRARY_PATH pointed at it so
+# ctypes' dlopen() can find libcrypto/liboqs.so at runtime. Confirmed
+# working end-to-end via a real docker build+run (a live ML-KEM-768
+# keypair generated inside the container).
+_LIBOQS_PYTHON_TAG = "0.15.0"
+
+_LIBOQS_PYTHON_STAGE = (
+    "RUN git clone --depth 1 --branch " + _LIBOQS_PYTHON_TAG + " \\\n"
+    "    https://github.com/open-quantum-safe/liboqs /tmp/liboqs \\\n"
+    "    && cmake -S /tmp/liboqs -B /tmp/liboqs/build \\\n"
+    "       -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \\\n"
+    "       -DOQS_BUILD_ONLY_LIB=ON -GNinja \\\n"
+    "    && cmake --build /tmp/liboqs/build --target install \\\n"
+    "    && rm -rf /tmp/liboqs && ldconfig\n"
+    "ENV LD_LIBRARY_PATH=/usr/local/lib\n"
+)
+
+
 def make_dockerfile(python_ver: str, lib_name: str, lib_ver: str) -> str:
     if _needs_legacy_openssl(lib_name, lib_ver):
         base_image = f"python:{python_ver}-slim-bullseye"
@@ -248,14 +489,19 @@ def make_dockerfile(python_ver: str, lib_name: str, lib_ver: str) -> str:
         "build-essential", "gcc", "libffi-dev", "libssl-dev",
         *LIB_META[lib_name]["sys_deps"],
     })
+    if lib_name == "liboqs-python":
+        sys_deps = sorted(set(sys_deps) | {"cmake", "ninja-build", "git", "pkg-config"})
     deps_line = " \\\n    ".join(sys_deps)
+
+    liboqs_stage = _LIBOQS_PYTHON_STAGE if lib_name == "liboqs-python" else ""
+
     return f"""\
 FROM {base_image}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     {deps_line} \\
     && rm -rf /var/lib/apt/lists/*
-
+{liboqs_stage}
 WORKDIR /app
 
 COPY requirements.txt .

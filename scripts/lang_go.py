@@ -53,6 +53,20 @@ _FW_EXTRA_REQS: dict = {
     # go 1.25+ from v1.72 onwards.  iris v12.2+ dropped fasthttp entirely.
     ("Iris", "12.0"): [("github.com/valyala/fasthttp", "1")],
     ("Iris", "12.1"): [("github.com/valyala/fasthttp", "1")],
+    # echo v1/v2/v3 (pre-modules-convention era) leave their github.com/
+    # labstack/gommon dependency completely unversioned in their own
+    # directive-less go.mod -- `go build -mod=mod` resolves it to gommon's
+    # latest release (v0.5.0), which requires go >=1.23, breaking every
+    # older Go toolchain this registry pairs with these majors. Confirmed
+    # via a real failing docker build ("toolchain upgrade needed to resolve
+    # github.com/labstack/gommon/log"). Pinning to registry major "0" lets
+    # the existing max_toolchain-aware resolver in _resolve_go() pick the
+    # newest 0.x gommon release that's still compatible with the target
+    # image's own Go version, the same mechanism already used for Iris's
+    # fasthttp pin above -- not a fixed version number.
+    ("Echo", "1"): [("github.com/labstack/gommon", "0")],
+    ("Echo", "2"): [("github.com/labstack/gommon", "0")],
+    ("Echo", "3"): [("github.com/labstack/gommon", "0")],
 }
 
 
@@ -64,11 +78,21 @@ def _fw_module(fw_name: str, fw_major: str):
     if fw_name == "Gin":
         return "github.com/gin-gonic/gin"
     if fw_name == "Echo":
-        return f"github.com/labstack/echo/v{ver[0]}"
+        # v1-v3 predate Go's semantic-import-versioning convention entirely
+        # (v1.0.0's own go.mod has no `go` directive at all; v2/v3 have no
+        # go.mod of their own, resolved only as +incompatible pseudo-versions)
+        # -- confirmed live, no /vN suffix for any of the three.
+        return "github.com/labstack/echo" if ver[0] < 4 else f"github.com/labstack/echo/v{ver[0]}"
     if fw_name == "Fiber":
-        return f"github.com/gofiber/fiber/v{ver[0]}"
+        # v1.x's own go.mod declares itself as the bare path (`module
+        # github.com/gofiber/fiber`, no /v1) -- confirmed live; only v2+
+        # adopted the /vN suffix convention.
+        return "github.com/gofiber/fiber" if ver[0] < 2 else f"github.com/gofiber/fiber/v{ver[0]}"
     if fw_name == "Chi":
-        return "github.com/go-chi/chi/v5"
+        # v1-v4 predate the /v5 suffix convention (v1.0.0 has a directive-less
+        # go.mod; v2/v3/v4 have none at all, +incompatible pseudo-versions
+        # only) -- confirmed live via a real docker build.
+        return "github.com/go-chi/chi" if ver[0] < 5 else "github.com/go-chi/chi/v5"
     if fw_name == "Gorilla":
         return "github.com/gorilla/mux"
     if fw_name == "Beego":
@@ -250,6 +274,71 @@ func main() {
 }
 """
 
+# Echo v1.x -- confirmed via a real docker build failure: `Get`/`Run` (not
+# `GET`/`Start`), and Context is a struct (`*Context`, not the `Context`
+# interface v2+ use). Verified against the actual v1.4.4 source (context.go/
+# echo.go), not assumed from v4's shape.
+_ECHO_V1_TPL = """\
+package main
+
+import (
+\t"net/http"
+\t"runtime"__BI_IMP__
+\t"__FW_IMPORT__"__LIB_IMP__
+)
+
+__MOD_FN__
+
+func main() {
+\te := echo.New()
+\te.Get("/", func(c *echo.Context) error {
+\t\treturn c.JSON(http.StatusOK, map[string]string{"message": "Hello World"})
+\t})
+\te.Get("/version", func(c *echo.Context) error {
+\t\treturn c.JSON(http.StatusOK, map[string]interface{}{
+\t\t\t"language":  map[string]string{"name": "Go", "version": runtime.Version()},
+\t\t\t"framework": map[string]string{"name": "Echo", "version": __FW_VER__},
+\t\t\t"library":   map[string]string{"name": "__LIB_NAME__", "version": __LIB_VER__},
+\t\t})
+\t})
+\te.Run(":8000")
+}
+"""
+
+# Echo v2.x -- confirmed via real source inspection (v2.0.0-v2.2.0): `GET`
+# already exists (transitional alongside `Get`) and Context is already the
+# interface v3+/v4 use, but `Run` takes an engine.Server (constructed via
+# the separate engine/standard sub-package), not a bare address string --
+# that only arrived at v3.0.0 (confirmed: v3.0.0's Start(address string)
+# already matches v4's shape exactly, so v3 needs no template of its own).
+_ECHO_V2_TPL = """\
+package main
+
+import (
+\t"net/http"
+\t"runtime"__BI_IMP__
+\t"__FW_IMPORT__"__LIB_IMP__
+\t"__FW_IMPORT__/engine/standard"
+)
+
+__MOD_FN__
+
+func main() {
+\te := echo.New()
+\te.GET("/", func(c echo.Context) error {
+\t\treturn c.JSON(http.StatusOK, map[string]string{"message": "Hello World"})
+\t})
+\te.GET("/version", func(c echo.Context) error {
+\t\treturn c.JSON(http.StatusOK, map[string]interface{}{
+\t\t\t"language":  map[string]string{"name": "Go", "version": runtime.Version()},
+\t\t\t"framework": map[string]string{"name": "Echo", "version": __FW_VER__},
+\t\t\t"library":   map[string]string{"name": "__LIB_NAME__", "version": __LIB_VER__},
+\t\t})
+\t})
+\te.Run(standard.New(":8000"))
+}
+"""
+
 _ECHO_TPL = """\
 package main
 
@@ -303,6 +392,37 @@ func main() {
 }
 """
 
+# Fiber v1.x -- confirmed via a real docker build failure: v1's Handler type
+# is `func(*fiber.Ctx)` (no return value) — a v2+-shaped `func(*fiber.Ctx)
+# error` handler is a compile error ("cannot use func... as func(*fiber.Ctx)
+# value"). ctx.JSON() itself still returns an error in v1 (unchanged from
+# v2+), it's only the registered handler's own signature that differs.
+_FIBER_LEGACY_TPL = """\
+package main
+
+import (
+\t"runtime"__BI_IMP__
+\t"__FW_IMPORT__"__LIB_IMP__
+)
+
+__MOD_FN__
+
+func main() {
+\tapp := fiber.New()
+\tapp.Get("/", func(c *fiber.Ctx) {
+\t\tc.JSON(fiber.Map{"message": "Hello World"})
+\t})
+\tapp.Get("/version", func(c *fiber.Ctx) {
+\t\tc.JSON(fiber.Map{
+\t\t\t"language":  fiber.Map{"name": "Go", "version": runtime.Version()},
+\t\t\t"framework": fiber.Map{"name": "Fiber", "version": __FW_VER__},
+\t\t\t"library":   fiber.Map{"name": "__LIB_NAME__", "version": __LIB_VER__},
+\t\t})
+\t})
+\tapp.Listen(":8000")
+}
+"""
+
 _CHI_TPL = """\
 package main
 
@@ -310,7 +430,7 @@ import (
 \t"encoding/json"
 \t"net/http"
 \t"runtime"__BI_IMP__
-\t"github.com/go-chi/chi/v5"__LIB_IMP__
+\t"__FW_IMPORT__"__LIB_IMP__
 )
 
 __MOD_FN__
@@ -484,17 +604,24 @@ def make_main_go(lang_ver: str, fw_name: str, fw_major: str,
                     else "echo.Context",
     )
 
-    tpl = {
-        "net/http":   _NETHTTP_TPL,
-        "Gin":        _GIN_TPL,
-        "Echo":       _ECHO_TPL,
-        "Fiber":      _FIBER_TPL,
-        "Chi":        _CHI_TPL,
-        "Gorilla":    _GORILLA_TPL,
-        "Beego":      _BEEGO_TPL,
-        "Iris":       _IRIS_TPL,
-        "httprouter": _HTTPROUTER_TPL,
-    }[fw_name]
+    if fw_name == "Fiber" and _parse(fw_major)[0] < 2:
+        tpl = _FIBER_LEGACY_TPL
+    elif fw_name == "Echo" and fw_major == "1":
+        tpl = _ECHO_V1_TPL
+    elif fw_name == "Echo" and fw_major == "2":
+        tpl = _ECHO_V2_TPL
+    else:
+        tpl = {
+            "net/http":   _NETHTTP_TPL,
+            "Gin":        _GIN_TPL,
+            "Echo":       _ECHO_TPL,
+            "Fiber":      _FIBER_TPL,
+            "Chi":        _CHI_TPL,
+            "Gorilla":    _GORILLA_TPL,
+            "Beego":      _BEEGO_TPL,
+            "Iris":       _IRIS_TPL,
+            "httprouter": _HTTPROUTER_TPL,
+        }[fw_name]
 
     return _sub(tpl, **common)
 

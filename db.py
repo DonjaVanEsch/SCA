@@ -38,6 +38,8 @@ _REGISTRY_FILES = [
     SCRIPTS_DIR / "registry go.json",
     SCRIPTS_DIR / "registry node.json",
     SCRIPTS_DIR / "registry java.json",
+    SCRIPTS_DIR / "registry dotnet.json",
+    SCRIPTS_DIR / "registry php.json",
 ]
 
 
@@ -124,34 +126,46 @@ CREATE TABLE IF NOT EXISTS images (
 );
 
 -- ── Run labels ────────────────────────────────────────────────────────────
+-- docker_host: the DOCKER_HOST value active when the run was created ('' = local
+-- engine). Lets the Reports tab show which remote/local target produced a run.
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
     name        TEXT    UNIQUE NOT NULL,
     created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
     status      TEXT    NOT NULL DEFAULT 'running',
-    finished_at TEXT
+    finished_at TEXT,
+    docker_host TEXT    NOT NULL DEFAULT ''
 );
 
 -- ── Result tables ──────────────────────────────────────────────────────────
+-- host: the DOCKER_HOST active when the build/test ran ('' = local engine).
+-- build_results is keyed per (image_id, host) rather than per image_id alone
+-- so switching Docker host gives a fresh built/tested matrix per image
+-- without erasing another host's recorded status.
 CREATE TABLE IF NOT EXISTS build_results (
     id          INTEGER PRIMARY KEY,
-    image_id    INTEGER UNIQUE NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    image_id    INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    host        TEXT    NOT NULL DEFAULT '',
     success     INTEGER NOT NULL,
     output      TEXT,
     started_at  TEXT,
-    finished_at TEXT
+    finished_at TEXT,
+    run_id      INTEGER REFERENCES runs(id),
+    UNIQUE(image_id, host)
 );
 
 CREATE TABLE IF NOT EXISTS test_results (
     id            INTEGER PRIMARY KEY,
     image_id      INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    host          TEXT    NOT NULL DEFAULT '',
     success       INTEGER NOT NULL,
     root_ok       INTEGER,
     version_ok    INTEGER,
     error_msg     TEXT,
     response_data TEXT,
     output        TEXT,
-    tested_at     TEXT DEFAULT CURRENT_TIMESTAMP
+    tested_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+    run_id        INTEGER REFERENCES runs(id)
 );
 
 -- ── Crypto Agility (C.A.M. Component 2) ──────────────────────────────────────
@@ -259,6 +273,11 @@ CREATE INDEX IF NOT EXISTS idx_pc_fwver     ON platform_constraints(fw_version_i
 CREATE INDEX IF NOT EXISTS idx_vuln_lib     ON vulnerabilities(library_id);
 """
 
+# Metadata only -- deliberately excludes build/test status. Build results are
+# now scoped per (image_id, host) rather than one row per image (see
+# build_results.UNIQUE above), so "the" build/test status only makes sense
+# once a host is chosen -- callers that need status use _status_sql() below,
+# parameterized by host, instead of this view.
 _VIEW = """
 DROP VIEW IF EXISTS image_details;
 CREATE VIEW image_details AS
@@ -302,24 +321,7 @@ SELECT
     libv.id            AS lib_version_id,
     libv.version_nr    AS lib_version,
     libv.release_date  AS lib_release_date,
-    libv.compatibility AS lib_compatibility,
-
-    -- latest build
-    b.success     AS build_success,
-    b.finished_at AS built_at,
-    b.output      AS build_output,
-    br.name       AS build_run,
-
-    -- latest test (subquery)
-    (SELECT success
-       FROM test_results WHERE image_id = i.id
-       ORDER BY tested_at DESC LIMIT 1) AS test_success,
-    (SELECT tested_at
-       FROM test_results WHERE image_id = i.id
-       ORDER BY tested_at DESC LIMIT 1) AS tested_at,
-    (SELECT output
-       FROM test_results WHERE image_id = i.id
-       ORDER BY tested_at DESC LIMIT 1) AS test_output
+    libv.compatibility AS lib_compatibility
 
 FROM images i
 JOIN lang_versions lv  ON lv.id  = i.lang_version_id
@@ -327,10 +329,38 @@ JOIN languages     l   ON l.id   = lv.language_id
 JOIN fw_versions   fv  ON fv.id  = i.fw_version_id
 JOIN frameworks    f   ON f.id   = fv.framework_id
 JOIN lib_versions  libv ON libv.id = i.lib_version_id
-JOIN libraries     lib  ON lib.id  = libv.library_id
-LEFT JOIN build_results b ON b.image_id = i.id
-LEFT JOIN runs br ON br.id = b.run_id;
+JOIN libraries     lib  ON lib.id  = libv.library_id;
 """
+
+
+def _status_sql() -> str:
+    """image_details, plus build/test status scoped to one Docker host.
+
+    Contains two '?' placeholders (build host, test host) that must be bound
+    to the SAME host value, in that order, before any other query params.
+    Superset of image_details' columns, so existing filters/sorts on
+    language/framework/... keep working unchanged; adds build_success,
+    built_at, build_output, build_run, test_success, tested_at, test_output.
+    """
+    return """
+    SELECT
+        d.*,
+        b.success     AS build_success,
+        b.finished_at AS built_at,
+        b.output      AS build_output,
+        br.name       AS build_run,
+        t.success     AS test_success,
+        t.tested_at   AS tested_at,
+        t.output      AS test_output
+    FROM image_details d
+    LEFT JOIN build_results b ON b.image_id = d.id AND b.host = ?
+    LEFT JOIN runs br ON br.id = b.run_id
+    LEFT JOIN test_results t ON t.id = (
+        SELECT tr.id FROM test_results tr
+        WHERE tr.image_id = d.id AND tr.host = ?
+        ORDER BY tr.tested_at DESC LIMIT 1
+    )
+    """
 
 
 def init_db() -> None:
@@ -349,14 +379,43 @@ def init_db() -> None:
         if cols and "lang_version_id" not in cols:
             conn.execute("DROP TABLE platform_constraints")
 
+        # build_results moved from "one row per image" (UNIQUE(image_id)) to
+        # "one row per (image, host)" (UNIQUE(image_id, host)) so different
+        # Docker hosts keep independent built/tested status. SQLite can't
+        # ALTER a UNIQUE constraint in place, so rebuild the table when an
+        # old-shape one is found; existing rows backfill host='' (local).
+        build_cols = {row[1] for row in conn.execute("PRAGMA table_info(build_results)")}
+        if build_cols and "host" not in build_cols:
+            conn.executescript("""
+                ALTER TABLE build_results RENAME TO build_results_old;
+                CREATE TABLE build_results (
+                    id          INTEGER PRIMARY KEY,
+                    image_id    INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+                    host        TEXT    NOT NULL DEFAULT '',
+                    success     INTEGER NOT NULL,
+                    output      TEXT,
+                    started_at  TEXT,
+                    finished_at TEXT,
+                    run_id      INTEGER REFERENCES runs(id),
+                    UNIQUE(image_id, host)
+                );
+                INSERT INTO build_results
+                    (image_id, host, success, output, started_at, finished_at, run_id)
+                    SELECT image_id, '', success, output, started_at, finished_at, run_id
+                    FROM build_results_old;
+                DROP TABLE build_results_old;
+            """)
+
         conn.executescript(_SCHEMA)
-        # Add run_id column to existing tables (safe to call repeatedly)
+        # Add columns to existing tables (safe to call repeatedly)
         for ddl in [
             "ALTER TABLE build_results ADD COLUMN run_id INTEGER REFERENCES runs(id)",
             "ALTER TABLE test_results  ADD COLUMN run_id INTEGER REFERENCES runs(id)",
             "ALTER TABLE test_results  ADD COLUMN output TEXT",
+            "ALTER TABLE test_results  ADD COLUMN host TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE runs ADD COLUMN status TEXT NOT NULL DEFAULT 'running'",
             "ALTER TABLE runs ADD COLUMN finished_at TEXT",
+            "ALTER TABLE runs ADD COLUMN docker_host TEXT NOT NULL DEFAULT ''",
         ]:
             try:
                 conn.execute(ddl)
@@ -661,26 +720,94 @@ _LIB_VERSION_ALGORITHMS = [
      "Verified by diffing actual jar contents: bcprov-jdk18on 1.71 has none of these classes, 1.72 introduces them; BC's own release notes flag it experimental."),
     ("java", "BouncyCastle", "1.72", "Dilithium (draft)", "draft",
      "Same verification as Kyber (draft) at 1.72 -- jar diff + BC release notes."),
+    ("java", "BouncyCastle", "1.73", "Kyber (draft)", "draft", "Inherits 1.72's draft support (not independently jar-diffed per release) -- predates the 1.79 final-name rename."),
+    ("java", "BouncyCastle", "1.73", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 1.73."),
+    ("java", "BouncyCastle", "1.74", "Kyber (draft)", "draft", "Inherits 1.72's draft support -- predates the 1.79 final-name rename."),
+    ("java", "BouncyCastle", "1.74", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 1.74."),
+    ("java", "BouncyCastle", "1.75", "Kyber (draft)", "draft", "Inherits 1.72's draft support -- predates the 1.79 final-name rename."),
+    ("java", "BouncyCastle", "1.75", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 1.75."),
+    ("java", "BouncyCastle", "1.76", "Kyber (draft)", "draft", "Inherits 1.72's draft support -- predates the 1.79 final-name rename."),
+    ("java", "BouncyCastle", "1.76", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 1.76."),
+    ("java", "BouncyCastle", "1.77", "Kyber (draft)", "draft", "Inherits 1.72's draft support -- predates the 1.79 final-name rename."),
+    ("java", "BouncyCastle", "1.77", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 1.77."),
+    ("java", "BouncyCastle", "1.78", "Kyber (draft)", "draft", "Inherits 1.72's draft support -- last minor before the 1.79 final-name rename (confirmed via jar diff: 1.78 still lacks MLKEMParameterSpec/etc. entirely)."),
+    ("java", "BouncyCastle", "1.78", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 1.78."),
     ("java", "BouncyCastle", "1.79", "ML-KEM", "final",
      "Verified by diffing actual jar contents: 1.78 lacks MLKEMParameterSpec/etc. entirely, 1.79 introduces the full provider implementation (FIPS 203 final names)."),
     ("java", "BouncyCastle", "1.79", "ML-DSA", "final",
      "Same verification as ML-KEM at 1.79 -- jar diff (MLDSAParameterSpec)."),
     ("java", "BouncyCastle", "1.79", "SLH-DSA", "final",
      "Same verification as ML-KEM at 1.79 -- jar diff (SLHDSAParameterSpec)."),
-    ("java", "BouncyCastle", "1", "ML-KEM", "final",
-     "This bucket always resolves to the latest 1.x release; inherits 1.79's final-name support."),
-    ("java", "BouncyCastle", "1", "ML-DSA", "final", "Same rolling-latest reasoning as ML-KEM."),
-    ("java", "BouncyCastle", "1", "SLH-DSA", "final", "Same rolling-latest reasoning as ML-KEM."),
-    ("java", "BouncyCastle", "1", "Kyber (draft)", "deprecated",
+    ("java", "BouncyCastle", "1.80", "ML-KEM", "final", "Inherits 1.79's final-name support (not independently jar-diffed per release)."),
+    ("java", "BouncyCastle", "1.80", "ML-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.80."),
+    ("java", "BouncyCastle", "1.80", "SLH-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.80."),
+    ("java", "BouncyCastle", "1.81", "ML-KEM", "final", "Inherits 1.79's final-name support."),
+    ("java", "BouncyCastle", "1.81", "ML-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.81."),
+    ("java", "BouncyCastle", "1.81", "SLH-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.81."),
+    ("java", "BouncyCastle", "1.82", "ML-KEM", "final", "Inherits 1.79's final-name support."),
+    ("java", "BouncyCastle", "1.82", "ML-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.82."),
+    ("java", "BouncyCastle", "1.82", "SLH-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.82."),
+    ("java", "BouncyCastle", "1.83", "ML-KEM", "final", "Inherits 1.79's final-name support."),
+    ("java", "BouncyCastle", "1.83", "ML-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.83."),
+    ("java", "BouncyCastle", "1.83", "SLH-DSA", "final", "Same inheritance reasoning as ML-KEM at 1.83."),
+    ("java", "BouncyCastle", "1.84", "ML-KEM", "final",
+     "Current latest tracked minor (replaces the old rolling-latest '1' bucket, dropped once every real minor was tracked individually); inherits 1.79's final-name support."),
+    ("java", "BouncyCastle", "1.84", "ML-DSA", "final", "Same reasoning as ML-KEM at 1.84."),
+    ("java", "BouncyCastle", "1.84", "SLH-DSA", "final", "Same reasoning as ML-KEM at 1.84."),
+    ("java", "BouncyCastle", "1.84", "Kyber (draft)", "deprecated",
      "BC 1.84's own release notes announce removal of the draft Kyber/Dilithium/SphincsPlus wrapper names in a future release -- still present in 1.84 itself, but on the way out."),
-    ("java", "BouncyCastle", "1", "Dilithium (draft)", "deprecated",
-     "Same sunsetting note as Kyber (draft) at the rolling-latest bucket."),
+    ("java", "BouncyCastle", "1.84", "Dilithium (draft)", "deprecated",
+     "Same sunsetting note as Kyber (draft) at 1.84."),
     ("java", "Tink", "1.21", "ML-DSA", "final",
      "v1.21.0 (2026-03-24) added ML-DSA-87 signature support -- Tink's first post-quantum release of any kind. Verified via full-text search of every Tink Java GitHub release body (v1.8.0-v1.20.0 have zero PQC mentions)."),
-    ("java", "Tink", "1", "ML-DSA", "final",
-     "Rolling-latest bucket (currently 1.22.0); adds ML-DSA-44 on top of 1.21's ML-DSA-87."),
-    ("java", "Tink", "1", "SLH-DSA", "final",
+    ("java", "Tink", "1.22", "ML-DSA", "final",
+     "Current latest tracked minor (replaces the old rolling-latest '1' bucket, dropped once every real minor was tracked individually); adds ML-DSA-44 on top of 1.21's ML-DSA-87."),
+    ("java", "Tink", "1.22", "SLH-DSA", "final",
      "v1.22.0 (2026-06-18) added SLH-DSA predefined signature parameters. Tink still has NO KEM-side PQC (no ML-KEM/Kyber) as of this version -- signatures only."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.0", "Kyber (draft)", "draft",
+     "BouncyCastle.Cryptography 2.0.0 (2022-11-15), the official bcgit project's first NuGet release, shipped with draft/pre-standard Kyber support from day one -- explicitly flagged EXPERIMENTAL in the package description. Unlike bc-java, bc-csharp's draft-PQC and final-PQC milestones do NOT land on the same version numbers as their Java counterpart (1.72/1.79) despite being the same project family."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.0", "Dilithium (draft)", "draft",
+     "Same release (2.0.0, 2022-11-15) and sourcing as the Kyber (draft) entry."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.1", "Kyber (draft)", "draft",
+     "Inherits 2.0's draft support (not independently diffed minor-by-minor) -- 2.1.0 (2023-02-18) predates the 2.5.0 final-name rename."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.1", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 2.1."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.2", "Kyber (draft)", "draft",
+     "Inherits 2.0's draft support -- 2.2.0 (2023-04-17) predates the 2.5.0 final-name rename."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.2", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 2.2."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.3", "Kyber (draft)", "draft",
+     "Inherits 2.0's draft support -- 2.3.0 (2024-02-05) predates the 2.5.0 final-name rename."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.3", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 2.3."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.4", "Kyber (draft)", "draft",
+     "Inherits 2.0's draft support -- 2.4.0 (2024-05-27) predates the 2.5.0 final-name rename."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.4", "Dilithium (draft)", "draft", "Same inheritance reasoning as Kyber (draft) at 2.4."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.5", "ML-KEM", "final",
+     "2.5.0 (2024-12-01, per the NuGet registration API's authoritative 'published' field) added the final NIST-standardized ML-KEM (FIPS 203) -- and, unlike bc-java (which kept draft Kyber alongside ML-KEM for years), bc-csharp REMOVED draft Kyber support in this same release."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.5", "ML-DSA", "final",
+     "Same release (2.5.0, 2024-12-01) added final ML-DSA (FIPS 204), replacing draft Dilithium, which was removed in the same release."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.5", "SLH-DSA", "final",
+     "Same release (2.5.0, 2024-12-01) added final SLH-DSA (FIPS 205)."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.6", "ML-KEM", "final",
+     "2.6.0 (2025-05-15) inherits 2.5.0's final-name support; currently the latest tracked minor (2.6.2)."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.6", "ML-DSA", "final", "Same inheritance reasoning as ML-KEM at 2.6."),
+    ("dotnet", "BouncyCastle.Cryptography", "2.6", "SLH-DSA", "final", "Same inheritance reasoning as ML-KEM at 2.6."),
+    ("dotnet", "System.Security.Cryptography.PQC", "builtin", "ML-KEM", "final",
+     "Inbox in System.Security.Cryptography.dll starting .NET 10 (GA 2025-11-11) -- confirmed via dotnet/runtime GitHub issue #114453 (milestone 10.0.0, api-approved). The [Experimental] gate present during the .NET 9 dev cycle was REMOVED for ML-KEM in .NET 10, i.e. fully supported, not preview. Backed by MLKemOpenSsl on Linux (needs OpenSSL 3.5+) or MLKemCng on Windows -- see the matching platform_constraints entry."),
+    ("dotnet", "System.Security.Cryptography.PQC", "builtin", "ML-DSA", "final",
+     "Same .NET 10 GA / [Experimental]-removed status as ML-KEM."),
+    ("dotnet", "System.Security.Cryptography.PQC", "builtin", "SLH-DSA", "draft",
+     "Present inbox since .NET 10 but STILL marked [Experimental(\"SYSLIB5006\")] as of this writing, unlike ML-KEM/ML-DSA -- Microsoft's own docs attribute this to limited OS support. Recorded as 'draft' here (not 'final') to reflect that experimental-API gate, even though the algorithm itself is the final FIPS 205 standard."),
+    ("php", "php-liboqs", "0.4", "ML-KEM", "final",
+     "Wraps liboqs 0.15.0 directly (this project's pinned build) -- confirmed by an actual docker run: \\OQS\\KEM::keypair(\\OQS\\KEM::ALG_ML_KEM_768) genuinely returns a real keypair. Unlike BouncyCastle/NSec, php-liboqs has no separate draft-Kyber naming period of its own; it's a thin wrapper directly over whatever names liboqs itself uses, and liboqs has used the final FIPS 203 name since well before 0.15.0."),
+    ("php", "php-liboqs", "0.4", "ML-DSA", "final",
+     "Same reasoning as ML-KEM -- liboqs 0.15.0 already uses the final FIPS 204 name, exposed via \\OQS\\Signature."),
+    ("php", "php-liboqs", "0.4", "SLH-DSA", "final",
+     "Same reasoning as ML-KEM -- liboqs 0.15.0 already uses the final FIPS 205 name."),
+    ("node", "liboqs-node", "0.1", "Kyber (draft)", "draft",
+     "Unlike every other liboqs binding in this project (php-liboqs, LibOQS.NET, liboqs-go), this package's own vendored/pinned liboqs git submodule commit (~2021) predates the FIPS 203 final-name rename -- confirmed live via oqs.KEMs.getEnabledAlgorithms(), which lists 'Kyber512/768/1024' and has no 'ML-KEM-*' entries at all. The touch code must use the draft name for this specific library; every other language's liboqs binding in this project already exposes final NIST names."),
+    ("python", "liboqs-python", "0.15", "ML-KEM", "final",
+     "The official Open Quantum Safe project's own Python binding, paired with liboqs 0.15.0 in this project's Dockerfile -- confirmed live: oqs.KeyEncapsulation('ML-KEM-768').generate_keypair() returns a real 1184-byte public key. Like php-liboqs and unlike Node's liboqs-node, this binding has no draft-naming period of its own to track -- it's a thin ctypes wrapper directly over whatever names the paired liboqs C release uses, and 0.15.0 already uses final NIST names."),
+    ("python", "liboqs-python", "0.15", "ML-DSA", "final", "Same reasoning as ML-KEM -- liboqs 0.15.0 already uses the final FIPS 204 name, exposed via oqs.Signature."),
+    ("python", "liboqs-python", "0.15", "SLH-DSA", "final", "Same reasoning as ML-KEM -- liboqs 0.15.0 already uses the final FIPS 205 name."),
 ]
 
 # (library_language, library_name, from_algo, to_algo, from_ver, to_ver, description)
@@ -693,20 +820,24 @@ _MIGRATION_PATHS = [
      "SPHINCS+ draft low-level API existed from bcprov-jdk18on 1.70, reached the JCA-usable BCPQC provider at 1.71 (neither is a tracked registry bucket here); the final standardized SLH-DSA name landed alongside ML-KEM/ML-DSA at 1.79."),
     ("java", "Tink", None, "ML-DSA", None, "1.21",
      "Tink's first post-quantum capability of any kind -- no prior draft/precursor stage within Tink itself (unlike BC, which carried draft Kyber/Dilithium/SPHINCS+ for years first). v1.21.0 added ML-DSA-87 directly at the final standardized name."),
-    ("java", "Tink", None, "SLH-DSA", None, "1",
+    ("java", "Tink", None, "SLH-DSA", None, "1.22",
      "v1.22.0 added SLH-DSA predefined signature parameters, again with no prior draft stage within Tink."),
+    ("dotnet", "BouncyCastle.Cryptography", "Kyber (draft)", "ML-KEM", "2.0", "2.5",
+     "bc-csharp's draft-to-final PQC rename landed at BouncyCastle.Cryptography 2.5.0 (2024-12-04) -- a SHARPER break than bc-java's equivalent transition (1.72->1.79): bc-java kept draft Kyber/Dilithium names side-by-side for years after 1.79, bc-csharp removed them in the SAME release that added the final names."),
+    ("dotnet", "BouncyCastle.Cryptography", "Dilithium (draft)", "ML-DSA", "2.0", "2.5",
+     "Same timeline and sourcing as the Kyber (draft) -> ML-KEM path; draft Dilithium was likewise removed in 2.5.0, not just deprecated."),
 ]
 
 # (language, library, version_nr, constraint_type, description)
 _LIB_PLATFORM_CONSTRAINTS = [
-    ("java", "Conscrypt", "1", "architecture",
-     "Resolves to the highest published 1.x release (1.4.2, ~2019). Neither this nor the current stable 2.x bucket bundles ARM64/aarch64 native libraries -- confirmed by inspecting the actual jar contents directly. Fails to load its native security provider on an arm64 host (Apple Silicon Mac, ARM Docker Desktop/CI). Only the still-prerelease 2.6-alpha5 adds ARM64 natives."),
-    ("java", "Conscrypt", "2", "architecture",
-     "Resolves to the latest stable release (2.5.2). Same ARM64 gap as the '1' bucket -- confirmed by inspecting jar contents directly; only the still-prerelease 2.6-alpha5 has ARM64 natives."),
-    ("java", "Conscrypt", "1", "glibc",
-     "Bundled native code is glibc-linked per standard OpenJDK toolchain convention -- this project pairs Conscrypt only with eclipse-temurin's Ubuntu/glibc ('-jammy') tags, never Alpine/musl, to avoid a suspected (not yet empirically confirmed) UnsatisfiedLinkError."),
-    ("java", "Conscrypt", "2", "glibc",
-     "Same glibc-linkage reasoning as the '1' bucket."),
+    ("java", "Conscrypt", "1.4", "architecture",
+     "Resolves to the highest published 1.x release (1.4.2, ~2019) -- this bucket replaces the old rolling-latest '1' bucket now that every 1.x/2.x minor is tracked individually. Neither this nor the current stable 2.x line bundles ARM64/aarch64 native libraries -- confirmed by inspecting the actual jar contents directly. Fails to load its native security provider on an arm64 host (Apple Silicon Mac, ARM Docker Desktop/CI). Only the still-prerelease 2.6-alpha5 adds ARM64 natives."),
+    ("java", "Conscrypt", "2.5", "architecture",
+     "Resolves to the latest stable release (2.5.2) -- this bucket replaces the old rolling-latest '2' bucket. Same ARM64 gap as the '1.4' bucket -- confirmed by inspecting jar contents directly; only the still-prerelease 2.6-alpha5 has ARM64 natives."),
+    ("java", "Conscrypt", "1.4", "glibc",
+     "Bundled native code is glibc-linked per standard OpenJDK toolchain convention -- this project pairs Conscrypt only with eclipse-temurin's Ubuntu/glibc ('-jammy'/'-noble') tags, never Alpine/musl, to avoid a suspected (not yet empirically confirmed) UnsatisfiedLinkError."),
+    ("java", "Conscrypt", "2.5", "glibc",
+     "Same glibc-linkage reasoning as the '1.4' bucket."),
     ("node", "node-forge", "1.0", "runtime_engine",
      "lib/log.js unconditionally calls the global URLSearchParams constructor at require-time (whenever `console` exists, which is always true in Node) -- URLSearchParams only became a global in Node v10.0.0. Crashes with ReferenceError on Node <10 regardless of app code. Fixed upstream by node-forge 1.4.0 (the block is properly gated behind a `typeof window` check there)."),
     ("node", "crypto-js", "4", "runtime_engine",
@@ -715,6 +846,42 @@ _LIB_PLATFORM_CONSTRAINTS = [
      "Python 3.12+ slim images ship no setuptools, and cryptography 2.0 has no abi3/py312 wheel -- source build fails without installing setuptools first. Capped at Python 3.11 in the registry."),
     ("python", "M2Crypto", "0.26", "compiler",
      "SWIG-generated code uses deprecated Python C API (e.g. PyEval_InitThreads) removed in Python 3.12; that Python version's slim image also lacks setuptools needed as a build backend. Capped at Python 3.11 for this bucket."),
+    ("dotnet", "System.Security.Cryptography.PQC", "builtin", "native_dependency",
+     "ML-KEM/ML-DSA are backed by MLKemOpenSsl/MLDsaOpenSsl on Linux, requiring OpenSSL 3.5+ at the OS level (MLKemCng/MLDsaCng on Windows instead). .NET 10's own default Linux base image moved to Ubuntu 'noble' (24.04), which ships OpenSSL 3.0.13 -- NOT 3.5+ -- and this project's generated Dockerfiles do not add any step to upgrade it. MLKem.IsSupported / MLDsa.IsSupported will most likely evaluate to false inside this project's own generated .NET 10 containers until the base image itself ships OpenSSL 3.5+; the touch/exercise code checks IsSupported defensively so builds and startup still succeed regardless."),
+    ("dotnet", "NSec.Cryptography", "26", "native_dependency",
+     "Depends on the separate 'libsodium' NuGet package (constrained >=1.0.22,<1.0.23), which ships prebuilt native binaries per runtime identifier -- 'dotnet restore'/'publish' pulls the native libsodium binary automatically, no apt-get or system package install needed in the container. Included here as a positive/informational finding, not a blocking constraint -- contrast with Conscrypt (Java) or sodium-native (Node), which both need real apt-get-installed toolchains or hit real platform gaps."),
+    ("dotnet", "LibOQS.NET", "0.3", "maturity",
+     "Community-maintained (github.com/filipw/maybe-liboqs-dotnet), NOT the official (now-archived/discontinued as of 2025-01-06) open-quantum-safe/liboqs-dotnet project despite the identical package name and similar version numbering -- verify which project any external reference to 'liboqs-dotnet'/'LibOQS.NET' means before reusing a claim about it. Young (~2K downloads at last check), pre-1.0, single-maintainer; included for PQC-research breadth (full liboqs algorithm surface: ML-KEM, ML-DSA, SLH-DSA, Falcon) rather than production maturity."),
+    ("dotnet", "LibOQS.NET", "0.3", "native_dependency",
+     "TWO real runtime bugs found via an actual docker run (a user hit a live DllNotFoundException), both fixed and re-verified end-to-end: (1) a framework-dependent 'dotnet publish' with no RuntimeIdentifier never copies the nupkg's real runtimes/linux-x64/native/liboqs.so into the publish output at all -- fixed with explicit RuntimeIdentifier=linux-x64 + SelfContained=false in the csproj. (2) the prebuilt liboqs.so needs glibc >=2.34 ('ldd' inside the container showed GLIBC_2.34' not found) -- Debian bullseye, the default base for .NET 6.0/7.0 images, ships only glibc 2.31. Fixed by switching to the '-bookworm-slim' image tag suffix (glibc 2.36+) specifically for this library on 6.0/7.0 only; .NET 8.0/9.0 (bookworm by default) and 10.0 (Ubuntu noble) were unaffected and keep their default tags. Confirmed working after both fixes on .NET 6.0, 7.0, 8.0, and 10.0 -- curled both endpoints on a live container, liboqs actually initialized."),
+    ("php", "php-liboqs", "0.4", "native_dependency",
+     "Requires the liboqs C library built from source in the same Dockerfile stage (git clone + cmake + ninja, mirroring this project's Go liboqs recipe) -- no prebuilt binary distribution. Its own README claims a liboqs '0.14.0 or newer' floor, but 0.14.0 is actually missing OQS_KEM_encaps_derand -- confirmed both by grepping the real tagged src/kem/kem.h (absent at 0.14.0, present at 0.15.0) and by an actual docker build compile failure ('implicit declaration of function'). This project pins liboqs 0.15.0, the latest real stable tag (0.16.0 only exists as an -rc1 prerelease as of this writing)."),
+    ("php", "php-liboqs", "0.4", "toolchain",
+     "Packagist lists secudoc/php-liboqs as `type: php-ext` (a `replace: {ext-oqs: '*'}` marker package with no PHP source to autoload) -- a plain `composer install` cannot build it at all, confirmed via an actual docker build failure ('these were not loaded, likely because it conflicts with another require'). The real .so is built directly via phpize + make install in the Dockerfile and deliberately left OUT of composer.json's require entirely; only its Packagist version number is resolved for /version reporting."),
+    ("php", "php-liboqs", "0.4", "maturity",
+     "Single young community project wrapping liboqs -- included for PQC-research breadth (full liboqs algorithm surface exposed via \\OQS\\KEM / \\OQS\\Signature) rather than production maturity, the same inclusion rationale as .NET's LibOQS.NET."),
+    ("php", "phpseclib", "1", "toolchain",
+     "phpseclib 1.0.30 (the only phpseclib 1.x release still installable at all) is flagged by a real Packagist security advisory (PKSA-mnsd-qtjt-pgcq) -- Composer 2.4+ blocks installing any advisory-flagged package by default, confirmed via an actual docker build failure. This project deliberately builds it anyway (studying an old/vulnerable crypto library version is the actual research goal) via the composer install --no-security-blocking flag -- a flag that does NOT exist on the 'composer:2.2' LTS tag used for pre-7.2 PHP (confirmed: hard 'option does not exist' error there), only on the plain 'composer:2' tag used for PHP 7.2+."),
+    ("node", "liboqs-node", "0.1", "native_dependency",
+     "The npm-published tarball is missing its own git submodules (deps/liboqs, deps/liboqs-cpp) -- npm doesn't capture submodule content -- and no prebuilt binary exists for modern Node ABIs either; a plain `npm install liboqs-node` fails outright, confirmed via an actual docker build. Fixed by git-cloning the repo directly with --recurse-submodules instead of depending on the npm registry tarball at all (the same 'clone from source' pattern as PHP's php-liboqs). Separately, the vendored liboqs commit (~2021) fails to compile under GCC 12+ (this project's node:*-slim base): its old SIKE implementation trips -Werror=array-parameter/stringop-overflow, warning classes added to GCC after that commit was written -- fixed by stripping -Werror from the vendored liboqs' own CMake files before building (SIKE itself was cryptographically broken and removed from liboqs entirely in 2022, unrelated to this compiler-strictness mismatch)."),
+    ("node", "liboqs-node", "0.1", "maturity",
+     "Community-maintained (TapuCosmo), explicitly marked EXPERIMENTAL by its own README ('do not use in production'). Only 4 patch releases ever published (0.0.1-0.1.0), all under a single major. Included for PQC-research breadth (full liboqs algorithm surface via KeyEncapsulation/Signature) rather than production maturity, the same inclusion rationale as .NET's LibOQS.NET and PHP's php-liboqs."),
+    ("node", "bcrypt", "0", "toolchain",
+     "Native node-gyp binding (same toolchain class as sodium-native) -- prebuilt binaries exist for most current Node-ABI/major combinations, falling back to a source compile (python3/make/g++) otherwise. Confirmed working via bcrypt.hashSync() on node:22-slim."),
+    ("python", "liboqs-python", "0.15", "native_dependency",
+     "A ctypes wrapper -- no C-extension build of the Python package itself, but the liboqs C library must be built from source and installed system-wide in the same Dockerfile stage (git clone + cmake + ninja, the same recipe already reused across every other language's liboqs binding in this project), with LD_LIBRARY_PATH pointed at it so the ctypes dlopen() call can find the resulting shared library at runtime. Confirmed working end-to-end via a real docker build+run."),
+    ("python", "Tornado", "4", "runtime_engine",
+     "Genuinely breaks on Python 3.10+, not an arbitrary cap: httputil.py subclasses collections.MutableMapping, an alias Python removed from the collections module itself (moved to collections.abc) in 3.10 -- confirmed via a real docker build (works on 3.9, AttributeError on 3.10). Major 5 has the exact same issue and the exact same fix boundary; only major 6 (2019) fixed it properly and has no upper bound."),
+    ("python", "Tornado", "5", "runtime_engine",
+     "Same collections.MutableMapping removal as Tornado 4 -- independently confirmed via a real docker build (works on 3.9, breaks on 3.10)."),
+    ("python", "Tornado", "1", "runtime_engine",
+     "Genuinely Python-2-only, not just untested on Python 3 -- confirmed via a real docker build: tornado/web.py uses Python-2-only tuple-parameter-unpacking lambda syntax (`lambda (l, s): ...`), a hard SyntaxError on ANY Python 3.x regardless of minor version. Major 2 (2014) has the identical issue."),
+    ("python", "aiohttp", "1", "toolchain",
+     "Leaves async-timeout completely unversioned in its own setup.py -- pip resolves it to async-timeout's latest release (4.0.2), which needs a newer Python than this major targets, causing a real TypeError at import time ('function() argument 1 must be code, not str', a stale/incompatible-bytecode symptom of the version mismatch). Confirmed via a real docker build; fixed with an explicit pin to async-timeout==3.0.1 (contemporaneous with this era). Also genuinely only imports successfully on Python 3.6 exactly -- verified directly on 3.5/3.6/3.7, only 3.6 works (helpers.py uses asyncio.async, a SyntaxError once async became a reserved keyword in Python 3.7)."),
+    ("python", "aiohttp", "2", "toolchain",
+     "Same unversioned async-timeout dependency and the same fix as aiohttp major 1 -- confirmed independently via a real docker build."),
+    ("python", "CherryPy", "3", "runtime_engine",
+     "Genuinely breaks on Python 3.8+, not an arbitrary cap: _cperror.py does `from cgi import escape`, removed from the cgi module in Python 3.8 (deprecated since 3.2) -- confirmed via a real docker build (works on 3.7, ImportError on 3.8)."),
 ]
 
 # (language, framework, version_nr, constraint_type, description)
@@ -723,6 +890,28 @@ _FW_PLATFORM_CONSTRAINTS = [
      "Dependency tree deterministically fails npm install on Node 6 with ENOTDIR on a .staging/@types/... path -- a known npm@3 (bundled with Node 6) race/bug with scoped packages. Reproduced directly: failed 5/5 tries on node:6-slim, succeeded 2/2 on node:8-slim. Fixed upstream by npm5 (bundled from Node 8 onward). Fastify 2.x's different dependency tree doesn't trigger it."),
     ("node", "Koa", "2", "runtime_engine",
      "koa's own dependency http-errors uses object destructuring (const { HttpError } = require(...)) that Node 6's V8 can't parse -- require('koa') itself throws SyntaxError: Unexpected token { on Node 6, loads cleanly from Node 8."),
+    ("php", "Laravel", "4", "toolchain",
+     "Pulls in kylekatarnls/update-helper (a transitive Carbon 1.x dependency) which ships a Composer plugin -- Composer 2.2+ blocks any third-party plugin by default unless allow-listed, confirmed via an actual docker build failure (PluginBlockedException). Fixed by setting config.allow-plugins to true in every generated PHP app's composer.json -- a blanket, build-time-only trust decision, consistent with this project already disabling the separate security-advisory block (see phpseclib '1') for the same deliberately-old-dependency-tree reason."),
+    ("php", "Slim", "4", "toolchain",
+     "slim/slim 4.x externalizes its PSR-7 implementation into a separate package (any of slim/psr7, nyholm/psr7, guzzlehttp/psr7 -- a full skeleton picks one via `composer create-project`); requiring bare slim/slim alone throws at runtime ('Could not detect any PSR-17 ResponseFactory implementation'), confirmed via an actual docker run. Fixed by adding slim/psr7 to composer.json's require whenever the framework major is Slim 4. Slim 1/2/3 don't need this -- each ships its own bundled response implementation."),
+    ("php", "Slim", "1", "toolchain",
+     "Slim 1.x's app class is the bare GLOBAL `Slim` (no namespace at all) -- confirmed the hard way: an actual docker run of a build using the namespaced `\\Slim\\Slim()` (Slim 2's real shape) threw \"Class 'Slim\\Slim' not found\", and inspecting vendor/slim/slim/Slim/Slim.php directly showed `class Slim {` with no `namespace` declaration. Slim 1.x also has no PSR-7-ish Response::headers bag available before a route is dispatched -- `$app->response()` returns null at that point; the correct API is the app's own `$app->contentType(...)` method instead."),
+    ("node", "NestJS", "11", "toolchain",
+     "Nest's decorator-based DI reflection depends on TypeScript's own emitDecoratorMetadata emission (design:paramtypes) -- plain V8/Node runtime decorators (the stage-3 proposal, --experimental-decorators as a *runtime* flag) do not produce that metadata, confirmed via an actual docker build: a hand-written plain-.js version either fails to parse on some Node majors or never wires up DI. Fixed by adding a real TypeScript compile step (tsc, no outDir -- an outDir subdirectory breaks this project's shared __dirname-relative node_modules version-lookup helper, confirmed via a live 'unknown' framework-version report) to the Dockerfile before running node. This is a materially different Dockerfile shape from every other Node framework here, but per this project's standing rule, needing different tooling is never on its own a reason to exclude an otherwise-real, buildable framework."),
+    ("node", "AdonisJS", "6", "toolchain",
+     "AdonisJS has no documented minimal/standalone bootstrap API (unlike NestJS's NestFactory.create()) -- confirmed by building it inline first (throws deep IoC-container errors with no application root present). Fixed by scaffolding AdonisJS's own official minimal starter (`npx create-adonisjs --kit=api`) directly inside the Dockerfile, then overwriting start/routes.ts with the project's 2 standard routes -- a real, build-verified pattern, not a reason to exclude the framework. AdonisJS's own module system is native ESM ('type': 'module') -- a plain require() throws 'require is not defined' at runtime (confirmed via a real docker run); the generated routes file bridges via Node's own createRequire(import.meta.url) instead, which accepts the exact same targets every other (CommonJS) framework's library touch-code uses, including liboqs-node's absolute git-clone path."),
+    ("node", "Restify", "11", "runtime_engine",
+     "Restify's route handlers on the currently-tracked majors must be declared `async` -- a plain sync handler throws a hard AssertionError (`actual == expected`) at route-registration time, confirmed via a real docker run. Older majors' exact handler-signature requirement was not independently re-tested per-major in this pass."),
+    ("go", "Echo", "1", "runtime_engine",
+     "Echo v1.x's API predates v3/v4's now-stable shape entirely: route methods are `Get`/`Post` (not `GET`/`POST`), the server starts via `Run(addr string)` (not `Start`), and Context is a struct (`*echo.Context`, not the `echo.Context` interface v2+ use) -- confirmed via the real v1.4.4 source and a live docker build+run. v1.x's own go.mod also leaves github.com/labstack/gommon completely unversioned, which `go build -mod=mod` resolves to gommon's latest release (needing go >=1.23) regardless of the target Go toolchain -- fixed with an explicit extra `require` pin (`_FW_EXTRA_REQS` in lang_go.py) resolved the same max_toolchain-aware way as Iris's existing fasthttp pin."),
+    ("go", "Echo", "2", "runtime_engine",
+     "A transitional API era, confirmed via real source inspection (not assumed to match v1 or v3): route methods are already `GET`/`POST` and Context is already the interface v3+/v4 use, but the server starts via `Run(engine.Server)` (constructed through the separate `echo/engine/standard` sub-package, e.g. `e.Run(standard.New(\":8000\"))`), not a bare address string -- that arrived only at v3.0.0, whose shape already matches v4 exactly (confirmed live), so v3 needed no template of its own. Same gommon-pin fix as Echo v1 applies here too."),
+    ("go", "Fiber", "1", "runtime_engine",
+     "Fiber v1.x's route handler type is `func(*fiber.Ctx)` with no return value -- a v2+-shaped `func(*fiber.Ctx) error` handler is a straight compile error ('cannot use func... as func(*fiber.Ctx) value'), confirmed via a real failing docker build. `ctx.JSON()` itself is unchanged (still returns an error in v1, same as v2+) -- only the handler signature registered with `app.Get()` differs."),
+    ("go", "Chi", "1", "toolchain",
+     "v1-v4 use the bare import path `github.com/go-chi/chi` (no /vN suffix) and, for v2/v3/v4, have NO go.mod of their own at all -- resolvable only via the Go module proxy's `+incompatible` pseudo-version mechanism. Confirmed working end-to-end via a real docker build (`go get github.com/go-chi/chi@v4.1.2` inside a plain Go-1.21 modules-mode build stage) with zero GOPATH-mode machinery needed, despite `_INCOMPATIBLE_FW`'s existing GOPATH-mode infrastructure (built for Gin/Gorilla/Beego/Iris/httprouter's own pre-modules majors) initially looking like the obvious tool for this job -- the `+incompatible` proxy mechanism is the simpler, already-standard-Go-toolchain-supported path and needed no new code beyond fixing the per-major import-path dispatch."),
+    ("java", "Javalin", "7", "toolchain",
+     "Javalin 3.x-6.x's `Javalin` class directly implements the routing interface (`class Javalin implements JavalinDefaultRoutingApi<Javalin>` in 6.0.0, confirmed via real source/javap inspection), so `app.get(path, handler)` works immediately after `Javalin.create()`. 7.x REMOVED that direct implementation -- confirmed the hard way via a real failing docker build: an assumed `app.get(...)` call throws 'cannot find symbol'. Routes must now be registered inside the `Javalin.create(cfg -> cfg.routes.get(...))` config consumer instead. Also, unlike some earlier lines, 7.x does NOT bundle a JSON object mapper -- `ctx.json(...)` throws a real HTTP 500 at REQUEST time ('It looks like you don't have an object mapper configured'), not build time, unless `jackson-databind` is added as an explicit separate Maven dependency -- confirmed via a real docker run, the same 'passing build proves nothing about runtime' lesson already documented repeatedly for .NET (LibOQS.NET/NancyFx/ServiceStack) in this project."),
 ]
 
 # (language, lang_version_nr, constraint_type, description) -- the language-
@@ -737,6 +926,20 @@ _LANG_PLATFORM_CONSTRAINTS = [
      "golang:1.9-1.10's Debian base is Stretch, same archive.debian.org redirect needed as the Jessie-era (1.6-1.8) images."),
     ("go", "1.11", "os_base_image",
      "golang:1.11-1.15's Debian base is Buster, same archive.debian.org redirect needed. Buster also ships cmake 3.13.4 for the liboqs C build -- has -S/-B (added in cmake 3.13) but not 'cmake --install' (added 3.15); use 'cmake --build <dir> --target install' instead, portable back to 3.13 and still correct on newer cmake."),
+    ("php", "5.6", "os_base_image",
+     "php:5.6-cli's Debian base is Stretch, confirmed dropped from live deb.debian.org/security.debian.org mirrors via a direct apt-get update 404. Fixed via the same archive.debian.org sources.list redirect + -o Acquire::Check-Valid-Until=false + --allow-unauthenticated pattern already established for Go/Node's own Jessie/Stretch-era images. php:5.3/5.4 are schema-1 manifests modern Docker refuses to pull at all; php:5.5's manifest is valid but its layer blob is missing/corrupted on the registry -- 5.6 is the practical floor."),
+    ("php", "7.0", "os_base_image",
+     "Same Stretch base and archive.debian.org fix as PHP 5.6."),
+    ("php", "7.1", "os_base_image",
+     "php:7.1-cli's Debian base is Buster, also confirmed dropped from live mirrors (direct 404 on buster/buster-updates/buster-security) -- same archive.debian.org redirect fix as 5.6/7.0's Stretch base."),
+    ("php", "7.2", "os_base_image",
+     "Same Buster base and archive.debian.org fix as PHP 7.1."),
+    ("php", "5.6", "toolchain",
+     "Packagist has fully sunset its Composer-1.x-compatible metadata protocol -- confirmed via an actual docker build: composer:1's `composer install` fails to resolve ANY package ('could not be found in any version'), not a PHP-version-specific failure. Composer 2.3+ itself requires PHP >=7.2.5, so PHP <7.2 (5.6/7.0/7.1) uses the 'composer:2.2' LTS tag instead of 'composer:1' -- Composer's own 2.3+ binary suggests this exact fallback when run under old PHP ('please upgrade PHP or use Composer 2.2 LTS via composer self-update --2.2'), and 2.2 still speaks the modern Packagist API. Confirmed working via an actual docker build copying composer:2.2's binary into php:5.6-cli and running `composer --version` successfully."),
+    ("php", "7.0", "toolchain",
+     "Same composer:2.2 LTS requirement as PHP 5.6."),
+    ("php", "7.1", "toolchain",
+     "Same composer:2.2 LTS requirement as PHP 5.6/7.0."),
 ]
 
 
@@ -1066,6 +1269,19 @@ def _build_where(filters: dict, prefix: str = "") -> tuple[str, list]:
 
 # ── Queries on image_details view ─────────────────────────────────────────────
 
+def get_known_hosts() -> list[str]:
+    """Return every distinct Docker host that has ever built or tested an
+    image, or been used for a named run ('' for the local engine)."""
+    with _connect() as conn:
+        rows = conn.execute("""
+            SELECT host FROM build_results
+            UNION SELECT host FROM test_results
+            UNION SELECT docker_host FROM runs
+            ORDER BY host
+        """).fetchall()
+    return [r[0] for r in rows]
+
+
 def get_filter_options() -> dict:
     """Return all distinct values per dimension (no cascading)."""
     with _connect() as conn:
@@ -1081,17 +1297,20 @@ def get_filter_options() -> dict:
             "libraries":    vals("library"),
             "lib_versions": vals("lib_version"),
             "runs":         [r["name"] for r in get_runs()],
+            "hosts":        get_known_hosts(),
         }
 
 
-def get_or_create_run(name: str) -> int:
+def get_or_create_run(name: str, host: str = "") -> int:
     """Get an existing run by name or create it, returning the run id."""
     with _connect() as conn:
         row = conn.execute("SELECT id FROM runs WHERE name=?", (name,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO runs (name, created_at) VALUES (?,?)",
-                           (name, datetime.now(timezone.utc).isoformat()))
+        cur = conn.execute(
+            "INSERT INTO runs (name, created_at, docker_host) VALUES (?,?,?)",
+            (name, datetime.now(timezone.utc).isoformat(), host),
+        )
         return cur.lastrowid
 
 
@@ -1099,7 +1318,8 @@ def get_runs() -> list[dict]:
     """Return all runs ordered newest first, with duration_seconds computed."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at, status, finished_at FROM runs ORDER BY created_at DESC"
+            "SELECT id, name, created_at, status, finished_at, docker_host "
+            "FROM runs ORDER BY created_at DESC"
         ).fetchall()
     result = []
     for r in rows:
@@ -1185,8 +1405,9 @@ def get_images(filters: dict | None = None,
                per_page: int = 50,
                include_ignored: bool = True,
                sort_by: str = "",
-               sort_dir: str = "asc") -> dict:
-    """Return a paginated result from image_details with build/test status."""
+               sort_dir: str = "asc",
+               host: str = "") -> dict:
+    """Return a paginated result with build/test status for the given Docker host."""
     filters   = filters or {}
     where_sql, params = _build_where(filters)
 
@@ -1203,15 +1424,17 @@ def get_images(filters: dict | None = None,
     else:
         order_sql = "ORDER BY language, lang_version, framework, fw_version, library, lib_version"
 
+    status_sql = _status_sql()
     with _connect() as conn:
         total  = conn.execute(
-            f"SELECT COUNT(*) FROM image_details {where_sql}", params
+            f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
+            [host, host] + params,
         ).fetchone()[0]
 
         offset = (page - 1) * per_page
         rows   = conn.execute(
-            f"SELECT * FROM image_details {where_sql} {order_sql} LIMIT ? OFFSET ?",
-            params + [per_page, offset],
+            f"SELECT * FROM ({status_sql}) s {where_sql} {order_sql} LIMIT ? OFFSET ?",
+            [host, host] + params + [per_page, offset],
         ).fetchall()
 
     return {
@@ -1223,13 +1446,25 @@ def get_images(filters: dict | None = None,
     }
 
 
-def get_images_by_ids(image_ids: list) -> list[dict]:
+def get_images_by_ids(image_ids: list, host: str = "") -> list[dict]:
     if not image_ids:
         return []
     with _connect() as conn:
         ph   = ",".join("?" * len(image_ids))
         rows = conn.execute(
-            f"SELECT * FROM image_details WHERE id IN ({ph})", image_ids
+            f"SELECT * FROM ({_status_sql()}) s WHERE id IN ({ph})",
+            [host, host] + list(image_ids),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_ignored_images(host: str = "") -> list[dict]:
+    """Return every image currently on the ignore list, in full detail."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM ({_status_sql()}) s WHERE ignored = 1 "
+            "ORDER BY language, framework, library",
+            [host, host],
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1244,7 +1479,8 @@ _STATUS_CLAUSES = {
 
 def get_all_ids_for_filter(filters: dict,
                             include_ignored: bool = True,
-                            status: str = "") -> list[int]:
+                            status: str = "",
+                            host: str = "") -> list[int]:
     """Return every image id matching filters (no pagination)."""
     where_sql, params = _build_where(filters)
     extra = []
@@ -1257,7 +1493,8 @@ def get_all_ids_for_filter(filters: dict,
         where_sql = f"{where_sql} {connector} {clause}"
     with _connect() as conn:
         rows = conn.execute(
-            f"SELECT id FROM image_details {where_sql}", params
+            f"SELECT id FROM ({_status_sql()}) s {where_sql}",
+            [host, host] + params,
         ).fetchall()
     return [r[0] for r in rows]
 
@@ -1318,19 +1555,20 @@ def set_ignored(image_ids: list, ignored: bool, reason: str = "") -> None:
 def save_build_result(image_id: int, success: bool,
                       output: str,
                       started_at: str, finished_at: str,
-                      run_id: int | None = None) -> None:
+                      run_id: int | None = None,
+                      host: str = "") -> None:
     with _connect() as conn:
         conn.execute(
             """INSERT INTO build_results
-                   (image_id, success, output, started_at, finished_at, run_id)
-               VALUES (?,?,?,?,?,?)
-               ON CONFLICT(image_id)
+                   (image_id, host, success, output, started_at, finished_at, run_id)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(image_id, host)
                DO UPDATE SET success=excluded.success,
                              output=excluded.output,
                              started_at=excluded.started_at,
                              finished_at=excluded.finished_at,
                              run_id=excluded.run_id""",
-            (image_id, int(success), output, started_at, finished_at, run_id),
+            (image_id, host, int(success), output, started_at, finished_at, run_id),
         )
 
 
@@ -1338,15 +1576,16 @@ def save_test_result(image_id: int, success: bool,
                      root_ok: bool, version_ok: bool,
                      error_msg: str, response_data,
                      output: str = "",
-                     run_id: int | None = None) -> None:
+                     run_id: int | None = None,
+                     host: str = "") -> None:
     tested_at = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
             """INSERT INTO test_results
-                   (image_id, success, root_ok, version_ok,
+                   (image_id, host, success, root_ok, version_ok,
                     error_msg, response_data, output, tested_at, run_id)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (image_id, int(success), int(bool(root_ok)), int(bool(version_ok)),
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (image_id, host, int(success), int(bool(root_ok)), int(bool(version_ok)),
              error_msg,
              json.dumps(response_data) if response_data is not None else None,
              output, tested_at, run_id),
@@ -1374,19 +1613,26 @@ def get_test_reports(filters: dict | None = None,
         run_filter = f"{connector} r.name = ?"
         params.append(run_val)
 
+    host_val = filters.get("host", "")
+    host_filter = ""
+    if host_val not in ("", None):
+        connector = "AND" if (where_sql or run_filter) else "WHERE"
+        host_filter = f"{connector} t.host = ?"
+        params.append(host_val)
+
     with _connect() as conn:
         total = conn.execute(f"""
             SELECT COUNT(*) FROM test_results t
             JOIN image_details d ON d.id = t.image_id
             LEFT JOIN runs r ON r.id = t.run_id
-            {where_sql} {run_filter}
+            {where_sql} {run_filter} {host_filter}
         """, params).fetchone()[0]
 
         offset = (page - 1) * per_page
         rows = conn.execute(f"""
             SELECT
                 t.id, t.success, t.root_ok, t.version_ok,
-                t.error_msg, t.response_data, t.tested_at,
+                t.error_msg, t.response_data, t.output, t.tested_at, t.host,
                 r.name AS run_name, r.status AS run_status,
                 d.language, d.lang_version, d.framework, d.fw_version,
                 d.library, d.lib_version, d.image_tag,
@@ -1397,6 +1643,7 @@ def get_test_reports(filters: dict | None = None,
             LEFT JOIN runs r ON r.id = t.run_id
             {where_sql}
             {run_filter}
+            {host_filter}
             ORDER BY d.language, d.lang_version, d.framework, d.fw_version,
                      d.library, d.lib_version, t.tested_at DESC
             LIMIT ? OFFSET ?
@@ -1428,18 +1675,25 @@ def get_build_reports(filters: dict | None = None,
         run_filter = f"{connector} r.name = ?"
         params.append(run_val)
 
+    host_val = filters.get("host", "")
+    host_filter = ""
+    if host_val not in ("", None):
+        connector = "AND" if (where_sql or run_filter) else "WHERE"
+        host_filter = f"{connector} b.host = ?"
+        params.append(host_val)
+
     with _connect() as conn:
         total = conn.execute(f"""
             SELECT COUNT(*) FROM build_results b
             JOIN image_details d ON d.id = b.image_id
             LEFT JOIN runs r ON r.id = b.run_id
-            {where_sql} {run_filter}
+            {where_sql} {run_filter} {host_filter}
         """, params).fetchone()[0]
 
         offset = (page - 1) * per_page
         rows = conn.execute(f"""
             SELECT
-                b.id, b.success, b.output, b.started_at, b.finished_at,
+                b.id, b.success, b.output, b.started_at, b.finished_at, b.host,
                 r.name AS run_name, r.status AS run_status,
                 d.language, d.lang_version, d.framework, d.fw_version,
                 d.library, d.lib_version, d.image_tag
@@ -1448,6 +1702,7 @@ def get_build_reports(filters: dict | None = None,
             LEFT JOIN runs r ON r.id = b.run_id
             {where_sql}
             {run_filter}
+            {host_filter}
             ORDER BY d.language, d.lang_version, d.framework, d.fw_version,
                      d.library, d.lib_version
             LIMIT ? OFFSET ?
@@ -1461,27 +1716,30 @@ def get_build_reports(filters: dict | None = None,
 
 
 def get_pending_images(filters: dict | None = None,
-                       page: int = 1, per_page: int = 100) -> dict:
+                       page: int = 1, per_page: int = 100,
+                       host: str = "") -> dict:
     """Return paginated non-ignored images where build or test has no result yet."""
     filters = filters or {}
     where_sql, params = _build_where(filters)
     connector = "AND" if where_sql else "WHERE"
     where_sql = (f"{where_sql} {connector} "
                  "(build_success IS NULL OR test_success IS NULL) AND ignored = 0")
+    status_sql = _status_sql()
     with _connect() as conn:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM image_details {where_sql}", params
+            f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
+            [host, host] + params,
         ).fetchone()[0]
 
         offset = (page - 1) * per_page
         rows = conn.execute(f"""
             SELECT id, image_tag, language, lang_version, framework, fw_version,
                    library, lib_version, build_success, test_success, synced_at
-            FROM image_details
+            FROM ({status_sql}) s
             {where_sql}
             ORDER BY language, lang_version, framework, fw_version, library, lib_version
             LIMIT ? OFFSET ?
-        """, params + [per_page, offset]).fetchall()
+        """, [host, host] + params + [per_page, offset]).fetchall()
 
     return {
         "total": total, "page": page, "per_page": per_page,
@@ -1490,40 +1748,42 @@ def get_pending_images(filters: dict | None = None,
     }
 
 
-def get_stats() -> dict:
-    """Return aggregate statistics for the dashboard header."""
+def get_stats(host: str = "") -> dict:
+    """Return aggregate statistics for the dashboard header, scoped to a Docker host."""
     with _connect() as conn:
         total    = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
         ignored  = conn.execute(
             "SELECT COUNT(*) FROM images WHERE ignored=1"
         ).fetchone()[0]
         built    = conn.execute(
-            "SELECT COUNT(*) FROM build_results WHERE success=1"
+            "SELECT COUNT(*) FROM build_results WHERE success=1 AND host=?", (host,)
         ).fetchone()[0]
         built_f  = conn.execute(
-            "SELECT COUNT(*) FROM build_results WHERE success=0"
+            "SELECT COUNT(*) FROM build_results WHERE success=0 AND host=?", (host,)
         ).fetchone()[0]
         tested   = conn.execute(
             """SELECT COUNT(*) FROM (
-                   SELECT image_id FROM test_results
+                   SELECT image_id FROM test_results WHERE host=?
                    GROUP BY image_id
                    HAVING MAX(CASE WHEN success=1 THEN 1 ELSE 0 END)=1
-               )"""
+               )""", (host,)
         ).fetchone()[0]
         tested_f = conn.execute(
             """SELECT COUNT(*) FROM (
-                   SELECT image_id FROM test_results
+                   SELECT image_id FROM test_results WHERE host=?
                    GROUP BY image_id
                    HAVING MAX(CASE WHEN success=1 THEN 1 ELSE 0 END)=0
-               )"""
+               )""", (host,)
         ).fetchone()[0]
         not_built = conn.execute(
             """SELECT COUNT(*) FROM images
-               WHERE ignored=0 AND id NOT IN (SELECT image_id FROM build_results)"""
+               WHERE ignored=0 AND id NOT IN
+                   (SELECT image_id FROM build_results WHERE host=?)""", (host,)
         ).fetchone()[0]
         not_tested = conn.execute(
             """SELECT COUNT(*) FROM images
-               WHERE ignored=0 AND id NOT IN (SELECT image_id FROM test_results)"""
+               WHERE ignored=0 AND id NOT IN
+                   (SELECT image_id FROM test_results WHERE host=?)""", (host,)
         ).fetchone()[0]
         langs = conn.execute(
             "SELECT COUNT(DISTINCT language_id) FROM lang_versions WHERE include=1"

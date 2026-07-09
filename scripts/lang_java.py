@@ -39,6 +39,7 @@ FRAMEWORK_META: dict = {
     "Quarkus":     {"anchor": ("io.quarkus", "quarkus-bom")},
     "Vert.x":      {"anchor": ("io.vertx", "vertx-core")},
     "Helidon":     {"anchor": ("io.helidon.webserver", "helidon-webserver")},
+    "Javalin":     {"anchor": ("io.javalin", "javalin")},
 }
 
 # Micronaut's parent-POM coordinate isn't lockstep with io.micronaut:micronaut-
@@ -723,6 +724,87 @@ def _quarkus_rest_deps(fw_major: str) -> list:
     return _QUARKUS_REST_DEPS_BY_MAJOR.get(fw_major, _QUARKUS_REST_DEPS_DEFAULT)
 
 
+# Javalin 3.x-6.x: `Javalin` implements the routing interface directly, so
+# app.get(path, handler) works immediately after Javalin.create() --
+# confirmed live via javap/source inspection of 5.x and 6.0.0.
+_JAVALIN_MAIN_LEGACY = """\
+package app;
+
+import java.util.Properties;
+import java.util.Map;
+__LIB_IMPORTS__
+
+import io.javalin.Javalin;
+
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	public static void main(String[] args) {
+		Properties v = versions();
+		Javalin app = Javalin.create().start(8000);
+
+		app.get("/", ctx -> ctx.json(Map.of("message", "Hello World")));
+
+		app.get("/version", ctx -> ctx.json(Map.of(
+				"language", Map.of("name", "Java", "version", System.getProperty("java.version")),
+				"framework", Map.of("name", "__FW_NAME__", "version", v.getProperty("framework.version", "unknown")),
+				"library", Map.of("name", "__LIB_NAME__", "version", v.getProperty("library.version", "unknown"))
+		)));
+	}
+}
+"""
+
+# Javalin 7.x removed that direct interface implementation -- confirmed the
+# hard way: app.get(...) fails to compile ("cannot find symbol") on 7.2.2.
+# Routes must be registered inside the Javalin.create(cfg -> ...) config
+# consumer instead, via cfg.routes.get(...).
+_JAVALIN_MAIN_V7 = """\
+package app;
+
+import java.util.Properties;
+import java.util.Map;
+__LIB_IMPORTS__
+
+import io.javalin.Javalin;
+
+public class Main {
+
+	static {
+		__LIB_TOUCH__
+	}
+
+__VERSIONS_HELPER__
+	public static void main(String[] args) {
+		Properties v = versions();
+		Javalin.create(cfg -> {
+			cfg.routes.get("/", ctx -> ctx.json(Map.of("message", "Hello World")));
+			cfg.routes.get("/version", ctx -> ctx.json(Map.of(
+					"language", Map.of("name", "Java", "version", System.getProperty("java.version")),
+					"framework", Map.of("name", "__FW_NAME__", "version", v.getProperty("framework.version", "unknown")),
+					"library", Map.of("name", "__LIB_NAME__", "version", v.getProperty("library.version", "unknown"))
+			)));
+		}).start(8000);
+	}
+}
+"""
+
+_JAVALIN_MAIN_BY_MAJOR = {
+    "3": _JAVALIN_MAIN_LEGACY,
+    "4": _JAVALIN_MAIN_LEGACY,
+    "5": _JAVALIN_MAIN_LEGACY,
+    "6": _JAVALIN_MAIN_LEGACY,
+}
+_JAVALIN_MAIN_DEFAULT = _JAVALIN_MAIN_V7  # 7.x onward
+
+
+def _javalin_main_tpl(fw_major: str) -> str:
+    return _JAVALIN_MAIN_BY_MAJOR.get(fw_major, _JAVALIN_MAIN_DEFAULT)
+
+
 _APP_TPL = {
     "Spring Boot": _SPRING_BOOT_MAIN,
     "Quarkus":     _QUARKUS_MAIN,
@@ -744,6 +826,8 @@ def make_main_java(fw_name: str, fw_major: str, lib_name: str) -> str:
         tpl = _helidon_main_tpl(fw_major)
     elif fw_name == "Vert.x":
         tpl = _vertx_main_tpl(fw_major)
+    elif fw_name == "Javalin":
+        tpl = _javalin_main_tpl(fw_major)
     else:
         tpl = _APP_TPL[fw_name]
     return _sub(
@@ -822,6 +906,39 @@ def _lib_dependency_xml(lib_name: str, lib_resolved: str) -> str:
                 "    </dependency>\n"
             )
     return xml
+
+
+# Pinning an explicit maven-compiler-plugin version is required, not
+# cosmetic, for every framework whose pom has no <parent>/pluginManagement
+# to supply one -- found via a real failing build, not anticipated. Root
+# cause: when a plugin has no explicit version, Maven falls back to
+# whatever default binding its OWN bundled maven-core ships with, and that
+# default varies by Maven's OWN version -- confirmed by running 'mvn
+# --version' inside every tracked JDK's 'maven:3-eclipse-temurin-{jdk}'
+# builder image: JDK 17/19/20/22/23/24's images bundle Maven 3.9.x, but
+# JDK 18's bundles the OUTLIER-OLD Maven 3.8.6, which falls back to the
+# ancient maven-compiler-plugin 3.1 default. That old plugin predates
+# support for the <maven.compiler.release> property entirely (added in
+# 3.6+), so it silently ignores this pom's own release setting and falls
+# back to ITS OWN hardcoded ancient default (source/target 1.5) -- which
+# newer javac versions have since removed support for entirely, producing
+# "Source option 5 is no longer supported. Use 7 or later." on JDK 18
+# specifically, even though the pom explicitly requests JDK 18. Frameworks
+# with a <parent> that manages plugin versions (Spring Boot via
+# spring-boot-starter-parent) are immune regardless of which Maven is
+# bundled; Quarkus/Vert.x/Helidon/Micronaut-v1 have no such parent and are
+# NOT immune, so all four need this pin. 3.13.0 is a well-established,
+# widely-used stable release (2023) -- picked over the newest 3.14/3.15/
+# 4.0.0-beta to avoid any risk of ITS OWN edge cases on this project's
+# oldest tracked JDKs, while still being new enough to correctly honor
+# maven.compiler.release for JDK 25.
+_COMPILER_PLUGIN = """\
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+"""
 
 
 # Excluding META-INF/*.SF|.DSA|.RSA is required, not optional, whenever any
@@ -978,7 +1095,7 @@ def _pom_quarkus(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: st
   <build>
     <finalName>app</finalName>
     <plugins>
-      <plugin>
+{_COMPILER_PLUGIN}      <plugin>
         <groupId>io.quarkus</groupId>
         <artifactId>quarkus-maven-plugin</artifactId>
         <version>${{quarkus.platform.version}}</version>
@@ -1112,6 +1229,7 @@ def _pom_micronaut_v1(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolve
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
         <configuration>
           <annotationProcessorPaths>
             <path>
@@ -1169,7 +1287,7 @@ def _pom_vertx(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str,
   <build>
     <finalName>app</finalName>
     <plugins>
-{_SHADE_PLUGIN}    </plugins>
+{_COMPILER_PLUGIN}{_SHADE_PLUGIN}    </plugins>
   </build>
 </project>
 """
@@ -1205,7 +1323,58 @@ def _pom_helidon(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: st
   <build>
     <finalName>app</finalName>
     <plugins>
-{_SHADE_PLUGIN}    </plugins>
+{_COMPILER_PLUGIN}{_SHADE_PLUGIN}    </plugins>
+  </build>
+</project>
+"""
+
+
+# Javalin does NOT bundle a JSON object mapper of its own -- ctx.json(...)
+# throws a real HTTP 500 at request time ("It looks like you don't have an
+# object mapper configured") unless jackson-databind is added explicitly,
+# confirmed via a real docker run (not just a build). slf4j-simple is added
+# too since Javalin logs a warning without any SLF4J binding present.
+def _pom_javalin(jdk_ver: str, fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
+    lib_dep = _lib_dependency_xml(lib_name, lib_resolved)
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.pqc</groupId>
+  <artifactId>app</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>{jdk_ver}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.javalin</groupId>
+      <artifactId>javalin</artifactId>
+      <version>{fw_resolved}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.21.2</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>2.0.16</version>
+    </dependency>
+{lib_dep}  </dependencies>
+
+  <build>
+    <finalName>app</finalName>
+    <plugins>
+{_COMPILER_PLUGIN}{_SHADE_PLUGIN}    </plugins>
   </build>
 </project>
 """
@@ -1217,6 +1386,7 @@ _POM_TPL = {
     "Micronaut":   _pom_micronaut,
     "Vert.x":      _pom_vertx,
     "Helidon":     _pom_helidon,
+    "Javalin":     _pom_javalin,
 }
 
 # Final jar filename Maven produces under target/, per framework's packaging
@@ -1228,17 +1398,19 @@ _JAR_FILENAME = {
     "Micronaut":   "app.jar",
     "Vert.x":      "app.jar",
     "Helidon":     "app.jar",
+    "Javalin":     "app.jar",
 }
 
 # HTTP port each framework defaults to, and the property/file needed to
 # override it to this project's standard 8000. None means no config needed
-# (Vert.x/Helidon bind the port programmatically in Main.java instead).
+# (Vert.x/Helidon/Javalin bind the port programmatically in Main.java instead).
 _PORT_CONFIG = {
     "Spring Boot": "server.port=8000\n",
     "Quarkus":     "quarkus.http.port=8000\n",
     "Micronaut":   "micronaut.server.port=8000\n",
     "Vert.x":      None,
     "Helidon":     None,
+    "Javalin":     None,
 }
 
 
@@ -1253,8 +1425,33 @@ _PORT_CONFIG = {
 # glibc-linked, so Alpine/musl is avoided project-wide to sidestep a
 # suspected (not yet empirically confirmed) UnsatisfiedLinkError.
 
+# JDK 23/24 moved to Ubuntu 'noble' as eclipse-temurin's default base -- verified
+# live against Docker Hub's registry API that no '-jre-jammy' variant exists at
+# all for these two versions (only '-jre-noble', alongside alpine/ubi/windows
+# variants), while every other tracked JDK (8-22, 25) still has a live
+# '-jre-jammy' tag. Same class of per-version base-OS dispatch as this
+# project's .NET '-bookworm-slim' fix for glibc-sensitive combos.
+#
+# Only the RUNTIME stage's OS suffix is pinned explicitly -- verified live
+# that the maven BUILDER image's own OS-suffixed tags ('-jammy'/'-noble') are
+# only inconsistently published (e.g. '3-eclipse-temurin-21-jammy' and
+# '...-22-jammy' exist, but the otherwise-identical '...-8-jammy',
+# '...-11-jammy', '...-17-jammy', '...-25-jammy' do NOT -- confirmed 404 for
+# all four). The bare untagged 'maven:3-eclipse-temurin-{jdk}' tag exists for
+# every version including 23/24 and already resolves to that version's
+# correct current default OS, so the builder stage is deliberately left
+# unsuffixed to avoid breaking the versions that have no matching tagged
+# variant at all.
+_NOBLE_JDKS = frozenset({"23", "24"})
+
+
+def _jdk_os_suffix(jdk_ver: str) -> str:
+    return "-noble" if jdk_ver in _NOBLE_JDKS else "-jammy"
+
+
 def make_dockerfile(jdk_ver: str, fw_name: str) -> str:
     jar_name = _JAR_FILENAME[fw_name]
+    os_suffix = _jdk_os_suffix(jdk_ver)
     return (
         f"FROM maven:3-eclipse-temurin-{jdk_ver} AS builder\n"
         "WORKDIR /build\n"
@@ -1262,7 +1459,7 @@ def make_dockerfile(jdk_ver: str, fw_name: str) -> str:
         "COPY src ./src\n"
         "RUN mvn -B -q -DskipTests package\n"
         "\n"
-        f"FROM eclipse-temurin:{jdk_ver}-jre-jammy\n"
+        f"FROM eclipse-temurin:{jdk_ver}-jre{os_suffix}\n"
         "WORKDIR /app\n"
         f"COPY --from=builder /build/target/{jar_name} ./app.jar\n"
         "EXPOSE 8000\n"

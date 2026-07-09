@@ -44,6 +44,28 @@ LIB_META: dict = {
         # autotools, which additionally needs autoconf/automake/libtool.
         "sys_deps": ["python3", "make", "g++", "autoconf", "automake", "libtool"],
     },
+    "tweetnacl": {"npm": "tweetnacl", "blank": "tweetnacl", "sys_deps": []},
+    "node-jose": {"npm": "node-jose", "blank": "node-jose", "sys_deps": []},
+    "bcrypt": {
+        "npm": "bcrypt", "blank": "bcrypt",
+        # Native node-gyp binding, same toolchain class as sodium-native
+        # (prebuilt binaries exist for most current combos, falls back to
+        # source compile otherwise).
+        "sys_deps": ["python3", "make", "g++"],
+    },
+    "bcryptjs": {"npm": "bcryptjs", "blank": "bcryptjs", "sys_deps": []},
+    "argon2": {
+        "npm": "argon2", "blank": "argon2",
+        "sys_deps": ["python3", "make", "g++"],
+    },
+    # liboqs-node is NOT installed via npm at all (see make_dockerfile's
+    # LIBOQS_NODE special case) -- its own published tarball is missing the
+    # git submodules it needs to build, confirmed via a real `npm install`
+    # failure. "npm": None here means write_context()/make_package_json()
+    # correctly skip adding it as a package.json dependency; the blank-import
+    # path below points at the absolute git-clone location instead of a
+    # normal bare package name.
+    "liboqs-node": {"npm": None, "blank": "/opt/liboqs-node/lib/index.js", "sys_deps": []},
     # Placeholder blank -- @noble/curves and @noble/post-quantum have NO
     # usable root module at any version: root index.js unconditionally
     # `throw`s ("Incorrect usage. Import submodules instead" / "root module
@@ -266,11 +288,237 @@ app.use((ctx) => {
 app.listen(8000);
 """
 
+# Express 1.x/2.x -- confirmed via a real docker run: entry point is
+# `express.createServer()` (removed at 3.0), and `res.send(obj)` (an object
+# short-circuits into a JSON response automatically) rather than
+# `res.json(obj)`.
+_EXPRESS_LEGACY_TPL = """\
+var express = require("express");
+__LIB_LINE__
+
+var app = express.createServer();
+
+app.get("/", function (req, res) {
+\tres.send({ message: "Hello World" });
+});
+
+app.get("/version", function (req, res) {
+\tres.send({
+\t\tlanguage: { name: "Node.js", version: process.version },
+\t\tframework: { name: "Express", version: pkgVersion("express") },
+\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t});
+});
+
+app.listen(8000);
+"""
+
+# Koa 1.x -- confirmed via a real docker run: pre-async/await generator-
+# function middleware (`function *()`, `this.body = ...`), native from
+# Node 4 onward with no transpile step.
+_KOA_LEGACY_TPL = """\
+var koa = require("koa");
+__LIB_LINE__
+
+var app = koa();
+
+app.use(function *() {
+\tif (this.path === "/") {
+\t\tthis.body = { message: "Hello World" };
+\t} else if (this.path === "/version") {
+\t\tthis.body = {
+\t\t\tlanguage: { name: "Node.js", version: process.version },
+\t\t\tframework: { name: "Koa", version: pkgVersion("koa") },
+\t\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t\t};
+\t} else {
+\t\tthis.status = 404;
+\t}
+});
+
+app.listen(8000);
+"""
+
+# Hapi (@hapi/hapi 17+) -- async server.route()/server.start(), confirmed
+# via a real docker run on node:22-slim.
+_HAPI_TPL = """\
+const Hapi = require("@hapi/hapi");
+__LIB_LINE__
+
+const init = async () => {
+\tconst server = Hapi.server({ port: 8000, host: "0.0.0.0" });
+
+\tserver.route({
+\t\tmethod: "GET",
+\t\tpath: "/",
+\t\thandler: () => ({ message: "Hello World" }),
+\t});
+
+\tserver.route({
+\t\tmethod: "GET",
+\t\tpath: "/version",
+\t\thandler: () => ({
+\t\t\tlanguage: { name: "Node.js", version: process.version },
+\t\t\tframework: { name: "Hapi", version: pkgVersion("@hapi/hapi") },
+\t\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t\t}),
+\t});
+
+\tawait server.start();
+};
+
+init();
+"""
+
+# Restify -- confirmed via a real docker run: handlers on the tracked
+# majors (9-11) must be declared `async`, a plain sync handler throws a
+# hard AssertionError at route-registration time.
+_RESTIFY_TPL = """\
+const restify = require("restify");
+__LIB_LINE__
+
+const server = restify.createServer();
+
+server.get("/", async (req, res) => {
+\tres.json({ message: "Hello World" });
+});
+
+server.get("/version", async (req, res) => {
+\tres.json({
+\t\tlanguage: { name: "Node.js", version: process.version },
+\t\tframework: { name: "Restify", version: pkgVersion("restify") },
+\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t});
+});
+
+server.listen(8000, "0.0.0.0");
+"""
+
+# Sails -- confirmed via a real docker run: every non-routing hook
+# (grunt/views/session/policies/orm/pubsub) can be disabled via config,
+# leaving a genuinely standalone 2-route app despite the full-MVC framework
+# underneath.
+_SAILS_TPL = """\
+const sails = require("sails");
+__LIB_LINE__
+
+sails.lift(
+\t{
+\t\thooks: { grunt: false, views: false, session: false, policies: false, orm: false, pubsub: false },
+\t\tlog: { level: "warn" },
+\t\troutes: {
+\t\t\t"GET /": (req, res) => res.json({ message: "Hello World" }),
+\t\t\t"GET /version": (req, res) =>
+\t\t\t\tres.json({
+\t\t\t\t\tlanguage: { name: "Node.js", version: process.version },
+\t\t\t\t\tframework: { name: "Sails", version: pkgVersion("sails") },
+\t\t\t\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t\t\t\t}),
+\t\t},
+\t\tport: 8000,
+\t\thost: "0.0.0.0",
+\t},
+\t(err) => {
+\t\tif (err) {
+\t\t\tconsole.error(err);
+\t\t\tprocess.exit(1);
+\t\t}
+\t}
+);
+"""
+
 _APP_TPL = {
     "Express": _EXPRESS_TPL,
     "Fastify": _FASTIFY_TPL,
     "Koa":     _KOA_TPL,
+    "Hapi":    _HAPI_TPL,
+    "Restify": _RESTIFY_TPL,
+    "Sails":   _SAILS_TPL,
 }
+
+# Framework majors that use a materially different template than their
+# framework's default (Express 1/2's createServer() era, Koa 1's
+# generator-function era) -- verified live, see the templates above.
+_LEGACY_APP_TPL = {
+    ("Express", "1"): _EXPRESS_LEGACY_TPL,
+    ("Express", "2"): _EXPRESS_LEGACY_TPL,
+    ("Koa", "1"):     _KOA_LEGACY_TPL,
+}
+
+# ── NestJS (TypeScript compile step) ────────────────────────────────────────
+# Nest's decorator-based DI reflection depends on TypeScript's own
+# emitDecoratorMetadata emission -- plain V8/Node runtime decorators don't
+# produce the metadata Nest's container needs (confirmed via a real docker
+# build: a hand-written plain-.js version using the --experimental-decorators
+# *runtime* flag either doesn't parse on some Node majors or never actually
+# wires up DI). This template is TypeScript source, compiled via `tsc`
+# before running -- see make_dockerfile()'s "typescript" framework kind.
+_NESTJS_TPL = """\
+import "reflect-metadata";
+import { Controller, Get, Module } from "@nestjs/common";
+import { NestFactory } from "@nestjs/core";
+__LIB_LINE__
+
+@Controller()
+class AppController {
+\t@Get("/")
+\troot() {
+\t\treturn { message: "Hello World" };
+\t}
+
+\t@Get("/version")
+\tversion() {
+\t\treturn {
+\t\t\tlanguage: { name: "Node.js", version: process.version },
+\t\t\tframework: { name: "NestJS", version: pkgVersion("@nestjs/core") },
+\t\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t\t};
+\t}
+}
+
+@Module({ controllers: [AppController] })
+class AppModule {}
+
+async function bootstrap() {
+\tconst app = await NestFactory.create(AppModule);
+\tawait app.listen(8000, "0.0.0.0");
+}
+bootstrap();
+"""
+
+_APP_TPL["NestJS"] = _NESTJS_TPL
+
+# ── AdonisJS (scaffold-then-inject-routes) ──────────────────────────────────
+# Confirmed via a real docker build+run: AdonisJS's own official minimal
+# starter (`create-adonisjs --kit=api`) is scaffolded IN the Dockerfile,
+# then start/routes.ts is overwritten with the project's 2 standard routes
+# -- a genuinely different Dockerfile shape (see make_dockerfile()'s
+# "scaffold" framework kind) but not a reason to exclude the framework, per
+# this project's standing rule that "needs different tooling" alone is
+# never sufficient grounds to skip a real, buildable combination.
+#
+# AdonisJS's own module system is native ESM ("type": "module") -- a plain
+# `require(...)` throws `require is not defined` at runtime (confirmed via
+# a real docker run). Every other framework in this file is CommonJS, so
+# rather than reworking _lib_blank_line's require()/dynamic-import() choice
+# for this one ESM context, the routes file bridges via Node's own
+# `createRequire`, which accepts the exact same bare-name/absolute-path
+# targets _lib_blank_line already resolves (crucially including
+# liboqs-node's absolute git-clone path, which isn't a valid static ESM
+# import specifier at all).
+_ADONIS_ROUTES_TPL = """\
+import router from "@adonisjs/core/services/router";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+__LIB_LINE__
+
+router.get("/", () => ({ message: "Hello World" }));
+router.get("/version", () => ({
+\tlanguage: { name: "Node.js", version: process.version },
+\tframework: { name: "AdonisJS", version: "__FW_VERSION__" },
+\tlibrary: { name: "__LIB_NAME__", version: "__LIB_VERSION__" },
+}));
+"""
 
 
 def _sub(tpl: str, **kw) -> str:
@@ -279,10 +527,64 @@ def _sub(tpl: str, **kw) -> str:
     return tpl
 
 
-def make_app_js(fw_name: str, lib_name: str, lib_ver: str) -> str:
-    lib_ve = '"built-in"' if lib_name == "crypto" else f'pkgVersion("{_lib_npm(lib_name)}")'
+# ── Framework metadata ──────────────────────────────────────────────────────
+
+_FW_MODULE = {
+    "Express": "express", "Fastify": "fastify", "Koa": "koa",
+    "Hapi": "@hapi/hapi", "Restify": "restify", "NestJS": "@nestjs/core",
+    "Sails": "sails", "AdonisJS": "@adonisjs/core",
+}
+
+# "standard" -- write app.js, npm install, node app.js (the original shape).
+# "typescript" -- write app.ts + tsconfig.json, npm install, tsc (compiled
+#   in place, no outDir -- keeps __dirname-relative node_modules lookups in
+#   pkgVersion() working; an outDir subdir broke that, confirmed via a real
+#   docker run reporting "unknown" for the framework version), node app.js.
+# "scaffold" -- run the framework's own official CLI scaffolder inside the
+#   Dockerfile, then COPY a routes file over the generated one. Both new
+#   kinds exist because "needs different tooling than a hand-written
+#   index.js" is NOT, per this project's standing rule, a valid reason to
+#   exclude an otherwise-real, buildable framework.
+_FW_KIND = {
+    "Express": "standard", "Fastify": "standard", "Koa": "standard",
+    "Hapi": "standard", "Restify": "standard", "Sails": "standard",
+    "NestJS": "typescript", "AdonisJS": "scaffold",
+}
+
+# NestJS needs several packages released in lockstep with @nestjs/core, plus
+# two independently-versioned peer libraries whose own major has shifted
+# over Nest's lifetime -- confirmed for the current era (rxjs 7, current
+# reflect-metadata) via a real docker build; older eras' exact peer pins
+# follow Nest's own documented compatibility matrix, not independently
+# re-verified this pass (disclosed here, not silently assumed).
+def _nestjs_extra_deps(fw_major: str) -> dict:
+    major = int(fw_major)
+    if major <= 5:
+        rxjs, reflect = "^5.5.0", "^0.1.10"
+    elif major <= 7:
+        rxjs, reflect = "^6.6.0", "^0.1.13"
+    else:
+        rxjs, reflect = "^7.8.0", "^0.1.13"
+    return {"@nestjs/common": None, "@nestjs/platform-express": None,
+            "reflect-metadata": reflect, "rxjs": rxjs}
+
+
+_LIBOQS_NODE_VERSION = "0.1.0"
+_LIBOQS_TAG = "v0.1.0"
+
+
+def make_app_js(fw_name: str, fw_major: str, lib_name: str, lib_ver: str) -> str:
+    tpl = _LEGACY_APP_TPL.get((fw_name, fw_major), _APP_TPL[fw_name])
+    # crypto (built-in) and liboqs-node (git-cloned, not in node_modules) both
+    # bypass the normal node_modules/<pkg>/package.json version lookup.
+    if lib_name == "crypto":
+        lib_ve = '"built-in"'
+    elif lib_name == "liboqs-node":
+        lib_ve = f'"{lib_ver}"'
+    else:
+        lib_ve = f'pkgVersion("{_lib_npm(lib_name)}")'
     body = _sub(
-        _APP_TPL[fw_name],
+        tpl,
         LIB_LINE     = _lib_blank_line(lib_name, lib_ver),
         LIB_NAME     = lib_name,
         LIB_VER_EXPR = lib_ve,
@@ -290,30 +592,88 @@ def make_app_js(fw_name: str, lib_name: str, lib_ver: str) -> str:
     return _PKG_VERSION_HELPER + "\n" + body
 
 
+def make_adonis_routes(fw_resolved: str, lib_name: str, lib_ver: str) -> str:
+    lib_version = "built-in" if lib_name == "crypto" else lib_ver
+    return _sub(
+        _ADONIS_ROUTES_TPL,
+        LIB_LINE   = _lib_blank_line(lib_name, lib_ver),
+        LIB_NAME   = lib_name,
+        FW_VERSION = fw_resolved,
+        LIB_VERSION = lib_version,
+    )
+
+
 # ── package.json generation ───────────────────────────────────────────────────
 
-def make_package_json(fw_name: str, fw_resolved: str,
-                      lib_name: str, lib_resolved: str) -> str:
-    deps = {}
-    fw_module = {"Express": "express", "Fastify": "fastify", "Koa": "koa"}[fw_name]
-    deps[fw_module] = fw_resolved
+def make_package_json(fw_name: str, fw_major: str, fw_resolved: str,
+                      lib_name: str, lib_resolved: str) -> dict:
+    deps = {_FW_MODULE[fw_name]: fw_resolved}
+    dev_deps = {}
+
+    if fw_name == "NestJS":
+        for pkg, pinned in _nestjs_extra_deps(fw_major).items():
+            deps[pkg] = pinned or fw_resolved
+        dev_deps["typescript"] = "^5.6.0"
+        dev_deps["@types/node"] = "^22.0.0"
+
+    # liboqs-node is never a package.json dependency -- see LIB_META's
+    # "npm": None and make_dockerfile()'s LIBOQS_NODE build stage.
     lib_npm = _lib_npm(lib_name)
     if lib_npm and lib_resolved:
         deps[lib_npm] = lib_resolved
+
     manifest = {
         "name": "app",
         "private": True,
         "version": "0.0.0",
         "dependencies": deps,
     }
-    return json.dumps(manifest, indent=2) + "\n"
+    if dev_deps:
+        manifest["devDependencies"] = dev_deps
+    return manifest
+
+
+def make_package_json_text(*args, **kwargs) -> str:
+    return json.dumps(make_package_json(*args, **kwargs), indent=2) + "\n"
 
 
 # ── Dockerfile generation ─────────────────────────────────────────────────────
 
-def make_dockerfile(node_ver: str, lib_name: str) -> str:
-    sys_deps = _lib_sys_deps(lib_name)
-    apt_sources, apt_flag, allow_unauth = _debian_archive_apt(node_ver) if sys_deps else ("", "", "")
+_TSCONFIG_JSON = json.dumps({
+    "compilerOptions": {
+        "module": "commonjs", "target": "ES2020",
+        "experimentalDecorators": True, "emitDecoratorMetadata": True,
+    },
+}, indent=2) + "\n"
+
+# liboqs-node's npm-published tarball is missing its own git submodules
+# (deps/liboqs, deps/liboqs-cpp) -- confirmed via a real `npm install`
+# failure ("package could not be found" / node-gyp rebuild failure with no
+# source present) -- so it's git-cloned with --recurse-submodules directly
+# instead of npm-installed. The vendored liboqs commit (~2021) also fails to
+# compile under GCC 12+ (Debian bookworm, this project's node:*-slim base):
+# its old SIKE implementation trips -Werror=array-parameter/stringop-overflow,
+# warning classes added to GCC after this commit was written -- fixed by
+# stripping -Werror from the vendored liboqs' own CMake files before
+# building. Confirmed working end-to-end (a real ML-KEM-equivalent Kyber768
+# keypair generated) after both fixes.
+_LIBOQS_NODE_STAGE = (
+    "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+    "    python3 make g++ git cmake ninja-build ca-certificates libssl-dev pkg-config \\\n"
+    "    && rm -rf /var/lib/apt/lists/*\n"
+    f"RUN git clone --recurse-submodules --depth 1 --branch {_LIBOQS_TAG} \\\n"
+    "    https://github.com/TapuCosmo/liboqs-node /opt/liboqs-node \\\n"
+    "    && find /opt/liboqs-node/deps/liboqs -type f \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) \\\n"
+    "       -exec sed -i 's/-Werror//g' {} \\; \\\n"
+    "    && cd /opt/liboqs-node && npm install --no-audit --no-fund\n"
+)
+
+
+def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
+    kind = _FW_KIND[fw_name]
+    sys_deps = list(_lib_sys_deps(lib_name))
+    needs_apt = bool(sys_deps) or lib_name == "liboqs-node" or fw_name == "AdonisJS"
+    apt_sources, apt_flag, allow_unauth = _debian_archive_apt(node_ver) if needs_apt else ("", "", "")
 
     apt_block = ""
     if sys_deps:
@@ -325,10 +685,46 @@ def make_dockerfile(node_ver: str, lib_name: str) -> str:
             "    && rm -rf /var/lib/apt/lists/*\n"
         )
 
+    liboqs_stage = _LIBOQS_NODE_STAGE if lib_name == "liboqs-node" else ""
+
+    if kind == "typescript":
+        return (
+            f"FROM node:{node_ver}-slim\n"
+            "WORKDIR /app\n"
+            f"{apt_block}"
+            f"{liboqs_stage}"
+            "COPY package.json tsconfig.json .\n"
+            "RUN npm install --no-audit --no-fund\n"
+            "COPY app.ts .\n"
+            "RUN npx tsc\n"
+            "EXPOSE 8000\n"
+            'CMD ["node", "app.js"]\n'
+        )
+
+    if kind == "scaffold":
+        # AdonisJS: scaffold the official minimal API starter, then
+        # overwrite its routes file -- confirmed working end-to-end via a
+        # real docker build+run (both endpoints curled on a live container).
+        return (
+            f"FROM node:{node_ver}-slim\n"
+            "WORKDIR /app\n"
+            f"{apt_sources}"
+            f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
+            "    git \\\n"
+            "    && rm -rf /var/lib/apt/lists/*\n"
+            f"{liboqs_stage}"
+            "RUN npx --yes create-adonisjs@latest . --kit=api\n"
+            "COPY routes.ts start/routes.ts\n"
+            "EXPOSE 8000\n"
+            'ENV PORT=8000 HOST=0.0.0.0\n'
+            'CMD ["node", "ace", "serve"]\n'
+        )
+
     return (
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
         f"{apt_block}"
+        f"{liboqs_stage}"
         "COPY package.json .\n"
         "RUN npm install --no-audit --no-fund\n"
         "COPY app.js .\n"
@@ -413,15 +809,15 @@ def prefetch(lang_data: dict) -> None:
 
 def write_context(lang_ver: str, fw_name: str, fw_major: str,
                   lib_name: str, lib_ver: str, images_base: Path) -> bool:
-    """Write app.js / package.json / Dockerfile for one image context.
+    """Write the image context (app.js/app.ts/routes.ts + package.json +
+    Dockerfile, depending on the framework's kind) for one combination.
 
     Returns False (and removes any stale directory) when a required package
     version cannot be resolved on the npm registry.
     """
     out = images_base / "node" / lang_ver / fw_name / fw_major / lib_name / lib_ver
 
-    fw_module = {"Express": "express", "Fastify": "fastify", "Koa": "koa"}[fw_name]
-    fw_resolved = _resolve(fw_module, fw_major)
+    fw_resolved = _resolve(_FW_MODULE[fw_name], fw_major)
     if fw_resolved is None:
         print(f"  [SKIP] {fw_name} {fw_major} not resolvable on npm", flush=True)
         if out.exists():
@@ -429,23 +825,42 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         return False
 
     lib_resolved = ""
-    lib_npm = _lib_npm(lib_name)
-    if lib_npm and lib_ver != "builtin":
-        lib_resolved = _resolve(lib_npm, lib_ver)
-        if lib_resolved is None:
-            print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on npm", flush=True)
-            if out.exists():
-                shutil.rmtree(out)
-            return False
+    if lib_name == "liboqs-node":
+        lib_resolved = _LIBOQS_NODE_VERSION
+    else:
+        lib_npm = _lib_npm(lib_name)
+        if lib_npm and lib_ver != "builtin":
+            lib_resolved = _resolve(lib_npm, lib_ver)
+            if lib_resolved is None:
+                print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on npm", flush=True)
+                if out.exists():
+                    shutil.rmtree(out)
+                return False
 
     out.mkdir(parents=True, exist_ok=True)
-    (out / "app.js").write_text(
-        make_app_js(fw_name, lib_name, lib_resolved or lib_ver), encoding="utf-8"
-    )
-    (out / "package.json").write_text(
-        make_package_json(fw_name, fw_resolved, lib_name, lib_resolved), encoding="utf-8"
-    )
+    kind = _FW_KIND[fw_name]
+
+    if kind == "scaffold":
+        (out / "routes.ts").write_text(
+            make_adonis_routes(fw_resolved, lib_name, lib_resolved or lib_ver), encoding="utf-8"
+        )
+    elif kind == "typescript":
+        (out / "app.ts").write_text(
+            make_app_js(fw_name, fw_major, lib_name, lib_resolved or lib_ver), encoding="utf-8"
+        )
+        (out / "tsconfig.json").write_text(_TSCONFIG_JSON, encoding="utf-8")
+        (out / "package.json").write_text(
+            make_package_json_text(fw_name, fw_major, fw_resolved, lib_name, lib_resolved), encoding="utf-8"
+        )
+    else:
+        (out / "app.js").write_text(
+            make_app_js(fw_name, fw_major, lib_name, lib_resolved or lib_ver), encoding="utf-8"
+        )
+        (out / "package.json").write_text(
+            make_package_json_text(fw_name, fw_major, fw_resolved, lib_name, lib_resolved), encoding="utf-8"
+        )
+
     (out / "Dockerfile").write_text(
-        make_dockerfile(lang_ver, lib_name), encoding="utf-8"
+        make_dockerfile(lang_ver, fw_name, lib_name), encoding="utf-8"
     )
     return True
