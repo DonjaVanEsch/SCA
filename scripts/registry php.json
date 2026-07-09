@@ -1,0 +1,121 @@
+{
+  "languages": [
+    {
+      "id": "php",
+      "display_name": "PHP",
+      "versions": [
+        { "nr": "5.3", "release_date": "2009-06-30", "include": false },
+        { "nr": "5.4", "release_date": "2012-03-01", "include": false },
+        { "nr": "5.5", "release_date": "2013-06-20", "include": false },
+        { "nr": "5.6", "release_date": "2014-08-28", "include": true },
+        { "nr": "6.0", "release_date": null, "include": false },
+        { "nr": "7.0", "release_date": "2015-12-03", "include": true },
+        { "nr": "7.1", "release_date": "2016-12-01", "include": true },
+        { "nr": "7.2", "release_date": "2017-11-30", "include": true },
+        { "nr": "7.3", "release_date": "2018-12-06", "include": true },
+        { "nr": "7.4", "release_date": "2019-11-28", "include": true },
+        { "nr": "8.0", "release_date": "2020-11-26", "include": true },
+        { "nr": "8.1", "release_date": "2021-11-25", "include": true },
+        { "nr": "8.2", "release_date": "2022-12-08", "include": true },
+        { "nr": "8.3", "release_date": "2023-11-23", "include": true },
+        { "nr": "8.4", "release_date": "2024-11-21", "include": true },
+        { "nr": "8.5", "release_date": "2025-11-20", "include": true },
+        { "nr": "8.6", "release_date": null, "include": false }
+      ],
+      "_comment_5x_gap": "5.3/5.4/5.5 are include:false NOT because they never existed or were never Docker-imaged, but because their live 'php:{ver}-cli' Docker Hub tags are individually broken today, verified by an actual 'docker pull', not just a tag-existence check (a real lesson from this project's Go/Java work: a tag showing up in the registry's tag-list API does not mean the underlying manifest/layers are actually pullable). '5.3-cli' and '5.4-cli' fail with 'media type application/vnd.docker.distribution.manifest.v1+prettyjws is no longer supported since containerd v2.1' -- the same old-manifest-schema problem this project already hit for Go's earliest tags. '5.5-cli' has a MODERN (schema-2) manifest that Docker accepts, but pull fails with 'failed to get reader from content store: content digest ... not found' -- a corrupted/missing layer blob on the registry, the exact same failure class as Go's golang:1.5 finding. '5.6-cli' onward pulls and runs cleanly -- confirmed by an actual successful 'docker pull' for 5.6, 7.0, and 7.1 as spot checks, not merely the tag-list API. 5.6 is therefore this project's practical PHP floor, the same kind of 'not an arbitrary scope cut, a verified Docker-availability floor' finding as Java's JDK 8 and .NET's 1.1.",
+      "_comment_6x_never_existed": "'6.0' never shipped as a real PHP release -- the PHP 6 project (Unicode-focused) was developed for years then formally abandoned in 2010 without ever reaching a stable release; PHP's numbering then jumped straight from 5.6 to 7.0 (well-documented PHP history, see 'PHP 6' on Wikipedia and php.net's own FAQ on the version jump). Listed here with include:false and a null release_date purely as an explicit 'this number was never used, not an oversight' reference row, matching this registry's convention (already used for .NET's '4.0') of documenting numbering gaps rather than silently omitting them.",
+      "_comment_86_preview": "'8.6' is listed with include:false because it is STILL IN RELEASE-CANDIDATE STAGE as of this writing (observed live via Docker Hub: '8.6.0alpha1-cli' and '8.6-rc-cli' tags exist, no plain '8.6-cli' or '8.6.0-cli' GA tag does) -- no stable Docker tag exists yet. PHP's own release cadence is one major.minor per year, typically landing in November; re-flip to include:true once 8.6 GA ships (expected ~November 2026).",
+      "_comment_docker_repo": "Uses the single official Docker Hub 'php' image throughout (no repo-path migration the way .NET/Java needed) -- verified live against the registry API that 'library/php' has served every PHP release, old and new, under one consistent repo the whole time. The '-cli' tag suffix (not '-fpm' or '-apache') is used throughout since this project's apps are always run directly via 'php script.php', never behind a webserver/FPM pool.",
+      "frameworks": [
+        {
+          "name": "Laravel",
+          "module": "laravel/framework",
+          "version": [
+            { "nr": "1", "release_date": null, "compatibility": [] },
+            { "nr": "2", "release_date": null, "compatibility": [] },
+            { "nr": "3", "release_date": "2012-02-22", "compatibility": [] },
+            { "nr": "4", "release_date": "2013-05-28", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "5", "release_date": "2015-02-04", "compatibility": [ "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "6", "release_date": "2019-09-03", "compatibility": [ "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "7", "release_date": "2020-03-03", "compatibility": [ "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "8", "release_date": "2020-09-08", "compatibility": [ "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "9", "release_date": "2022-02-08", "compatibility": [ "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "10", "release_date": "2023-02-14", "compatibility": [ "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "11", "release_date": "2024-03-12", "compatibility": [ "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "12", "release_date": "2025-02-24", "compatibility": [ "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "13", "release_date": "2026-03-17", "compatibility": [ "8.3", "8.4", "8.5" ] }
+          ],
+          "notes": "Version history and every PHP-floor value pulled directly from Packagist's 'p2' metadata API for laravel/framework (1,263 version entries; the feed uses Composer's minified-metadata scheme where each entry only stores fields that DIFFER from the previous one, so a naive per-object read misses most require.php values -- had to de-minify via the standard merge-forward algorithm to get real numbers). Majors 1/2/3 are kept as compatibility:[] REFERENCE-ONLY rows, not full buckets, for a STRUCTURAL reason mirroring this project's Vert.x-1.x/NancyFx-1.x precedents: Laravel adopted Composer and split into the installable 'laravel/framework' package only starting at v4 (May 2013) -- majors 1 and 2 have NO git tags anywhere (not just missing from Packagist) and were distributed as plain zip bundles with no dependency manager at all, structurally impossible to 'composer require'. Major 3 (2012-02-22, git-tag-verified) DOES have surviving tags but still predates Composer adoption (used Laravel's own 'Bundles' system instead) -- also not composer-installable, kept as reference for the same reason. PHP-floor values are each major's LATEST patch requirement (this registry always resolves to latest), not the major's initial floor -- e.g. Laravel 6 launched requiring PHP 7.2.5+ but its latest patch (v6.20.45) still requires exactly that; Laravel 10 launched already at ^8.1 with no change across its line. Every floor value is Packagist-verified for majors 4-13; majors 1-3 have no declared PHP requirement at all (pre-Composer, no composer.json) and are not given a compatibility list for that reason too."
+        },
+        {
+          "name": "Symfony",
+          "module": "symfony/symfony",
+          "version": [
+            { "nr": "1", "release_date": null, "compatibility": [] },
+            { "nr": "2", "release_date": "2011-07-28", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "3", "release_date": "2015-11-30", "compatibility": [ "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "4", "release_date": "2017-11-30", "compatibility": [ "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "5", "release_date": "2019-11-21", "compatibility": [ "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "6", "release_date": "2021-11-29", "compatibility": [ "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "7", "release_date": "2023-11-29", "compatibility": [ "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "8", "release_date": "2025-11-27", "compatibility": [ "8.4", "8.5" ] }
+          ],
+          "notes": "Resolved against 'symfony/symfony' (the full-stack metapackage) rather than 'symfony/framework-bundle'/'symfony/http-kernel' -- verified all three carry identical version numbers/dates/PHP floors for majors 2-8, but symfony/symfony has cleaner (non-null) timestamps across its whole history, confirmed NOT abandoned (Packagist's own 'abandoned' field is null) and still tagged in lockstep with every component release through v8.1.1. '1' is a compatibility:[] REFERENCE-ONLY row -- Symfony 1.0 (real release, 2007) entirely predates Composer/Packagist (which didn't exist until 2011/2012); zero version records exist for it in any of the three packages checked, structurally unresolvable the same way Laravel 1/2 are. Every floor value is each major's LATEST patch requirement, not its initial floor -- this matters most for major 6, which launched requiring only PHP 8.0.2+ but raised its floor to 8.1.0+ starting with the 6.1 patch line, so the bucket here (8.1+) intentionally diverges from what symfony.com's release-announcement page states for '6.0' specifically. Every date and floor value for majors 2-8 is Packagist-verified directly from the 'require.php' field of each major's actual latest tagged version, cross-checked against symfony.com/releases with one confirmed discrepancy: Symfony 8's floor is officially described as 'PHP 8.4.0+' but the real composer.json constraint on the latest patch is the slightly stricter '>=8.4.1'."
+        },
+        {
+          "name": "Slim",
+          "module": "slim/slim",
+          "version": [
+            { "nr": "1", "release_date": "2012-04-14", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "2", "release_date": "2012-09-09", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "3", "release_date": "2015-12-07", "compatibility": [ "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "4", "release_date": "2019-08-01", "compatibility": [ "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] }
+          ],
+          "notes": "A thin routing library, not a full-stack framework -- no CLI scaffolding/installer, no assumed directory layout; a minimal app is just `composer require slim/slim` plus a hand-written front-controller script calling `AppFactory::create()` (4.x) or the equivalent constructor for older majors, the direct PHP analog of Go's Chi/httprouter or .NET's Carter in this project's other registries. Every date/floor value confirmed live via Packagist. '3' has a genuinely unusual finding, confirmed not a data error: its LATEST patch (3.13.0) was published 2026-04-28 -- over a decade after 3.0 and years after 4.x became current -- and requires PHP ^8.1, a deliberate modern-PHP-only backport into an otherwise long-dead major. This registry's 'resolve to latest patch' convention means the '3' bucket therefore targets modern PHP (8.1+) despite being the historically-older major, NOT the PHP 5.4+ floor that 3.0.0 itself originally shipped with -- don't assume major number correlates with PHP-version era for this specific bucket. '1'/'2' predate Packagist's own PHP-floor field being consistently populated; their compatibility list is inferred from the broad range their contemporary PHP ecosystem supported (5.6 was already this registry's practical floor) rather than an explicit declared constraint -- flagged as lower-confidence than the majors with an explicit `require.php` value."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "openssl",
+          "module": null,
+          "version": "built-in",
+          "notes": "PHP's ext-openssl -- a core extension, always compiled into the official php:{version}-cli Docker images, no Composer dependency. Confirmed via php.net's own requirements page that the MINIMUM linked OpenSSL version PHP itself requires has risen per major: >=0.9.8 (PHP 7.0), >=1.0.1 (7.1-8.0), >=1.0.2 (8.1-8.3), >=1.1.1 (8.4+) -- the same 'crypto library capability is gated by the OS/build's own OpenSSL, not by PHP's version number directly' pattern this project already tracks for Python's cryptography package. No PQC support today -- confirmed no ML-KEM/ML-DSA/Kyber/Dilithium in ext-openssl. A concrete PQC proposal exists (Paragon Initiative Enterprises, Feb 2025, proposing `openssl_pkey_encapsulate()`/`openssl_pkey_decapsulate()` wrapping OpenSSL 3.5's native ML-KEM support) but was still at the 'early discussion, no PR yet' stage on php-internals as of this research -- NOT confirmed shipped in 8.5 or any released version; treat as a real but unmerged research lead worth re-checking, not a current capability."
+        },
+        {
+          "name": "sodium",
+          "module": null,
+          "version": "built-in",
+          "compatibility": [ "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ],
+          "notes": "PHP's ext-sodium (wraps libsodium) -- tracked as a SEPARATE built-in entry from ext-openssl, mirroring how this project's Go registry splits 'crypto' from 'crypto/mlkem' (a built-in gated by language-version compatibility) and .NET's split between classical System.Security.Cryptography and its PQC-gated sibling. Confirmed via PHP's own RFC ('Make Libsodium a Core Extension', wiki.php.net/rfc/libsodium) that ext-sodium became a CORE, always-compiled-in extension starting exactly PHP 7.2.0 -- before that it required the separate PECL `libsodium` extension, which this project doesn't track since it isn't part of the base php:{version}-cli image and would need an extra apt/pecl install step. Classical-only (X25519, Ed25519, XChaCha20-Poly1305, Argon2, etc.) -- confirmed no PQC primitives in libsodium/ext-sodium at any version."
+        },
+        {
+          "name": "sodium_compat",
+          "module": "paragonie/sodium_compat",
+          "version": [
+            { "nr": "1", "release_date": "2017-06-09", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "2", "release_date": "2024-04-24", "compatibility": [ "8.1", "8.2", "8.3", "8.4", "8.5" ] }
+          ],
+          "notes": "Pure-PHP polyfill of libsodium's API, auto-accelerated by the real ext-sodium extension when present -- exists specifically so code written against libsodium's API still runs on PHP versions/builds without ext-sodium (pre-7.2, or ext-sodium disabled). '1' is the original, broadly-compatible line (declared support down to PHP 5.2.4 per its own composer.json, capped at this registry's 5.6 floor) -- still actively released (latest observed 1.24.0, 2025-12-30). '2' (started 2024-04-24) deliberately DROPPED legacy-PHP support, requiring PHP 8.1+ -- targets modern PHP where ext-sodium is normally already present, offering extra/newer primitives instead of pure backward compatibility. Classical-only, no PQC (mirrors libsodium's own algorithm set exactly)."
+        },
+        {
+          "name": "phpseclib",
+          "module": "phpseclib/phpseclib",
+          "version": [
+            { "nr": "1", "release_date": "2012-01-01", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "2", "release_date": "2016-01-01", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] },
+            { "nr": "3", "release_date": "2019-01-01", "compatibility": [ "5.6", "7.0", "7.1", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5" ] }
+          ],
+          "notes": "A genuinely unusual finding, confirmed live via Packagist, not assumed: phpseclib runs THREE MAJOR BRANCHES IN ACTIVE PARALLEL today, all still receiving synchronized patch releases as recently as 2026-06-14 -- 1.x (legacy global-namespace `Crypt_AES`-style API, PHP floor >=5.0.0), 2.x (namespaced `\\phpseclib\\`, PHP floor >=5.3.3), and 3.x (namespaced `\\phpseclib3\\`, the current-recommended line, PHP floor >=5.6.1). This registry tracks all three as separate buckets specifically to capture that real, ongoing three-way parallel-maintenance situation rather than collapsing to 'just track the newest branch' the way a rolling-latest bucket would. Pure PHP throughout (no OpenSSL/sodium/mcrypt hard dependency), though it opportunistically uses openssl/gmp/bcmath/sodium extensions when present for acceleration. NO POST-QUANTUM SUPPORT FOUND in any branch -- checked GitHub and web search for Kyber/Dilithium/ML-KEM/ML-DSA references and found none, and no stated PQC roadmap either; treat as 'not found as of this research', not a permanent guarantee. Release-date granularity for the three branches' ORIGINAL start dates is approximate (year-level, from general project history) since Packagist's earliest 0.x-era tags predate its own reliable timestamp metadata -- each bucket resolves to that branch's CURRENT latest patch regardless, so the exact historical start date is informational only, not load-bearing for resolution."
+        },
+        {
+          "name": "php-liboqs",
+          "module": "secudoc/php-liboqs",
+          "version": [
+            { "nr": "0.4", "release_date": "2026-04-19", "compatibility": [ "8.3", "8.4", "8.5" ] }
+          ],
+          "notes": "The PHP-equivalent-of-Go's-liboqs-go / Node's-@noble/post-quantum / .NET's-LibOQS.NET slot for this project: a genuine dedicated Open Quantum Safe (liboqs) binding, NOT a polyfill or classical-only library -- exposes real ML-KEM (KEM) and ML-DSA (signature) classes (`OQS\\KEM`, `OQS\\Signature`) wrapping the liboqs C library directly. UNLIKE every other PHP crypto library tracked here, this is a NATIVE C PHP EXTENSION requiring compilation via phpize (not a pure-PHP or bundled-into-the-base-image dependency) -- confirmed via the project's own README: build requires PHP dev tools (phpize/php-config/headers), a compiler toolchain (gcc/make/autoconf), AND the liboqs C library itself (>=0.14.0) built separately first with its headers/libs discoverable via pkg-config or an explicit `--with-oqs=<prefix>` configure flag. This project's Dockerfile therefore needs a THIRD build stage beyond the usual composer-install pattern: (1) build liboqs C from source via the same git-clone+cmake recipe already established in this project's Go registry (`_dockerfile_liboqs()` in lang_go.py) since the algorithm is identical regardless of target language, (2) phpize-build the php-liboqs extension against it, (3) enable the resulting oqs.so. Composer's own `require.php` constraint (`^8.3|^8.4|^8.5`) sets a narrow, hard floor -- NOT compatible with any older tracked PHP version, unlike every other crypto library here. MATURITY CAVEAT, stated as plainly as this project's other young-PQC-library entries (.NET's LibOQS.NET, Node's early @noble/post-quantum): the maintainer's own documentation describes this as being 'for experimentation, prototyping, and research purposes only... not for production without certified/audited implementations' -- extremely young (single real version, ~9 installs at last check, one maintainer), included deliberately for PQC-research breadth per this project's stated mission, not because it is battle-tested. Not yet independently build-verified in a real container at the time this registry entry was written -- flagged the same way this project flags other research-based-but-untested entries."
+        }
+      ]
+    }
+  ]
+}
