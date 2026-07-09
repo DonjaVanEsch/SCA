@@ -52,12 +52,14 @@ Version wildcard:
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -222,10 +224,53 @@ def _image_tag(e):
     )
 
 
+def _docker_target_host() -> str:
+    """The address a published container port is actually reachable on.
+
+    Published ports bind on whichever machine dockerd runs on -- for a local
+    engine that's this machine (localhost); for a remote engine (DOCKER_HOST=
+    ssh://user@host) it's that remote host, never localhost.
+    """
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    if not docker_host:
+        return "localhost"
+    parsed = urllib.parse.urlparse(docker_host)
+    return parsed.hostname or "localhost"
+
+
 def _require_docker():
     if shutil.which("docker") is None:
         print("Error: 'docker' not found on PATH. Install Docker Desktop and try again.")
         sys.exit(1)
+
+
+def test_connection(docker_host=None, timeout=15):
+    """Run `docker version` against a Docker host without mutating the
+    process-wide environment.
+
+    docker_host: "ssh://user@host" to test a specific remote engine, "" to
+    force a test against the local engine, or None to use whatever DOCKER_HOST
+    is already set in the environment (or local, if unset).
+    Returns (ok: bool, output: str).
+    """
+    env = dict(os.environ)
+    if docker_host:
+        env["DOCKER_HOST"] = docker_host
+    elif docker_host == "":
+        env.pop("DOCKER_HOST", None)
+
+    try:
+        proc = subprocess.run(
+            ["docker", "version"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"Timed out after {timeout}s connecting to Docker host."
+    except FileNotFoundError:
+        return False, "'docker' not found on PATH."
+    output = "\n".join(s for s in (proc.stdout, proc.stderr) if s).strip()
+    return proc.returncode == 0, output
 
 
 def _image_exists(tag):
@@ -472,7 +517,7 @@ def _do_run(entries, build_results=None, log_fn=print):
             log_fn(f"         FAILED  (port not assigned, container state: {state})")
             failed.append(name)
             continue
-        url  = f"http://localhost:{port}"
+        url  = f"http://{_docker_target_host()}:{port}"
         log_fn(f"         {url}")
         started.append((name, url))
 
@@ -767,7 +812,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             for _ in range(20):
                 try:
                     with urllib.request.urlopen(
-                        f"http://localhost:{port}{path}", timeout=2
+                        f"http://{_docker_target_host()}:{port}{path}", timeout=2
                     ) as r:
                         last_data = json.loads(r.read().decode())
                         if check(last_data):

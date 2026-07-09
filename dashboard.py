@@ -6,6 +6,7 @@ Opens: http://localhost:5050
 """
 
 import json
+import os
 import queue
 import sys
 import threading
@@ -23,6 +24,47 @@ import db
 import manager
 
 app = Flask(__name__, static_folder=str(PROJECT_ROOT / "static"))
+
+# ── Settings (Docker host, etc.) ──────────────────────────────────────────────
+
+SETTINGS_FILE = PROJECT_ROOT / "dashboard_settings.json"
+_DEFAULT_SETTINGS = {"docker_host": ""}
+
+
+def _load_settings() -> dict:
+    if not SETTINGS_FILE.exists():
+        return dict(_DEFAULT_SETTINGS)
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return dict(_DEFAULT_SETTINGS)
+    return {**_DEFAULT_SETTINGS, **data}
+
+
+def _save_settings(settings: dict) -> None:
+    SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
+def _apply_docker_host(docker_host: str) -> None:
+    """Point the `docker` CLI (and therefore every manager.py subprocess call)
+    at a remote engine over SSH, or back at the local engine when cleared.
+
+    Only ssh://user@host is supported — DOCKER_HOST auth over SSH is key-based
+    (via the OS ssh client / ssh-agent), so make sure the host's public key is
+    in the remote's authorized_keys before saving this.
+    """
+    if docker_host:
+        os.environ["DOCKER_HOST"] = docker_host
+    else:
+        os.environ.pop("DOCKER_HOST", None)
+
+
+_apply_docker_host(_load_settings()["docker_host"])
+
+
+def _current_host() -> str:
+    """The Docker host every build/test/status query is currently scoped to."""
+    return _load_settings()["docker_host"]
 
 # ── Active job registry ───────────────────────────────────────────────────────
 # {job_id: {"q": Queue, "done": bool, "action": str}}
@@ -119,10 +161,13 @@ def get_runs():
 
 @app.route("/api/stats")
 def get_stats():
-    return jsonify(db.get_stats())
+    return jsonify(db.get_stats(host=_current_host()))
 
 
 # ── Image list ────────────────────────────────────────────────────────────────
+# Every route below is scoped to the currently active Docker host (Settings
+# panel) -- switching host gives a fresh built/tested matrix without losing
+# another host's recorded status.
 
 @app.route("/api/images")
 def get_images():
@@ -135,7 +180,8 @@ def get_images():
     per_page = max(1, min(200, int(request.args.get("per_page", 50))))
     sort_by  = request.args.get("sort_by",  "")
     sort_dir = request.args.get("sort_dir", "asc")
-    return jsonify(db.get_images(filters, page, per_page, include_ignored, sort_by, sort_dir))
+    return jsonify(db.get_images(filters, page, per_page, include_ignored, sort_by, sort_dir,
+                                  host=_current_host()))
 
 
 @app.route("/api/images/ids")
@@ -147,8 +193,24 @@ def get_all_ids():
     )}
     include_ignored = request.args.get("include_ignored", "true").lower() == "true"
     status = request.args.get("status", "")
-    ids = db.get_all_ids_for_filter(filters, include_ignored, status)
+    ids = db.get_all_ids_for_filter(filters, include_ignored, status, host=_current_host())
     return jsonify({"ids": ids})
+
+
+@app.route("/api/images/by-ids")
+def get_images_by_ids_route():
+    """Return full details for the given image ids, independent of the current
+    table filters (used by the "review selection" panel)."""
+    ids_param = request.args.get("ids", "")
+    ids = [int(i) for i in ids_param.split(",") if i.strip().lstrip("-").isdigit()]
+    return jsonify({"items": db.get_images_by_ids(ids, host=_current_host())})
+
+
+@app.route("/api/images/ignored")
+def get_ignored_images_route():
+    """Return full details for every currently-ignored image (used by the
+    "review ignore list" panel)."""
+    return jsonify({"items": db.get_ignored_images(host=_current_host())})
 
 
 # ── Actions ───────────────────────────────────────────────────────────────────
@@ -173,7 +235,8 @@ def action():
     if not image_ids:
         return jsonify({"error": "No image ids provided"}), 400
 
-    rows    = db.get_images_by_ids(image_ids)
+    host = _current_host()
+    rows = db.get_images_by_ids(image_ids, host=host)
     if not rows:
         return jsonify({"error": "No matching images found"}), 404
 
@@ -184,7 +247,7 @@ def action():
         q.put(str(msg))
 
     def run():
-        run_id     = db.get_or_create_run(run_name) if run_name else None
+        run_id     = db.get_or_create_run(run_name, host=host) if run_name else None
         stop_event = _jobs[job_id]["stop_event"]
         try:
             if action_str == "build":
@@ -193,7 +256,7 @@ def action():
                         entry["_id"], r.get("success", False),
                         r.get("output", ""),
                         r.get("started_at"), r.get("finished_at"),
-                        run_id,
+                        run_id, host=host,
                     )
                 manager._do_build(
                     entries,
@@ -215,7 +278,7 @@ def action():
                         r.get("error",      ""),
                         r.get("version_data"),
                         r.get("output",     ""),
-                        run_id,
+                        run_id, host=host,
                     )
                 manager._do_test(
                     entries,
@@ -243,9 +306,9 @@ def action():
                     img_tag = row["image_tag"]
                     db.save_build_result(img_id, True,
                                          "Manually marked as successful",
-                                         now, now, run_id)
+                                         now, now, run_id, host=host)
                     db.save_test_result(img_id, True, True, True,
-                                        "", None, "", run_id)
+                                        "", None, "", run_id, host=host)
                     log(f"[{idx}/{total_imgs}] {img_tag} — MARKED OK")
 
         except Exception as exc:
@@ -320,6 +383,40 @@ def cancel_job(job_id: str):
     return jsonify({"ok": True})
 
 
+# ── Settings ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/settings")
+def get_settings():
+    return jsonify(_load_settings())
+
+
+@app.route("/api/settings", methods=["POST"])
+def set_settings():
+    """Body: {"docker_host": "ssh://user@host" | ""}"""
+    data        = request.json or {}
+    docker_host = str(data.get("docker_host", "")).strip()
+    if docker_host and not docker_host.startswith("ssh://"):
+        return jsonify({"error": "docker_host must start with ssh:// (or be empty for local Docker)"}), 400
+
+    settings = _load_settings()
+    settings["docker_host"] = docker_host
+    _save_settings(settings)
+    _apply_docker_host(docker_host)
+    return jsonify({"ok": True, "settings": settings})
+
+
+@app.route("/api/settings/test-docker", methods=["POST"])
+def test_docker_connection():
+    """Run `docker version` against a host. Body: {"docker_host": "ssh://..." | ""}
+    Tests the given value directly, without saving it or touching the
+    process-wide DOCKER_HOST — lets the user try a host before committing to it.
+    """
+    data        = request.json or {}
+    docker_host = str(data.get("docker_host", "")).strip()
+    ok, output = manager.test_connection(docker_host)
+    return jsonify({"ok": ok, "output": output})
+
+
 # ── Ignore list ───────────────────────────────────────────────────────────────
 
 @app.route("/api/ignore", methods=["POST"])
@@ -379,9 +476,12 @@ def stream(job_id: str):
 
 @app.route("/api/reports/test")
 def test_reports():
+    """`host` is an explicit filter here (defaults to all hosts) so history can
+    be inspected across every host that's ever tested here, not just the
+    currently active one."""
     filters = {k: request.args.get(k, "") for k in (
         "language", "version", "framework",
-        "framework_version", "library", "library_version", "success", "run",
+        "framework_version", "library", "library_version", "success", "run", "host",
     )}
     page     = max(1, int(request.args.get("page", 1)))
     per_page = max(1, min(500, int(request.args.get("per_page", 100))))
@@ -390,20 +490,22 @@ def test_reports():
 
 @app.route("/api/reports/pending")
 def pending_reports():
+    """Pending is inherently host-scoped -- always the currently active host."""
     filters = {k: request.args.get(k, "") for k in (
         "language", "version", "framework",
         "framework_version", "library", "library_version",
     )}
     page     = max(1, int(request.args.get("page", 1)))
     per_page = max(1, min(500, int(request.args.get("per_page", 100))))
-    return jsonify(db.get_pending_images(filters, page, per_page))
+    return jsonify(db.get_pending_images(filters, page, per_page, host=_current_host()))
 
 
 @app.route("/api/reports/build")
 def build_reports():
+    """`host` is an explicit filter here (defaults to all hosts) -- see test_reports."""
     filters = {k: request.args.get(k, "") for k in (
         "language", "version", "framework",
-        "framework_version", "library", "library_version", "success", "run",
+        "framework_version", "library", "library_version", "success", "run", "host",
     )}
     page     = max(1, int(request.args.get("page", 1)))
     per_page = max(1, min(500, int(request.args.get("per_page", 100))))

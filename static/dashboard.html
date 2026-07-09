@@ -215,6 +215,11 @@
     display: flex
   }
 
+  #tab-reference.active,
+  #tab-agility.active {
+    flex-direction: column;
+  }
+
   /* ── Filter sidebar ─────────────────────────────────────────────────────── */
   #filter-panel {
     width: 220px;
@@ -883,6 +888,62 @@
     color: var(--text)
   }
 
+  .ref-lang-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-wrap: wrap;
+  }
+
+  .ref-lang-filter-bar .filter-bar-label {
+    font-size: 11px;
+    color: var(--muted2);
+    margin-right: 4px;
+  }
+
+  .ref-lang-chip {
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    color: var(--muted2);
+    background: var(--surface3);
+    cursor: pointer;
+    transition: background .1s, color .1s, border-color .1s;
+  }
+
+  .ref-lang-chip.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(30, 123, 217, .1);
+  }
+
+  .ref-lang-chip:hover:not(.active) {
+    background: var(--surface2);
+    color: var(--text);
+  }
+
+  .ref-lang-filter-sep {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+    margin: 0 4px;
+  }
+
+  .ref-lang-filter-action {
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .ref-lang-filter-action:hover {
+    text-decoration: underline;
+  }
+
   #report-table-wrap {
     flex: 1;
     overflow: auto;
@@ -922,11 +983,87 @@
   }
 
   /* ── Reference tab ──────────────────────────────────────────────────────── */
+  .ref-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
   .ref-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
     gap: 16px;
     padding: 16px;
+  }
+
+  /* Registry reference: cards always in a single horizontally-scrollable row */
+  .ref-hscroll {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .ref-scroll-h {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-behavior: smooth;
+  }
+
+  #ref-content {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    height: 100%;
+  }
+
+  #ref-content .ref-card {
+    flex: 0 0 380px;
+    min-width: 380px;
+    max-width: 380px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .ref-hscroll-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+    opacity: .9;
+    transition: background .15s, opacity .15s;
+  }
+
+  .ref-hscroll-nav:hover:not(:disabled) {
+    background: var(--accent);
+    color: #fff;
+    opacity: 1;
+  }
+
+  .ref-hscroll-nav:disabled {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .ref-hscroll-prev {
+    left: 8px;
+  }
+
+  .ref-hscroll-next {
+    right: 8px;
   }
 
   .ref-card {
@@ -1054,6 +1191,31 @@
     border-left: 2px solid var(--border2);
     padding-left: 8px;
     line-height: 1.5;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+  }
+
+  .ref-item-note.expanded {
+    display: block;
+    overflow: visible;
+  }
+
+  .ref-note-toggle {
+    display: inline-block;
+    margin-top: 3px;
+    margin-left: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .ref-note-toggle:hover {
+    text-decoration: underline;
   }
 
   /* ── Log console ────────────────────────────────────────────────────────── */
@@ -1298,6 +1460,177 @@
     border-color: rgba(248, 81, 73, .4);
     color: #f85149
   }
+
+  /* ── Review panels (selection review / ignore review) ───────────────────── */
+  .review-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, .55);
+    align-items: center;
+    justify-content: center;
+  }
+
+  .review-overlay.open {
+    display: flex
+  }
+
+  .review-panel {
+    width: min(1000px, 92vw);
+    height: min(720px, 88vh);
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  }
+
+  .review-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .review-panel-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .review-search {
+    flex: 1;
+    max-width: 260px;
+    margin-left: auto;
+  }
+
+  .review-body {
+    flex: 1;
+    overflow: auto;
+  }
+
+  .review-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  .review-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface3);
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border2);
+    color: var(--muted2);
+    font-weight: 600;
+    z-index: 1;
+  }
+
+  .review-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .review-table tr.pending-out td {
+    opacity: .45;
+    text-decoration: line-through;
+  }
+
+  .review-table tr.pending-flag td {
+    background: rgba(248, 81, 73, .08);
+  }
+
+  .review-badge-toggle {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .review-badge-toggle:hover {
+    filter: brightness(1.3);
+  }
+
+  .review-panel-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .review-pending-note {
+    font-size: 11.5px;
+    color: var(--muted2);
+  }
+
+  /* ── Settings panel ─────────────────────────────────────────────────────── */
+  .settings-panel {
+    width: min(520px, 92vw);
+    height: auto;
+  }
+
+  .settings-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+    overflow: auto;
+  }
+
+  .settings-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted2);
+  }
+
+  .settings-input {
+    width: 100%;
+  }
+
+  .settings-hint {
+    font-size: 11.5px;
+    color: var(--muted2);
+    line-height: 1.5;
+  }
+
+  .settings-hint code {
+    background: var(--surface3);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  .settings-test-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .settings-test-result {
+    font-size: 12px;
+  }
+
+  .settings-test-result.ok    { color: var(--success); }
+  .settings-test-result.err   { color: var(--danger); }
+  .settings-test-result.busy  { color: var(--muted2); }
+
+  .settings-test-output {
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    font-size: 11px;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 </style>
 
 <!-- ── Toast container ─────────────────────────────────────────────────── -->
@@ -1342,6 +1675,10 @@
     <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
     <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
       DB</button>
+    <button class="btn btn-ghost btn-sm" id="btn-ignore-review" title="Review the ignore list">🚫 Ignored</button>
+    <button class="btn btn-ghost btn-sm" id="btn-host-badge"
+            title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span id="host-badge-label">local</span></button>
+    <button class="btn btn-ghost btn-sm" id="btn-settings" title="Docker host settings">⚙ Settings</button>
     <div class="sel-menu-wrap" id="cleanup-wrap">
       <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
       <div class="sel-menu" id="cleanup-menu" style="right:0;left:auto">
@@ -1430,6 +1767,7 @@
           <span class="docker-group-label">Selection</span>
           <div class="docker-group-inner">
             <span id="sel-count">0 selected</span>
+            <button class="btn btn-ghost btn-sm" id="btn-sel-review" title="Review the full selection in a separate screen">📋 Review</button>
             <div class="action-sep"></div>
             <div class="sel-menu-wrap">
               <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
@@ -1445,7 +1783,6 @@
                 <div class="sel-menu-item" id="mnu-sel-test-failed">Test failed</div>
                 <div class="sel-menu-sep"></div>
                 <div class="sel-menu-item" id="mnu-ignore">Ignore</div>
-                <div class="sel-menu-item" id="mnu-unignore">Unignore</div>
               </div>
             </div>
             <div class="action-sep"></div>
@@ -1572,6 +1909,12 @@
             </select>
           </div>
           <div class="filter-row">
+            <label>Host <em style="color:var(--muted);font-size:10px">(build/test reports only)</em></label>
+            <select class="filter-select" id="rf-host">
+              <option value="">All hosts</option>
+            </select>
+          </div>
+          <div class="filter-row">
             <label>Result</label>
             <select class="filter-select" id="rf-result">
               <option value="">All results</option>
@@ -1632,8 +1975,15 @@
       <h2>Registry reference</h2>
       <span style="font-size:12px;color:var(--muted2);margin-left:4px">Metadata from registry JSON files</span>
     </div>
-    <div id="ref-content" class="ref-grid">
-      <div style="padding:32px;color:var(--muted);font-size:12px">Loading reference data…</div>
+    <div class="ref-lang-filter-bar" id="ref-lang-filter-bar" style="flex-shrink:0"></div>
+    <div class="ref-hscroll">
+      <button type="button" class="ref-hscroll-nav ref-hscroll-prev" id="ref-scroll-prev" aria-label="Previous" disabled>‹</button>
+      <div class="ref-scroll ref-scroll-h" id="ref-content-scroll">
+        <div id="ref-content" class="ref-grid">
+          <div style="padding:32px;color:var(--muted);font-size:12px">Loading reference data…</div>
+        </div>
+      </div>
+      <button type="button" class="ref-hscroll-nav ref-hscroll-next" id="ref-scroll-next" aria-label="Next" disabled>›</button>
     </div>
   </div>
 
@@ -1642,8 +1992,10 @@
       <h2>Crypto Agility</h2>
       <span style="font-size:12px;color:var(--muted2);margin-left:4px">Algorithms, PQC migration paths, and platform constraints per library/version — structured from verified research, not a new research effort</span>
     </div>
-    <div id="agility-content" class="ref-grid">
-      <div style="padding:32px;color:var(--muted);font-size:12px">Loading crypto agility data…</div>
+    <div class="ref-scroll">
+      <div id="agility-content" class="ref-grid">
+        <div style="padding:32px;color:var(--muted);font-size:12px">Loading crypto agility data…</div>
+      </div>
     </div>
   </div>
 
@@ -1682,6 +2034,110 @@
   <div id="detail-body"></div>
 </div>
 
+<!-- ── Selection review panel ──────────────────────────────────────────── -->
+<div id="sel-panel-overlay" class="review-overlay">
+  <div class="review-panel">
+    <div class="review-panel-header">
+      <h3>Selected sources — <span id="sel-panel-count">0</span></h3>
+      <input type="text" id="sel-panel-search" class="filter-input review-search" placeholder="Search within selection…">
+      <button class="btn btn-ghost btn-sm" id="btn-close-sel-panel">✕</button>
+    </div>
+    <div class="review-body">
+      <table class="review-table">
+        <thead>
+          <tr>
+            <th class="cb-cell"></th>
+            <th>Language</th>
+            <th>Ver</th>
+            <th>Framework</th>
+            <th>FW Ver</th>
+            <th>Library</th>
+            <th>Lib Ver</th>
+            <th>Build</th>
+            <th>Test</th>
+            <th style="width:70px"></th>
+          </tr>
+        </thead>
+        <tbody id="sel-panel-tbody"></tbody>
+      </table>
+    </div>
+    <div class="review-panel-footer">
+      <span id="sel-panel-pending-note" class="review-pending-note">No pending changes</span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-sel-panel-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-sel-panel-apply" disabled>Confirm changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Ignore review panel ─────────────────────────────────────────────── -->
+<div id="ignore-panel-overlay" class="review-overlay">
+  <div class="review-panel">
+    <div class="review-panel-header">
+      <h3>Ignored sources — <span id="ignore-panel-count">0</span></h3>
+      <input type="text" id="ignore-panel-search" class="filter-input review-search" placeholder="Search within ignore list…">
+      <button class="btn btn-ghost btn-sm" id="btn-close-ignore-panel">✕</button>
+    </div>
+    <div class="review-body">
+      <table class="review-table">
+        <thead>
+          <tr>
+            <th>Language</th>
+            <th>Ver</th>
+            <th>Framework</th>
+            <th>FW Ver</th>
+            <th>Library</th>
+            <th>Lib Ver</th>
+            <th>Build</th>
+            <th>Test</th>
+            <th>Reason</th>
+            <th style="width:90px"></th>
+          </tr>
+        </thead>
+        <tbody id="ignore-panel-tbody"></tbody>
+      </table>
+    </div>
+    <div class="review-panel-footer">
+      <span id="ignore-panel-pending-note" class="review-pending-note">No pending changes</span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-ignore-panel-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-ignore-panel-apply" disabled>Confirm changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings panel ───────────────────────────────────────────────────── -->
+<div id="settings-panel-overlay" class="review-overlay">
+  <div class="review-panel settings-panel">
+    <div class="review-panel-header">
+      <h3>Settings</h3>
+      <button class="btn btn-ghost btn-sm" id="btn-close-settings-panel">✕</button>
+    </div>
+    <div class="review-body settings-body">
+      <label class="settings-label" for="settings-docker-host">Docker host</label>
+      <input type="text" id="settings-docker-host" class="filter-input settings-input"
+             placeholder="leave empty for local Docker, or ssh://user@host">
+      <p class="settings-hint">
+        Points every build/run/cleanup action at a remote Docker engine over SSH.
+        Requires <b>key-based</b> SSH auth (add this machine's public key to the
+        remote host's <code>authorized_keys</code> — password auth won't work
+        since builds run in the background with no terminal to prompt).
+        Leave empty to use the local Docker engine.
+      </p>
+      <div class="settings-test-row">
+        <button class="btn btn-ghost btn-sm" id="btn-test-docker">Test connection</button>
+        <span id="settings-test-result" class="settings-test-result"></span>
+      </div>
+      <pre id="settings-test-output" class="settings-test-output" style="display:none"></pre>
+    </div>
+    <div class="review-panel-footer">
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-settings-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-settings-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <style>
   @keyframes pulse {
 
@@ -1715,6 +2171,7 @@
     allOptions: {},           // { languages, frameworks, libraries, ... }
     sortCol: '',
     sortDir: 'asc',
+    refLangFilter: null,      // Set of language names to show in Reference tab, null = all
   };
 
   // ── API helpers ───────────────────────────────────────────────────────────
@@ -1833,6 +2290,14 @@
       repopAll('rf-lang', opts.languages || []);
       repopAll('rf-fw', opts.frameworks || []);
       repopAll('rf-lib', opts.libraries || []);
+
+      const hostSel = document.getElementById('rf-host');
+      if (hostSel) {
+        const cur = hostSel.value;
+        while (hostSel.options.length > 1) hostSel.remove(1);
+        (opts.hosts || []).forEach(h => hostSel.appendChild(new Option(hostLabel(h), h)));
+        hostSel.value = (opts.hosts || []).includes(cur) ? cur : '';
+      }
     } catch { }
 
     // Step 2: restore saved values (options now exist in the selects)
@@ -1888,6 +2353,21 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // ── "Show more/less" for clamped note text ──────────────────────────────
+  function setupNoteToggles(root) {
+    root.querySelectorAll('.ref-item-note').forEach(note => {
+      if (note.scrollHeight <= note.clientHeight + 1) return;
+      const btn = document.createElement('span');
+      btn.className = 'ref-note-toggle';
+      btn.textContent = 'Show more';
+      btn.addEventListener('click', () => {
+        const expanded = note.classList.toggle('expanded');
+        btn.textContent = expanded ? 'Show less' : 'Show more';
+      });
+      note.after(btn);
+    });
+  }
+
   function copyOutput(preId, btn) {
     const pre = document.getElementById(preId);
     if (!pre) return;
@@ -1940,12 +2420,13 @@
     }
 
     tbody.innerHTML = items.map(r => {
-      const sel = state.selected.has(r.id);
       const ign = r.ignored === 1;
+      if (ign) state.selected.delete(r.id); // ignored sources can never be selected
+      const sel = !ign && state.selected.has(r.id);
       return `<tr data-id="${r.id}" class="${sel ? 'selected' : ''}${ign ? ' ignored-row' : ''}"
               onclick="rowClick(event,${r.id})">
       <td class="cb-cell">
-        <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''}
+        <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''} ${ign ? 'disabled title="Ignored sources can\'t be selected"' : ''}
                onclick="event.stopPropagation();toggleSelect(${r.id},event)">
       </td>
       <td>${r.language}</td>
@@ -1978,6 +2459,7 @@
     if (i1 === -1 || i2 === -1) return;
     const [lo, hi] = i1 < i2 ? [i1, i2] : [i2, i1];
     for (let i = lo; i <= hi; i++) {
+      if (rows[i].classList.contains('ignored-row')) continue; // ignored sources can't be selected
       state.selected.add(ids[i]);
       rows[i].classList.add('selected');
       const cb = rows[i].querySelector('.row-cb');
@@ -2000,8 +2482,9 @@
 
   function rowClick(e, id) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+    const row = e.currentTarget;
+    if (row && row.classList.contains('ignored-row')) return; // ignored sources can't be selected
     toggleSelect(id, e);
-    const row = document.querySelector(`tr[data-id="${id}"]`);
     if (row) {
       const cb = row.querySelector('.row-cb');
       if (cb) cb.checked = state.selected.has(id);
@@ -2010,6 +2493,7 @@
 
   function selectPage() {
     document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
+      if (row.classList.contains('ignored-row')) return; // ignored sources can't be selected
       const id = parseInt(row.dataset.id);
       state.selected.add(id);
       row.classList.add('selected');
@@ -2021,8 +2505,8 @@
 
   async function selectByStatus(status) {
     const filters = getFilters();
-    const incIgn = document.getElementById('f-ignored').checked ? 'true' : 'false';
-    const params = filtersToParams(filters, { include_ignored: incIgn, status });
+    // Always exclude ignored sources from bulk selection, regardless of the display filter
+    const params = filtersToParams(filters, { include_ignored: 'false', status });
     try {
       const data = await api(`/api/images/ids?${params}`);
       data.ids.forEach(id => state.selected.add(id));
@@ -2043,8 +2527,8 @@
 
   async function selectAllFiltered() {
     const filters = getFilters();
-    const incIgn = document.getElementById('f-ignored').checked ? 'true' : 'false';
-    const params = filtersToParams(filters, { include_ignored: incIgn });
+    // Always exclude ignored sources from bulk selection, regardless of the display filter
+    const params = filtersToParams(filters, { include_ignored: 'false' });
     try {
       const data = await api(`/api/images/ids?${params}`);
       data.ids.forEach(id => state.selected.add(id));
@@ -2169,6 +2653,7 @@
         while (sel.options.length > 1) sel.remove(1);
         runs.forEach(r => {
           const opt = new Option(r.name, r.name);
+          const host = `host: ${hostLabel(r.docker_host || '')}`;
           if (r.duration_seconds != null) {
             const s = r.duration_seconds;
             const h = Math.floor(s / 3600);
@@ -2177,9 +2662,11 @@
             const fmt = h > 0
               ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
               : `${m}:${String(sec).padStart(2, '0')}`;
-            opt.title = `${r.status}  ·  duur: ${fmt}`;
+            opt.title = `${r.status}  ·  duur: ${fmt}  ·  ${host}`;
           } else if (r.status === 'running') {
-            opt.title = 'nog bezig…';
+            opt.title = `nog bezig…  ·  ${host}`;
+          } else {
+            opt.title = host;
           }
           sel.appendChild(opt);
         });
@@ -2259,23 +2746,345 @@
     }, run_name, { pending_actions: [], image_ids: ids, opts: {}, run_name });
   }
 
-  async function setIgnore(ignored) {
+  async function ignoreSelected() {
     if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
-    let reason = '';
-    if (ignored) {
-      reason = prompt(`Reason for ignoring ${state.selected.size} source(s) (optional):`, '');
-      if (reason === null) return; // cancelled
-    }
+    const reason = prompt(`Reason for ignoring ${state.selected.size} source(s) (optional):`, '');
+    if (reason === null) return; // cancelled
     try {
       const res = await api('/api/ignore', {
         method: 'POST',
-        body: JSON.stringify({ image_ids: [...state.selected], ignored, reason }),
+        body: JSON.stringify({ image_ids: [...state.selected], ignored: true, reason }),
       });
-      toast(`${res.count} source(s) ${ignored ? 'added to' : 'removed from'} ignore list`, 'ok');
+      toast(`${res.count} source(s) added to ignore list`, 'ok');
+      // every currently-selected source was just ignored; ignored sources can't stay selected
+      state.selected.clear();
+      updateActionBar();
       loadImages(state.page);
       loadStats();
     } catch (e) {
       toast(`Error: ${e.message}`, 'err');
+    }
+  }
+
+  // ── Selection review panel ──────────────────────────────────────────────────
+  // Shows the *entire* current selection (regardless of table filters/paging)
+  // in a separate screen. Deselect/ignore choices made here are staged locally
+  // and only take effect once the user confirms.
+  let selPanelItems = [];
+  let selPanelPending = {}; // id -> { remove?: true, ignore?: true }
+
+  async function openSelectionPanel() {
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
+    selPanelPending = {};
+    document.getElementById('sel-panel-search').value = '';
+    document.getElementById('sel-panel-tbody').innerHTML =
+      '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    document.getElementById('sel-panel-overlay').classList.add('open');
+    try {
+      const ids = [...state.selected];
+      const data = await api(`/api/images/by-ids?ids=${ids.join(',')}`);
+      selPanelItems = data.items.sort((a, b) =>
+        `${a.language}${a.framework}${a.library}`.localeCompare(`${b.language}${b.framework}${b.library}`));
+      renderSelectionPanel();
+    } catch (e) {
+      document.getElementById('sel-panel-tbody').innerHTML =
+        `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+  }
+
+  function closeSelectionPanel() {
+    document.getElementById('sel-panel-overlay').classList.remove('open');
+    selPanelPending = {};
+  }
+
+  function selPanelRowHtml(r) {
+    const p = selPanelPending[r.id] || {};
+    const cls = `${p.remove ? ' pending-out' : ''}${p.ignore ? ' pending-flag' : ''}`.trim();
+    const checked = !p.remove;
+
+    const ignoreBadge = r.ignored === 1
+      ? '<span class="badge badge-ignored" title="Already on the ignore list">Ignored</span>'
+      : `<span class="badge ${p.ignore ? 'badge-fail' : 'badge-skip'} review-badge-toggle"
+           onclick="selPanelToggle(${r.id},'ignore')"
+           title="${p.ignore ? 'Click to undo' : 'Mark to ignore on confirm'}">${p.ignore ? 'Ignoring' : 'Ignore'}</span>`;
+
+    return `<tr data-id="${r.id}" class="${cls}">
+      <td class="cb-cell">
+        <input type="checkbox" class="row-cb" ${checked ? 'checked' : ''}
+               onclick="selPanelToggle(${r.id},'remove')" title="Uncheck to deselect on confirm">
+      </td>
+      <td>${r.language}</td>
+      <td class="mono-cell">${r.lang_version}</td>
+      <td>${r.framework}</td>
+      <td class="mono-cell">${r.fw_version}</td>
+      <td>${r.library}</td>
+      <td class="mono-cell">${r.lib_version}</td>
+      <td>${buildBadge(r.build_success)}</td>
+      <td>${testBadge(r.test_success)}</td>
+      <td>${ignoreBadge}</td>
+    </tr>`;
+  }
+
+  function renderSelectionPanel() {
+    const q = document.getElementById('sel-panel-search').value.trim().toLowerCase();
+    document.getElementById('sel-panel-count').textContent = selPanelItems.length.toLocaleString();
+
+    const rows = !q ? selPanelItems : selPanelItems.filter(r =>
+      `${r.language} ${r.lang_version} ${r.framework} ${r.fw_version} ${r.library} ${r.lib_version}`
+        .toLowerCase().includes(q));
+
+    const tbody = document.getElementById('sel-panel-tbody');
+    tbody.innerHTML = rows.length
+      ? rows.map(selPanelRowHtml).join('')
+      : '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">No matches.</td></tr>';
+
+    updateSelPanelFooter();
+  }
+
+  function selPanelToggle(id, kind) {
+    const p = selPanelPending[id] || (selPanelPending[id] = {});
+    p[kind] = !p[kind];
+    if (!p.remove && !p.ignore) delete selPanelPending[id];
+    renderSelectionPanel();
+  }
+
+  function updateSelPanelFooter() {
+    const n = Object.keys(selPanelPending).length;
+    const note = document.getElementById('sel-panel-pending-note');
+    const apply = document.getElementById('btn-sel-panel-apply');
+    if (n === 0) {
+      note.textContent = 'No pending changes';
+      apply.disabled = true;
+      apply.textContent = 'Confirm changes';
+    } else {
+      note.textContent = `${n} pending change${n === 1 ? '' : 's'}`;
+      apply.disabled = false;
+      apply.textContent = `Confirm changes (${n})`;
+    }
+  }
+
+  async function applySelectionPanelChanges() {
+    const removeIds = [], ignoreIds = [];
+    Object.entries(selPanelPending).forEach(([id, p]) => {
+      id = Number(id);
+      if (p.remove) removeIds.push(id);
+      if (p.ignore) ignoreIds.push(id);
+    });
+    if (!removeIds.length && !ignoreIds.length) { closeSelectionPanel(); return; }
+
+    if (ignoreIds.length) {
+      const reason = prompt(`Reason for ignoring ${ignoreIds.length} source(s) (optional):`, '');
+      if (reason === null) return; // cancelled, keep panel + pending state as-is
+      try {
+        const res = await api('/api/ignore', {
+          method: 'POST',
+          body: JSON.stringify({ image_ids: ignoreIds, ignored: true, reason }),
+        });
+        toast(`${res.count} source(s) added to ignore list`, 'ok');
+      } catch (e) {
+        toast(`Error ignoring: ${e.message}`, 'err');
+        return;
+      }
+    }
+
+    removeIds.forEach(id => state.selected.delete(id));
+    ignoreIds.forEach(id => state.selected.delete(id)); // ignored sources drop out of the active selection too
+
+    document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
+      const id = Number(row.dataset.id);
+      row.classList.toggle('selected', state.selected.has(id));
+      const cb = row.querySelector('.row-cb');
+      if (cb) cb.checked = state.selected.has(id);
+    });
+    updateActionBar();
+    closeSelectionPanel();
+    if (ignoreIds.length) { loadImages(state.page); loadStats(); }
+  }
+
+  // ── Ignore review panel ──────────────────────────────────────────────────────
+  // Shows the *entire* ignore list in a separate screen. The only action here
+  // is unignoring — choices are staged locally and only take effect on confirm.
+  let ignorePanelItems = [];
+  let ignorePanelPending = {}; // id -> true (marked to unignore)
+
+  async function openIgnorePanel() {
+    ignorePanelPending = {};
+    document.getElementById('ignore-panel-search').value = '';
+    document.getElementById('ignore-panel-tbody').innerHTML =
+      '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    document.getElementById('ignore-panel-overlay').classList.add('open');
+    try {
+      const data = await api('/api/images/ignored');
+      ignorePanelItems = data.items;
+      if (!ignorePanelItems.length) {
+        document.getElementById('ignore-panel-tbody').innerHTML =
+          '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Ignore list is empty.</td></tr>';
+        document.getElementById('ignore-panel-count').textContent = '0';
+        updateIgnorePanelFooter();
+        return;
+      }
+      renderIgnorePanel();
+    } catch (e) {
+      document.getElementById('ignore-panel-tbody').innerHTML =
+        `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+  }
+
+  function closeIgnorePanel() {
+    document.getElementById('ignore-panel-overlay').classList.remove('open');
+    ignorePanelPending = {};
+  }
+
+  function ignorePanelRowHtml(r) {
+    const pending = !!ignorePanelPending[r.id];
+    const reason = r.ignore_reason ? escHtml(r.ignore_reason) : '<span style="color:var(--muted)">—</span>';
+    const badge = `<span class="badge ${pending ? 'badge-ok' : 'badge-ignored'} review-badge-toggle"
+        onclick="ignorePanelToggle(${r.id})"
+        title="${pending ? 'Click to undo' : 'Mark to unignore on confirm'}">${pending ? 'Unignoring' : 'Unignore'}</span>`;
+
+    return `<tr data-id="${r.id}" class="${pending ? 'pending-out' : ''}">
+      <td>${r.language}</td>
+      <td class="mono-cell">${r.lang_version}</td>
+      <td>${r.framework}</td>
+      <td class="mono-cell">${r.fw_version}</td>
+      <td>${r.library}</td>
+      <td class="mono-cell">${r.lib_version}</td>
+      <td>${buildBadge(r.build_success)}</td>
+      <td>${testBadge(r.test_success)}</td>
+      <td>${reason}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }
+
+  function renderIgnorePanel() {
+    const q = document.getElementById('ignore-panel-search').value.trim().toLowerCase();
+    document.getElementById('ignore-panel-count').textContent = ignorePanelItems.length.toLocaleString();
+
+    const rows = !q ? ignorePanelItems : ignorePanelItems.filter(r =>
+      `${r.language} ${r.lang_version} ${r.framework} ${r.fw_version} ${r.library} ${r.lib_version} ${r.ignore_reason || ''}`
+        .toLowerCase().includes(q));
+
+    const tbody = document.getElementById('ignore-panel-tbody');
+    tbody.innerHTML = rows.length
+      ? rows.map(ignorePanelRowHtml).join('')
+      : '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">No matches.</td></tr>';
+
+    updateIgnorePanelFooter();
+  }
+
+  function ignorePanelToggle(id) {
+    if (ignorePanelPending[id]) delete ignorePanelPending[id];
+    else ignorePanelPending[id] = true;
+    renderIgnorePanel();
+  }
+
+  function updateIgnorePanelFooter() {
+    const n = Object.keys(ignorePanelPending).length;
+    const note = document.getElementById('ignore-panel-pending-note');
+    const apply = document.getElementById('btn-ignore-panel-apply');
+    if (n === 0) {
+      note.textContent = 'No pending changes';
+      apply.disabled = true;
+      apply.textContent = 'Confirm changes';
+    } else {
+      note.textContent = `${n} pending change${n === 1 ? '' : 's'}`;
+      apply.disabled = false;
+      apply.textContent = `Confirm changes (${n})`;
+    }
+  }
+
+  async function applyIgnorePanelChanges() {
+    const unignoreIds = Object.keys(ignorePanelPending).map(Number);
+    if (!unignoreIds.length) { closeIgnorePanel(); return; }
+
+    try {
+      const res = await api('/api/ignore', {
+        method: 'POST',
+        body: JSON.stringify({ image_ids: unignoreIds, ignored: false, reason: '' }),
+      });
+      toast(`${res.count} source(s) removed from ignore list`, 'ok');
+    } catch (e) {
+      toast(`Error unignoring: ${e.message}`, 'err');
+      return;
+    }
+
+    closeIgnorePanel();
+    loadImages(state.page);
+    loadStats();
+  }
+
+  // ── Host label helper ─────────────────────────────────────────────────────
+  // '' means the local Docker engine; ssh://user@host is shown without the
+  // scheme so the badge/dropdowns stay compact.
+  function hostLabel(host) {
+    return host ? host.replace(/^ssh:\/\//, '') : 'local';
+  }
+
+  async function refreshHostBadge() {
+    try {
+      const s = await api('/api/settings');
+      document.getElementById('host-badge-label').textContent = hostLabel(s.docker_host || '');
+    } catch { }
+  }
+
+  // ── Settings panel ────────────────────────────────────────────────────────
+  async function openSettingsPanel() {
+    document.getElementById('settings-test-result').textContent = '';
+    document.getElementById('settings-test-result').className = 'settings-test-result';
+    document.getElementById('settings-test-output').style.display = 'none';
+    try {
+      const s = await api('/api/settings');
+      document.getElementById('settings-docker-host').value = s.docker_host || '';
+    } catch (e) {
+      toast(`Error loading settings: ${e.message}`, 'err');
+    }
+    document.getElementById('settings-panel-overlay').classList.add('open');
+  }
+
+  function closeSettingsPanel() {
+    document.getElementById('settings-panel-overlay').classList.remove('open');
+  }
+
+  async function saveSettings() {
+    const docker_host = document.getElementById('settings-docker-host').value.trim();
+    try {
+      await api('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify({ docker_host }),
+      });
+      toast(docker_host ? `Docker host set to ${docker_host}` : 'Using local Docker engine', 'ok');
+      closeSettingsPanel();
+      // Built/tested status is scoped per host -- refresh everything that
+      // shows it so the Sources tab reflects the newly active host.
+      await refreshHostBadge();
+      await Promise.all([loadStats(), loadFilterOptions(), loadRuns()]);
+      loadImages(state.page);
+    } catch (e) {
+      toast(`Error saving settings: ${e.message}`, 'err');
+    }
+  }
+
+  async function testDockerConnection() {
+    const resultEl = document.getElementById('settings-test-result');
+    const outputEl = document.getElementById('settings-test-output');
+    const docker_host = document.getElementById('settings-docker-host').value.trim();
+    resultEl.className = 'settings-test-result busy';
+    resultEl.textContent = 'Testing…';
+    outputEl.style.display = 'none';
+    try {
+      const res = await api('/api/settings/test-docker', {
+        method: 'POST',
+        body: JSON.stringify({ docker_host }),
+      });
+      resultEl.className = `settings-test-result ${res.ok ? 'ok' : 'err'}`;
+      resultEl.textContent = res.ok ? 'Connected' : 'Failed';
+      if (res.output) {
+        outputEl.textContent = res.output;
+        outputEl.style.display = 'block';
+      }
+    } catch (e) {
+      resultEl.className = 'settings-test-result err';
+      resultEl.textContent = `Error: ${e.message}`;
     }
   }
 
@@ -2564,6 +3373,7 @@
     const filters = isPending ? base : {
       ...base,
       run: document.getElementById('rf-run').value,
+      host: document.getElementById('rf-host').value,
       success: document.getElementById('rf-result').value,
     };
     const params = filtersToParams(filters, { page, per_page: reportState.perPage });
@@ -2627,6 +3437,7 @@
         }
 
         const dt = (r.tested_at || r.finished_at || '').replace('T', ' ').slice(0, 16);
+        if (r.host) detail += ` <span style="font-size:10px;color:var(--accent);margin-left:6px" title="Docker host">🐳 ${escHtml(hostLabel(r.host))}</span>`;
         if (r.run_name) detail += ` <span style="font-size:10px;color:var(--muted2);margin-left:6px">[${escHtml(r.run_name)}]</span>`;
         if (r.run_status === 'interrupted') detail += ` <span style="font-size:10px;color:var(--warning);font-weight:600;margin-left:2px" title="This batch was cancelled by the user before all sources were processed">⚠ interrupted</span>`;
         const hasOut = !ok && r.output;
@@ -2689,6 +3500,69 @@
   }
 
   // ── Reference ─────────────────────────────────────────────────────────────
+  function renderRefLangFilterBar(languages) {
+    const bar = document.getElementById('ref-lang-filter-bar');
+    if (!bar) return;
+    if (!state.refLangFilter) state.refLangFilter = new Set(languages.map(l => l.name));
+
+    bar.innerHTML = `
+      <span class="filter-bar-label">Show languages:</span>
+      ${languages.map(l => `<button type="button" class="ref-lang-chip${state.refLangFilter.has(l.name) ? ' active' : ''}" data-lang="${escHtml(l.name)}">${escHtml(l.display_name || l.name)}</button>`).join('')}
+      <span class="ref-lang-filter-sep"></span>
+      <span class="ref-lang-filter-action" data-action="all">All</span>
+      <span class="ref-lang-filter-action" data-action="none">None</span>
+    `;
+
+    bar.querySelectorAll('.ref-lang-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const lang = chip.dataset.lang;
+        if (state.refLangFilter.has(lang)) state.refLangFilter.delete(lang);
+        else state.refLangFilter.add(lang);
+        chip.classList.toggle('active');
+        applyRefLangFilter();
+      });
+    });
+    bar.querySelector('[data-action="all"]').addEventListener('click', () => {
+      state.refLangFilter = new Set(languages.map(l => l.name));
+      bar.querySelectorAll('.ref-lang-chip').forEach(c => c.classList.add('active'));
+      applyRefLangFilter();
+    });
+    bar.querySelector('[data-action="none"]').addEventListener('click', () => {
+      state.refLangFilter = new Set();
+      bar.querySelectorAll('.ref-lang-chip').forEach(c => c.classList.remove('active'));
+      applyRefLangFilter();
+    });
+
+    applyRefLangFilter();
+  }
+
+  function applyRefLangFilter() {
+    const sel = state.refLangFilter;
+    document.querySelectorAll('#ref-content .ref-card').forEach(card => {
+      card.style.display = (!sel || sel.has(card.dataset.lang)) ? '' : 'none';
+    });
+    const scrollEl = document.getElementById('ref-content-scroll');
+    if (scrollEl) scrollEl.scrollLeft = 0;
+    updateRefScrollButtons();
+  }
+
+  // ── Reference: horizontal scroll nav ────────────────────────────────────
+  function updateRefScrollButtons() {
+    const el = document.getElementById('ref-content-scroll');
+    const prev = document.getElementById('ref-scroll-prev');
+    const next = document.getElementById('ref-scroll-next');
+    if (!el || !prev || !next) return;
+    const max = el.scrollWidth - el.clientWidth;
+    prev.disabled = el.scrollLeft <= 2;
+    next.disabled = max <= 2 || el.scrollLeft >= max - 2;
+  }
+
+  function scrollRefBy(direction) {
+    const el = document.getElementById('ref-content-scroll');
+    if (!el) return;
+    el.scrollBy({ left: direction * el.clientWidth * 0.9, behavior: 'smooth' });
+  }
+
   async function loadReference() {
     const el = document.getElementById('ref-content');
     try {
@@ -2724,7 +3598,7 @@
         </div>`;
         }).join('') || '';
 
-        return `<div class="ref-card">
+        return `<div class="ref-card" data-lang="${escHtml(lang.name)}">
         <div class="ref-card-header">
           <h3>${lang.display_name || lang.name}</h3>
           <span class="ref-lang-badge">${lang.name}</span>
@@ -2744,6 +3618,8 @@
         </div>` : ''}
       </div>`;
       }).join('');
+      setupNoteToggles(el);
+      renderRefLangFilterBar(data.languages);
     } catch (e) {
       el.innerHTML = `<div style="padding:20px;color:var(--danger)">Error: ${e.message}</div>`;
     }
@@ -2846,6 +3722,7 @@
       </div>`;
 
       el.innerHTML = libCards + migrationCard + langCard + fwCard + vulnCard;
+      setupNoteToggles(el);
     } catch (e) {
       el.innerHTML = `<div style="padding:20px;color:var(--danger)">Error: ${e.message}</div>`;
     }
@@ -2865,6 +3742,7 @@
 
   // ── Init ──────────────────────────────────────────────────────────────────
   async function init() {
+    refreshHostBadge();
     await loadFilterOptions();
 
     // Check if DB has images; if empty, run init
@@ -2908,7 +3786,7 @@
     }));
 
   document.getElementById('btn-clear-report-filter').addEventListener('click', () => {
-    ['rf-lang', 'rf-fw', 'rf-lib', 'rf-run', 'rf-result'].forEach(id => document.getElementById(id).value = '');
+    ['rf-lang', 'rf-fw', 'rf-lib', 'rf-run', 'rf-host', 'rf-result'].forEach(id => document.getElementById(id).value = '');
     ['rf-ver', 'rf-fwver', 'rf-libver'].forEach(id => document.getElementById(id).value = '');
   });
 
@@ -2990,8 +3868,7 @@
     runAction('stop', ids, opts);
   });
   document.getElementById('btn-mark-success').addEventListener('click', markSuccess);
-  document.getElementById('mnu-ignore').addEventListener('click', () => setIgnore(true));
-  document.getElementById('mnu-unignore').addEventListener('click', () => setIgnore(false));
+  document.getElementById('mnu-ignore').addEventListener('click', ignoreSelected);
 
   document.getElementById('btn-collapse-log').addEventListener('click', () => {
     const con = document.getElementById('log-console');
@@ -3009,6 +3886,34 @@
 
   document.getElementById('btn-close-detail').addEventListener('click', () =>
     document.getElementById('detail-drawer').classList.remove('open'));
+
+  document.getElementById('btn-sel-review').addEventListener('click', openSelectionPanel);
+  document.getElementById('btn-close-sel-panel').addEventListener('click', closeSelectionPanel);
+  document.getElementById('btn-sel-panel-cancel').addEventListener('click', closeSelectionPanel);
+  document.getElementById('btn-sel-panel-apply').addEventListener('click', applySelectionPanelChanges);
+  document.getElementById('sel-panel-search').addEventListener('input', debounce(renderSelectionPanel, 120));
+  document.getElementById('sel-panel-overlay').addEventListener('click', e => {
+    if (e.target.id === 'sel-panel-overlay') closeSelectionPanel();
+  });
+
+  document.getElementById('btn-ignore-review').addEventListener('click', openIgnorePanel);
+  document.getElementById('btn-close-ignore-panel').addEventListener('click', closeIgnorePanel);
+  document.getElementById('btn-ignore-panel-cancel').addEventListener('click', closeIgnorePanel);
+  document.getElementById('btn-ignore-panel-apply').addEventListener('click', applyIgnorePanelChanges);
+  document.getElementById('ignore-panel-search').addEventListener('input', debounce(renderIgnorePanel, 120));
+  document.getElementById('ignore-panel-overlay').addEventListener('click', e => {
+    if (e.target.id === 'ignore-panel-overlay') closeIgnorePanel();
+  });
+
+  document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
+  document.getElementById('btn-host-badge').addEventListener('click', openSettingsPanel);
+  document.getElementById('btn-close-settings-panel').addEventListener('click', closeSettingsPanel);
+  document.getElementById('btn-settings-cancel').addEventListener('click', closeSettingsPanel);
+  document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
+  document.getElementById('btn-test-docker').addEventListener('click', testDockerConnection);
+  document.getElementById('settings-panel-overlay').addEventListener('click', e => {
+    if (e.target.id === 'settings-panel-overlay') closeSettingsPanel();
+  });
 
   document.getElementById('btn-sync').addEventListener('click', async () => {
     const btn = document.getElementById('btn-sync');
@@ -3065,6 +3970,11 @@
   });
 
   document.getElementById('btn-load-reports').addEventListener('click', () => loadReports(1));
+
+  document.getElementById('ref-scroll-prev').addEventListener('click', () => scrollRefBy(-1));
+  document.getElementById('ref-scroll-next').addEventListener('click', () => scrollRefBy(1));
+  document.getElementById('ref-content-scroll').addEventListener('scroll', updateRefScrollButtons);
+  window.addEventListener('resize', updateRefScrollButtons);
 
   document.getElementById('btn-export-list').addEventListener('click', () => {
     const filters = getFilters();
@@ -3125,6 +4035,8 @@
       document.getElementById('detail-drawer').classList.remove('open');
       document.getElementById('log-console').classList.remove('open');
       _selMenu.classList.remove('open');
+      closeSelectionPanel();
+      closeIgnorePanel();
       return;
     }
     // Ctrl+A → select all filtered
