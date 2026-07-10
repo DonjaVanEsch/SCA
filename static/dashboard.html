@@ -231,7 +231,7 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    padding-bottom: 44px;
+    margin-bottom: var(--dock-h);
   }
 
   .filter-section {
@@ -406,7 +406,7 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    padding-bottom: 44px;
+    margin-bottom: var(--dock-h);
   }
 
   #report-main-panel {
@@ -587,7 +587,7 @@
     flex: 1;
     overflow: auto;
     min-height: 0;
-    padding-bottom: 44px;
+    margin-bottom: var(--dock-h);
   }
 
   table {
@@ -759,6 +759,81 @@
   .badge-ignored {
     background: rgba(74, 85, 104, .3);
     color: #a8b3c4
+  }
+
+  /* ── Status circle (compact Build/Test/Docker indicator) ──────────────────── */
+  /* Sized to fit the largest variant (the glyph circle) so toggling
+     accessibility mode never changes the column width. */
+  .status-circle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    box-sizing: border-box;
+  }
+
+  .status-circle-ok {
+    background: rgba(63, 185, 80, .15);
+    color: var(--success);
+    border: 1px solid rgba(63, 185, 80, .45);
+  }
+
+  .status-circle-fail {
+    background: rgba(248, 81, 73, .15);
+    color: var(--danger);
+    border: 1px solid rgba(248, 81, 73, .45);
+  }
+
+  .status-circle-skip {
+    background: var(--surface3);
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .status-circle-absent {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border2);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+
+  .status-dot-ok {
+    background: var(--success);
+  }
+
+  .status-dot-fail {
+    background: var(--danger);
+  }
+
+  .status-dot-skip,
+  .status-dot-absent {
+    background: transparent;
+    border: 1px solid var(--border2);
+  }
+
+  #img-table th.col-narrow {
+    width: 24px;
+    padding-left: 1px;
+    padding-right: 1px;
+    text-align: center;
+  }
+
+  #img-table td.col-narrow {
+    text-align: center;
+    padding-left: 1px;
+    padding-right: 1px;
   }
 
   .empty-state {
@@ -949,7 +1024,7 @@
     flex: 1;
     overflow: auto;
     min-height: 0;
-    padding-bottom: 44px;
+    margin-bottom: var(--dock-h);
   }
 
   .report-filter select,
@@ -1673,23 +1748,10 @@
     <button class="tab-btn" data-tab="agility">Crypto Agility</button>
   </nav>
   <div class="header-actions">
-    <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
-    <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
-      DB</button>
     <button class="btn btn-ghost btn-sm" id="btn-ignore-review" title="Review the ignore list">🚫 Ignored</button>
     <button class="btn btn-ghost btn-sm" id="btn-host-badge"
             title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span id="host-badge-label">local</span></button>
     <button class="btn btn-ghost btn-sm" id="btn-settings" title="Docker host settings">⚙ Settings</button>
-    <div class="sel-menu-wrap" id="cleanup-wrap">
-      <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
-      <div class="sel-menu" id="cleanup-menu" style="right:0;left:auto">
-        <div class="sel-menu-item" id="mnu-cleanup-normal">Normal cleanup</div>
-        <div class="sel-menu-item" id="mnu-cleanup-full">Full cleanup <span
-            style="font-size:10px;color:var(--muted2)">(+ volumes)</span></div>
-        <div class="sel-menu-sep"></div>
-        <div class="sel-menu-item" id="mnu-cleanup-dry">Dry run (preview)</div>
-      </div>
-    </div>
   </div>
 </header>
 
@@ -1808,7 +1870,7 @@
             <div class="action-sep"></div>
             <label class="act-check" id="act-build-wrap"><input type="checkbox" id="act-build" disabled> Build</label>
             <label class="act-check" id="act-test-wrap"><input type="checkbox" id="act-test" disabled> Test</label>
-            <label class="act-check" id="act-fingerprint-wrap"
+            <label class="act-check fingerprint-feature" id="act-fingerprint-wrap"
               title="Fingerprint: capture network traffic (1 successful + 1 failed call) against the running container. Combines with Test into a single container start when both are checked.">
               <input type="checkbox" id="act-fingerprint" disabled> 🫆</label>
             <div class="action-sep"></div>
@@ -1823,10 +1885,6 @@
                 placeholder="auto">
               <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate batch name">↺</button>
               <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Execute</button>
-              <label style="font-size:11px;color:var(--muted2);white-space:nowrap;margin-left:4px"
-                title="Parallel docker build processes">Workers</label>
-              <input id="opt-workers" type="number" min="1" max="16" value="4"
-                style="width:46px;padding:3px 6px;text-align:center;background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text)">
               <div class="action-sep"></div>
               <button class="btn btn-success btn-sm" id="btn-mark-success" disabled
                 title="Flag selected sources as build + test successful and store in the current batch">✓ Mark
@@ -1842,20 +1900,21 @@
           <thead>
             <tr>
               <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="header-cb" class="row-cb"></th>
+              <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
               <th class="sortable" data-sort="language">Language <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="lang_version">Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="framework">Framework <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="fw_version">FW Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="library">Library <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="lib_version">Lib Ver <span class="sort-icon">⬍</span></th>
-              <th class="sortable" data-sort="build_success">Build <span class="sort-icon">⬍</span></th>
-              <th class="sortable" data-sort="test_success">Test <span class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-sort="build_success" title="Build status"><span class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-sort="test_success" title="Test status"><span class="sort-icon">⬍</span></th>
               <th style="width:24px"></th>
             </tr>
           </thead>
           <tbody id="img-tbody">
             <tr id="loading-row">
-              <td colspan="10" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
+              <td colspan="11" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
             </tr>
           </tbody>
         </table>
@@ -2133,6 +2192,45 @@
         <span id="settings-test-result" class="settings-test-result"></span>
       </div>
       <pre id="settings-test-output" class="settings-test-output" style="display:none"></pre>
+
+      <label class="settings-label" for="settings-default-workers" style="margin-top:16px">Default workers</label>
+      <input type="number" id="settings-default-workers" class="filter-input settings-input"
+             min="1" max="16" style="width:80px">
+      <p class="settings-hint">
+        Number of parallel docker build processes used when starting a build/test run.
+        Saved here so it survives a browser restart.
+      </p>
+
+      <label class="settings-label" for="settings-accessibility-mode" style="margin-top:16px">Accessibility mode</label>
+      <label class="opt-label" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="settings-accessibility-mode"> Show ✓ / ✕ symbols instead of plain colored dots
+      </label>
+      <p class="settings-hint">
+        Applies to the Build/Test/Docker status indicators in the sources table.
+        Off shows small colored dots; on shows a bordered circle with an explicit
+        checkmark or cross for better visibility.
+      </p>
+
+      <label class="settings-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px;display:block">Maintenance actions</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
+        <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init DB</button>
+        <div class="sel-menu-wrap" id="cleanup-wrap">
+          <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
+          <div class="sel-menu" id="cleanup-menu">
+            <div class="sel-menu-item" id="mnu-cleanup-normal">Normal cleanup</div>
+            <div class="sel-menu-item" id="mnu-cleanup-full">Full cleanup <span
+                style="font-size:10px;color:var(--muted2)">(+ volumes)</span></div>
+            <div class="sel-menu-sep"></div>
+            <div class="sel-menu-item" id="mnu-cleanup-dry">Dry run (preview)</div>
+          </div>
+        </div>
+      </div>
+      <p class="settings-hint">
+        Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
+        registry metadata and re-syncs from disk (only needed after a registry change).
+        Cleanup removes unused Docker containers, images, build cache, and (full) volumes.
+      </p>
     </div>
     <div class="review-panel-footer">
       <div style="flex:1"></div>
@@ -2340,7 +2438,7 @@
     });
 
     const tbody = document.getElementById('img-tbody');
-    tbody.innerHTML = '<tr id="loading-row"><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    tbody.innerHTML = '<tr id="loading-row"><td colspan="11" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
 
     try {
       const data = await api(`/api/images?${params}`);
@@ -2349,7 +2447,7 @@
       renderTable(data.items);
       renderPagination(data.total, data.page, data.pages, data.per_page);
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
     }
   }
 
@@ -2394,16 +2492,24 @@
     });
   }
 
+  function statusCircle(state, title) {
+    if (_accessibilityMode) {
+      const glyph = state === 'ok' ? '✓' : (state === 'fail' || state === 'absent') ? '✕' : '–';
+      return `<span class="status-circle status-circle-${state}" title="${escHtml(title)}">${glyph}</span>`;
+    }
+    return `<span class="status-dot status-dot-${state}" title="${escHtml(title)}"></span>`;
+  }
+
   function buildBadge(success) {
-    if (success === null || success === undefined) return '<span class="badge badge-skip">—</span>';
-    if (success === 1 || success === true) return '<span class="badge badge-ok">OK</span>';
-    return '<span class="badge badge-fail">FAIL</span>';
+    if (success === null || success === undefined) return statusCircle('skip', 'Not built yet');
+    if (success === 1 || success === true) return statusCircle('ok', 'Build OK');
+    return statusCircle('fail', 'Build failed');
   }
 
   function testBadge(success) {
-    if (success === null || success === undefined) return '<span class="badge badge-skip">—</span>';
-    if (success === 1 || success === true) return '<span class="badge badge-ok">PASS</span>';
-    return '<span class="badge badge-fail">FAIL</span>';
+    if (success === null || success === undefined) return statusCircle('skip', 'Not tested yet');
+    if (success === 1 || success === true) return statusCircle('ok', 'Test passed');
+    return statusCircle('fail', 'Test failed');
   }
 
   function ignoredBadge(reason) {
@@ -2411,10 +2517,16 @@
     return `<span class="badge badge-ignored" title="${title}">IGNORED</span>`;
   }
 
+  function dockerExistsBadge(exists) {
+    if (exists === null || exists === undefined) return statusCircle('skip', 'Could not reach the Docker engine');
+    if (exists) return statusCircle('ok', 'Image present on the Docker engine');
+    return statusCircle('absent', 'Image not found on the Docker engine (never built, or removed since)');
+  }
+
   function renderTable(items) {
     const tbody = document.getElementById('img-tbody');
     if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="10">
+      tbody.innerHTML = `<tr><td colspan="11">
       <div class="empty-state">
         <div style="font-size:28px;opacity:.3">⬜</div>
         <p>No sources match the current filters.</p>
@@ -2433,18 +2545,19 @@
         <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''} ${ign ? 'disabled title="Ignored sources can\'t be selected"' : ''}
                onclick="event.stopPropagation();toggleSelect(${r.id},event)">
       </td>
+      <td class="col-narrow">${dockerExistsBadge(r.docker_exists)}</td>
       <td>${r.language}</td>
       <td class="mono-cell">${r.lang_version}</td>
       <td>${r.framework}</td>
       <td class="mono-cell">${r.fw_version}</td>
       <td>${r.library}</td>
       <td class="mono-cell">${r.lib_version}</td>
-      <td>${buildBadge(r.build_success)}</td>
-      <td>${testBadge(r.test_success)}</td>
+      <td class="col-narrow">${buildBadge(r.build_success)}</td>
+      <td class="col-narrow">${testBadge(r.test_success)}</td>
       <td style="padding:0 6px">
         <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
           ${ign ? ignoredBadge(r.ignore_reason) : ''}
-          ${(r.fp_ok_at || r.fp_err_at) ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px"
+          ${(_fingerprintEnabled && (r.fp_ok_at || r.fp_err_at)) ? `<button class="btn btn-ghost btn-sm fingerprint-feature" style="padding:2px 6px"
                   onclick="event.stopPropagation();openDetail(${r.id},'fingerprint')" title="Fingerprint captured — click to view">🫆</button>` : ''}
           <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
                   onclick="event.stopPropagation();openDetail(${r.id})" title="Details">⋯</button>
@@ -2715,7 +2828,7 @@
     const opts = {
       no_cache: document.getElementById('opt-no-cache').checked,
       skip_existing: document.getElementById('opt-skip-existing').checked,
-      workers: parseInt(document.getElementById('opt-workers').value) || 4,
+      workers: _defaultWorkers,
       fingerprint: fingerprintChecked,
     };
     const run_name = document.getElementById('run-name').value.trim() || generateRunName();
@@ -3035,10 +3148,27 @@
     return host ? host.replace(/^ssh:\/\//, '') : 'local';
   }
 
+  // Loaded from /api/settings once at init and refreshed after every save --
+  // the source of truth lives server-side (dashboard_settings.json / env)
+  // so both values survive a browser restart.
+  let _defaultWorkers = 4;
+  let _fingerprintEnabled = false;
+  let _accessibilityMode = false;
+
+  function applyFingerprintVisibility() {
+    document.querySelectorAll('.fingerprint-feature').forEach(el => {
+      el.style.display = _fingerprintEnabled ? '' : 'none';
+    });
+  }
+
   async function refreshHostBadge() {
     try {
       const s = await api('/api/settings');
       document.getElementById('host-badge-label').textContent = hostLabel(s.docker_host || '');
+      _defaultWorkers = s.default_workers || 4;
+      _fingerprintEnabled = !!s.fingerprint_enabled;
+      _accessibilityMode = !!s.accessibility_mode;
+      applyFingerprintVisibility();
     } catch { }
   }
 
@@ -3050,6 +3180,8 @@
     try {
       const s = await api('/api/settings');
       document.getElementById('settings-docker-host').value = s.docker_host || '';
+      document.getElementById('settings-default-workers').value = s.default_workers || 4;
+      document.getElementById('settings-accessibility-mode').checked = !!s.accessibility_mode;
     } catch (e) {
       toast(`Error loading settings: ${e.message}`, 'err');
     }
@@ -3062,10 +3194,12 @@
 
   async function saveSettings() {
     const docker_host = document.getElementById('settings-docker-host').value.trim();
+    const default_workers = parseInt(document.getElementById('settings-default-workers').value) || 4;
+    const accessibility_mode = document.getElementById('settings-accessibility-mode').checked;
     try {
       await api('/api/settings', {
         method: 'POST',
-        body: JSON.stringify({ docker_host }),
+        body: JSON.stringify({ docker_host, default_workers, accessibility_mode }),
       });
       toast(docker_host ? `Docker host set to ${docker_host}` : 'Using local Docker engine', 'ok');
       closeSettingsPanel();
@@ -3313,11 +3447,13 @@
       ['Build', imgData.build_success === 1 ? '✓ OK' : imgData.build_success === 0 ? '✗ FAIL' : '—'],
       ['Last test', imgData.test_success === 1 ? '✓ PASS' : imgData.test_success === 0 ? '✗ FAIL' : '—'],
       ['Tested at', imgData.tested_at || '—'],
-      ['🫆 Fingerprint', (imgData.fp_ok_at || imgData.fp_err_at)
-        ? `captured — success ${imgData.fp_ok_status ?? '—'} / failure ${imgData.fp_err_status ?? '—'}`
-        : '—'],
       ['Ignored', imgData.ignored ? `Yes — ${imgData.ignore_reason || 'no reason'}` : 'No'],
     ];
+    if (_fingerprintEnabled) {
+      fields.push(['🫆 Fingerprint', (imgData.fp_ok_at || imgData.fp_err_at)
+        ? `captured — success ${imgData.fp_ok_status ?? '—'} / failure ${imgData.fp_err_status ?? '—'}`
+        : '—']);
+    }
 
     body.innerHTML = fields.map(([k, v]) => `
     <div class="detail-row">
@@ -3345,11 +3481,15 @@
       outTabs.push({ key: 'build', label: 'Build' + (imgData.build_success === 0 ? ' ⚠' : ''),
         html: outputPanelHtml(`bout-${id}`, imgData.build_output, imgData.build_success === 0) });
     }
-    if (imgData.test_output) {
+    if (imgData.test_output || imgData.test_error) {
+      // Some failure modes (image not found, container start failed, build
+      // failed) never produce test output -- surface the error reason instead
+      // of hiding the tab entirely.
+      const testText = imgData.test_output || `(no output captured)\n\nReason: ${imgData.test_error}`;
       outTabs.push({ key: 'test', label: 'Test' + (imgData.test_success === 0 ? ' ⚠' : ''),
-        html: outputPanelHtml(`tout-${id}`, imgData.test_output, imgData.test_success === 0) });
+        html: outputPanelHtml(`tout-${id}`, testText, imgData.test_success === 0) });
     }
-    if (imgData.fp_ok_at || imgData.fp_err_at) {
+    if (_fingerprintEnabled && (imgData.fp_ok_at || imgData.fp_err_at)) {
       outTabs.push({ key: 'fingerprint', label: '🫆 Fingerprint', html: fingerprintPanelHtml(id, imgData) });
     }
 
@@ -3799,7 +3939,7 @@
 
   // ── Init ──────────────────────────────────────────────────────────────────
   async function init() {
-    refreshHostBadge();
+    await refreshHostBadge();
     await loadFilterOptions();
 
     // Check if DB has images; if empty, run init

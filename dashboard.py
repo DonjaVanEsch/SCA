@@ -28,7 +28,12 @@ app = Flask(__name__, static_folder=str(PROJECT_ROOT / "static"))
 # ── Settings (Docker host, etc.) ──────────────────────────────────────────────
 
 SETTINGS_FILE = PROJECT_ROOT / "dashboard_settings.json"
-_DEFAULT_SETTINGS = {"docker_host": ""}
+_DEFAULT_SETTINGS = {"docker_host": "", "default_workers": 4, "accessibility_mode": False}
+
+# Fingerprinting is gated behind an environment flag -- capturing real network
+# traffic against a running container is invasive enough that it should stay
+# opt-in per deployment, not a per-user dashboard setting.
+FINGERPRINT_ENABLED = os.environ.get("PQC_ENABLE_FINGERPRINT", "false").strip().lower() in ("1", "true", "yes")
 
 
 def _load_settings() -> dict:
@@ -89,6 +94,18 @@ def _finish_job(job_id: str) -> None:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _annotate_docker_exists(items: list[dict]) -> list[dict]:
+    """Add a `docker_exists` flag to each row: whether its image is actually
+    present on the active Docker engine right now (vs. just recorded as
+    built in the DB -- it may have since been pruned or removed manually).
+    None means the engine couldn't be reached, so presence is unknown.
+    """
+    existing = manager.list_existing_image_repos()
+    for item in items:
+        item["docker_exists"] = None if existing is None else item.get("image_tag") in existing
+    return items
+
 
 def _entries_from_db_rows(rows: list[dict]) -> list[dict]:
     """Convert image_details rows to manager.py entry dicts."""
@@ -180,8 +197,10 @@ def get_images():
     per_page = max(1, min(200, int(request.args.get("per_page", 50))))
     sort_by  = request.args.get("sort_by",  "")
     sort_dir = request.args.get("sort_dir", "asc")
-    return jsonify(db.get_images(filters, page, per_page, include_ignored, sort_by, sort_dir,
-                                  host=_current_host()))
+    result = db.get_images(filters, page, per_page, include_ignored, sort_by, sort_dir,
+                            host=_current_host())
+    _annotate_docker_exists(result["items"])
+    return jsonify(result)
 
 
 @app.route("/api/images/ids")
@@ -203,14 +222,18 @@ def get_images_by_ids_route():
     table filters (used by the "review selection" panel)."""
     ids_param = request.args.get("ids", "")
     ids = [int(i) for i in ids_param.split(",") if i.strip().lstrip("-").isdigit()]
-    return jsonify({"items": db.get_images_by_ids(ids, host=_current_host())})
+    items = db.get_images_by_ids(ids, host=_current_host())
+    _annotate_docker_exists(items)
+    return jsonify({"items": items})
 
 
 @app.route("/api/images/ignored")
 def get_ignored_images_route():
     """Return full details for every currently-ignored image (used by the
     "review ignore list" panel)."""
-    return jsonify({"items": db.get_ignored_images(host=_current_host())})
+    items = db.get_ignored_images(host=_current_host())
+    _annotate_docker_exists(items)
+    return jsonify({"items": items})
 
 
 # ── Actions ───────────────────────────────────────────────────────────────────
@@ -240,6 +263,8 @@ def action():
         return jsonify({"error": f"Unknown action: {action_str}"}), 400
     if not image_ids:
         return jsonify({"error": "No image ids provided"}), 400
+    if not FINGERPRINT_ENABLED and (action_str == "fingerprint" or opts.get("fingerprint")):
+        return jsonify({"error": "Fingerprinting is disabled (set PQC_ENABLE_FINGERPRINT=true to enable)"}), 400
 
     host = _current_host()
     rows = db.get_images_by_ids(image_ids, host=host)
@@ -408,12 +433,15 @@ def cancel_job(job_id: str):
 
 @app.route("/api/settings")
 def get_settings():
-    return jsonify(_load_settings())
+    settings = _load_settings()
+    # Read-only, environment-controlled -- not persisted in the settings file.
+    settings["fingerprint_enabled"] = FINGERPRINT_ENABLED
+    return jsonify(settings)
 
 
 @app.route("/api/settings", methods=["POST"])
 def set_settings():
-    """Body: {"docker_host": "ssh://user@host" | ""}"""
+    """Body: {"docker_host": "ssh://user@host" | "", "default_workers": 4}"""
     data        = request.json or {}
     docker_host = str(data.get("docker_host", "")).strip()
     if docker_host and not docker_host.startswith("ssh://"):
@@ -421,6 +449,14 @@ def set_settings():
 
     settings = _load_settings()
     settings["docker_host"] = docker_host
+    if "default_workers" in data:
+        try:
+            default_workers = int(data["default_workers"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "default_workers must be a number"}), 400
+        settings["default_workers"] = max(1, min(16, default_workers))
+    if "accessibility_mode" in data:
+        settings["accessibility_mode"] = bool(data["accessibility_mode"])
     _save_settings(settings)
     _apply_docker_host(docker_host)
     return jsonify({"ok": True, "settings": settings})

@@ -370,7 +370,7 @@ def _status_sql() -> str:
     value, in that order, before any other query params. Superset of
     image_details' columns, so existing filters/sorts on language/framework/...
     keep working unchanged; adds build_success, built_at, build_output,
-    build_run, test_success, tested_at, test_output, fp_ok_status,
+    build_run, test_success, tested_at, test_output, test_error, fp_ok_status,
     fp_ok_traffic, fp_ok_at, fp_err_status, fp_err_traffic, fp_err_at.
     """
     return """
@@ -383,6 +383,7 @@ def _status_sql() -> str:
         t.success     AS test_success,
         t.tested_at   AS tested_at,
         t.output      AS test_output,
+        t.error_msg   AS test_error,
         fpo.status_code  AS fp_ok_status,
         fpo.traffic_raw  AS fp_ok_traffic,
         fpo.captured_at  AS fp_ok_at,

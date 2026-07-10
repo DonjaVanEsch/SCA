@@ -280,6 +280,26 @@ def _image_exists(tag):
     ).returncode == 0
 
 
+def list_existing_image_repos(timeout=10):
+    """Return the set of pqc-* repository names currently present on the
+    active Docker engine, or None if the engine couldn't be reached.
+
+    One bulk `docker images` call instead of one `docker image inspect` per
+    row -- the dashboard's image list annotates hundreds of rows at once.
+    """
+    try:
+        proc = subprocess.run(
+            ["docker", "images", "--filter", "reference=pqc-*", "--format", "{{.Repository}}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+
 def _get_host_port(container, retries=8, delay=0.4):
     """Return the host port Docker assigned to container's internal port 8000.
 
