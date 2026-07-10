@@ -718,13 +718,170 @@ def _do_stop_all(log_fn=print):
     log_fn(f"\nDone: {stopped}/{n} stopped.")
 
 
+# ── Fingerprint (network traffic capture) ─────────────────────────────────────
+# Genuine on-the-wire capture, not a client-side reconstruction: a tcpdump
+# sidecar joins the target container's own network namespace and sniffs the
+# exact packets that hit it while a probe request is fired. Works the same
+# whether Docker is local or remote (DOCKER_HOST=ssh://...) since it's just
+# `docker` CLI calls, like everything else in this file.
+
+_FP_MISSING_PATH  = "/__pqc_fingerprint_missing__"
+_FP_SNIFFER_IMAGE = "nicolaka/netshoot"
+
+
+def _send_probe(target_host, port, method, path, timeout=5):
+    """Fire one HTTP request at the running container and report its outcome.
+    The bytes exchanged are observed separately, by the tcpdump sidecar in
+    _capture_traffic -- this just drives real traffic and reads the result.
+    """
+    req = urllib.request.Request(f"http://{target_host}:{port}{path}", method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, ""
+    except urllib.error.HTTPError as exc:
+        return exc.code, ""
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _capture_traffic(container, action_fn, capture_filter="tcp", timeout=8):
+    """Run action_fn() while a tcpdump sidecar sniffs the exact packets
+    hitting *container*'s network namespace. Returns (action_fn's return
+    value, traffic_text, sniffer_error).
+    """
+    cap_name = f"{container}-fpcap"
+    subprocess.run(["docker", "rm", "-f", cap_name], capture_output=True)
+
+    proc = subprocess.run(
+        ["docker", "run", "-d", "--name", cap_name,
+         "--network", f"container:{container}",
+         "--cap-add", "NET_RAW", "--cap-add", "NET_ADMIN",
+         _FP_SNIFFER_IMAGE, "tcpdump", "-i", "any", "-w", "/tmp/cap.pcap", "-U", capture_filter],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if proc.returncode != 0:
+        return action_fn(), "", f"sniffer container failed to start: {proc.stderr.strip()[-300:]}"
+
+    # Wait for tcpdump to actually be listening before generating traffic.
+    attached = False
+    for _ in range(timeout * 5):
+        logs = subprocess.run(["docker", "logs", cap_name], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace")
+        if "listening on" in (logs.stdout + logs.stderr):
+            attached = True
+            break
+        time.sleep(0.2)
+
+    try:
+        result = action_fn()
+    finally:
+        time.sleep(0.3)  # let the response finish and flush to the pcap file
+        if attached:
+            dump = subprocess.run(
+                ["docker", "exec", cap_name, "tcpdump", "-r", "/tmp/cap.pcap", "-nn", "-XX", "-v"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+        subprocess.run(["docker", "rm", "-f", cap_name], capture_output=True)
+
+    if not attached:
+        return result, "", "sniffer never reported 'listening on' -- capture skipped"
+    traffic = dump.stdout.strip()
+    error   = "" if dump.returncode == 0 else dump.stderr.strip()[-300:]
+    return result, traffic, error
+
+
+def _capture_fingerprint(container, target_host, port):
+    """Capture real network traffic for one successful and one unsuccessful
+    call against a running container. Returns (success_record, failure_record)."""
+    (status, err), traffic, cap_err = _capture_traffic(
+        container, lambda: _send_probe(target_host, port, "GET", "/version"))
+    success = {
+        "method": "GET", "path": "/version", "status_code": status,
+        "success": status == 200, "traffic_raw": traffic, "error": err or cap_err,
+    }
+
+    (status, err), traffic, cap_err = _capture_traffic(
+        container, lambda: _send_probe(target_host, port, "GET", _FP_MISSING_PATH))
+    failure = {
+        "method": "GET", "path": _FP_MISSING_PATH, "status_code": status,
+        "success": status is not None and status != 200, "traffic_raw": traffic,
+        "error": err or cap_err,
+    }
+
+    return success, failure
+
+
+def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
+    """Start each container, capture network traffic for one successful and
+    one unsuccessful call to the running service, then stop it.
+
+    save_fn(entry, success_record, failure_record) is called immediately
+    after each image completes (both None when the container never came up).
+    Skips images that aren't built.
+    """
+    n   = len(entries)
+    pad = len(str(n))
+    log_fn(f"\nFingerprinting {n:,} image(s) ...\n")
+    captured = 0
+
+    for i, e in enumerate(entries, 1):
+        if stop_event is not None and stop_event.is_set():
+            log_fn(f"\n[CANCELLED] Fingerprint stopped after {i - 1} of {n} image(s).")
+            break
+
+        tag  = _image_tag(e)
+        name = tag
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
+
+        if not _image_exists(tag):
+            log_fn(f"         SKIP  (not built)")
+            if save_fn is not None:
+                save_fn(e, None, None)
+            continue
+
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        proc = subprocess.run(
+            ["docker", "run", "-d", "--name", name, "-p", "0:8000", tag],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if proc.returncode != 0:
+            log_fn(f"         FAIL  (container did not start)")
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            if save_fn is not None:
+                save_fn(e, None, None)
+            continue
+
+        port = _get_host_port(name)
+        if port == "?":
+            log_fn(f"         FAIL  (port not assigned)")
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            if save_fn is not None:
+                save_fn(e, None, None)
+            continue
+
+        success, failure = _capture_fingerprint(name, _docker_target_host(), port)
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+        log_fn(f"         CAPTURED  success={success['status_code']}  failure={failure['status_code']}")
+        captured += 1
+        if save_fn is not None:
+            save_fn(e, success, failure)
+
+    log_fn(f"\nFingerprint complete: {captured}/{n} captured.")
+
+
 # ── Test ─────────────────────────────────────────────────────────────────────
 
-def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event=None):
+def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event=None,
+             fingerprint=False, save_fingerprint_fn=None):
     """Start each container, test / and /version, stop it.
 
     save_fn(entry, result_dict) is called immediately after each image completes.
     stop_event (threading.Event) can be set externally to cancel the loop early.
+    When fingerprint=True, also captures network traffic for one successful
+    and one unsuccessful call against the same running container -- before it
+    gets stopped -- instead of starting it a second time; save_fingerprint_fn
+    (entry, success_record, failure_record) is called right after.
     Returns {tag: {"success": bool, "root_ok": bool, "version_ok": bool,
                    "error": str, "version_data": dict|None, "output": str}}.
     """
@@ -846,6 +1003,12 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             log_fn(f"         container state: {state}  last-err: {last_err}")
             for line in output_text.splitlines()[:30]:
                 log_fn(f"         | {line}")
+
+        if fingerprint:
+            fp_success, fp_failure = _capture_fingerprint(name, _docker_target_host(), port)
+            log_fn(f"         FINGERPRINT  success={fp_success['status_code']}  failure={fp_failure['status_code']}")
+            if save_fingerprint_fn is not None:
+                save_fingerprint_fn(e, fp_success, fp_failure)
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 

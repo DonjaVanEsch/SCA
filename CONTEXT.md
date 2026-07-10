@@ -217,7 +217,7 @@ db.get_images_by_ids(image_ids)
 db.save_build_result(image_id, success, output, started_at, finished_at, run_id)
 db.save_test_result(image_id, success, root_ok, version_ok, error_msg, response_data, output, run_id)
 db.set_ignored(image_ids, ignored, reason)
-db.get_or_create_run(name)            # Returns run_id
+db.get_or_create_run(name, host='')   # Returns run_id, scoped per (name, host)
 db.update_run_status(run_id, status)
 db.get_stats()                        # Aggregate counts for dashboard header
 db.get_test_reports(filters, limit)

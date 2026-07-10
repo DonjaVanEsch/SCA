@@ -29,6 +29,7 @@
     --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     --sans: -apple-system, 'Segoe UI', system-ui, sans-serif;
     --log-h: 240px;
+    --dock-h: 44px; /* live-updated by a ResizeObserver on #bottom-dock */
   }
 
   /* ── Reset ──────────────────────────────────────────────────────────────── */
@@ -1364,7 +1365,7 @@
     position: fixed;
     right: 0;
     top: 52px;
-    bottom: 0;
+    bottom: var(--dock-h);
     width: 340px;
     z-index: 50;
     background: var(--surface);
@@ -1807,6 +1808,9 @@
             <div class="action-sep"></div>
             <label class="act-check" id="act-build-wrap"><input type="checkbox" id="act-build" disabled> Build</label>
             <label class="act-check" id="act-test-wrap"><input type="checkbox" id="act-test" disabled> Test</label>
+            <label class="act-check" id="act-fingerprint-wrap"
+              title="Fingerprint: capture network traffic (1 successful + 1 failed call) against the running container. Combines with Test into a single container start when both are checked.">
+              <input type="checkbox" id="act-fingerprint" disabled> 🫆</label>
             <div class="action-sep"></div>
             <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox"
                 id="opt-no-cache"> no-cache</label>
@@ -2440,6 +2444,8 @@
       <td style="padding:0 6px">
         <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
           ${ign ? ignoredBadge(r.ignore_reason) : ''}
+          ${(r.fp_ok_at || r.fp_err_at) ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px"
+                  onclick="event.stopPropagation();openDetail(${r.id},'fingerprint')" title="Fingerprint captured — click to view">🫆</button>` : ''}
           <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
                   onclick="event.stopPropagation();openDetail(${r.id})" title="Details">⋯</button>
         </div>
@@ -2564,7 +2570,7 @@
     const n = state.selected.size;
     document.getElementById('sel-count').textContent = `${n.toLocaleString()} selected`;
     const dis = n === 0;
-    ['act-run', 'act-build', 'act-test', 'act-remove', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
+    ['act-run', 'act-build', 'act-test', 'act-fingerprint', 'act-remove', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
       document.getElementById(id).disabled = dis;
     });
   }
@@ -2691,17 +2697,26 @@
 
   async function startActions() {
     if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
-    const _actionMap = { run: 'run_container', build: 'build', test: 'test', remove: 'remove' };
-    const actions = ['run', 'build', 'test', 'remove'].filter(a =>
+    const testChecked = document.getElementById('act-test').checked;
+    const fingerprintChecked = document.getElementById('act-fingerprint').checked;
+    const _actionMap = { run: 'run_container', build: 'build', remove: 'remove' };
+    const actions = ['run', 'build'].filter(a =>
       document.getElementById(`act-${a}`).checked
     ).map(a => _actionMap[a]);
-    if (!actions.length) { toast('Select at least one action (Run / Build / Test / Remove)', 'err'); return; }
+    // Test and Fingerprint share one container start/stop cycle: when both are
+    // checked, run a single "test" job with fingerprint capture bolted on
+    // instead of starting the container a second time just for fingerprinting.
+    if (testChecked) actions.push('test');
+    else if (fingerprintChecked) actions.push('fingerprint');
+    if (document.getElementById('act-remove').checked) actions.push('remove');
+    if (!actions.length) { toast('Select at least one action (Run / Build / Test / Fingerprint / Remove)', 'err'); return; }
 
     const ids = [...state.selected];
     const opts = {
       no_cache: document.getElementById('opt-no-cache').checked,
       skip_existing: document.getElementById('opt-skip-existing').checked,
       workers: parseInt(document.getElementById('opt-workers').value) || 4,
+      fingerprint: fingerprintChecked,
     };
     const run_name = document.getElementById('run-name').value.trim() || generateRunName();
 
@@ -3119,7 +3134,7 @@
     }, 1000);
 
     const cancelBtn = document.getElementById('btn-cancel-job');
-    const cancellable = ['build', 'test'].includes(action);
+    const cancellable = ['build', 'test', 'fingerprint'].includes(action);
     cancelBtn.style.display = cancellable ? '' : 'none';
     cancelBtn.disabled = false;
 
@@ -3265,7 +3280,7 @@
   }
 
   // ── Detail drawer ─────────────────────────────────────────────────────────
-  async function openDetail(id) {
+  async function openDetail(id, initialTab = null) {
     const rows = await api(`/api/images?page=1&per_page=1`);  // won't work for specific id
     // Fetch from existing table data instead
     const tbody = document.getElementById('img-tbody');
@@ -3298,6 +3313,9 @@
       ['Build', imgData.build_success === 1 ? '✓ OK' : imgData.build_success === 0 ? '✗ FAIL' : '—'],
       ['Last test', imgData.test_success === 1 ? '✓ PASS' : imgData.test_success === 0 ? '✗ FAIL' : '—'],
       ['Tested at', imgData.tested_at || '—'],
+      ['🫆 Fingerprint', (imgData.fp_ok_at || imgData.fp_err_at)
+        ? `captured — success ${imgData.fp_ok_status ?? '—'} / failure ${imgData.fp_err_status ?? '—'}`
+        : '—'],
       ['Ignored', imgData.ignored ? `Yes — ${imgData.ignore_reason || 'no reason'}` : 'No'],
     ];
 
@@ -3319,41 +3337,80 @@
       <span class="detail-note">${imgData.lib_notes}</span>
     </div>`;
 
-    // Build output (always shown when available, highlighted red on failure)
+    // Build / Test / Fingerprint output -- grouped into subtabs, one tab per
+    // section that actually has data (the drawer is already dense; a flat
+    // list of 3 raw dumps stacked on top of each other doesn't read well).
+    const outTabs = [];
     if (imgData.build_output) {
-      const failed = imgData.build_success === 0;
-      const oid = `bout-${id}`;
-      body.innerHTML += `
-    <div class="detail-row" style="flex-direction:column;align-items:flex-start;gap:4px">
-      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
-        <span class="detail-key" style="color:${failed ? 'var(--danger)' : 'var(--muted2)'}">
-          Build output${failed ? ' (failed)' : ''}
-        </span>
-        <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px"
-                onclick="copyOutput('${oid}',this)">Copy</button>
-      </div>
-      <pre id="${oid}" class="detail-output${failed ? ' detail-output-err' : ''}">${escHtml(imgData.build_output)}</pre>
-    </div>`;
+      outTabs.push({ key: 'build', label: 'Build' + (imgData.build_success === 0 ? ' ⚠' : ''),
+        html: outputPanelHtml(`bout-${id}`, imgData.build_output, imgData.build_success === 0) });
+    }
+    if (imgData.test_output) {
+      outTabs.push({ key: 'test', label: 'Test' + (imgData.test_success === 0 ? ' ⚠' : ''),
+        html: outputPanelHtml(`tout-${id}`, imgData.test_output, imgData.test_success === 0) });
+    }
+    if (imgData.fp_ok_at || imgData.fp_err_at) {
+      outTabs.push({ key: 'fingerprint', label: '🫆 Fingerprint', html: fingerprintPanelHtml(id, imgData) });
     }
 
-    // Test output (always shown when available, highlighted red on failure)
-    if (imgData.test_output) {
-      const testFailed = imgData.test_success === 0;
-      const oid = `tout-${id}`;
+    if (outTabs.length) {
+      const activeKey = outTabs.some(t => t.key === initialTab) ? initialTab : outTabs[0].key;
       body.innerHTML += `
-    <div class="detail-row" style="flex-direction:column;align-items:flex-start;gap:4px">
-      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
-        <span class="detail-key" style="color:${testFailed ? 'var(--danger)' : 'var(--muted2)'}">
-          Test output${testFailed ? ' (failed)' : ''}
-        </span>
-        <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px"
-                onclick="copyOutput('${oid}',this)">Copy</button>
+    <div class="detail-row" style="border-bottom:none">
+      <div class="sub-tabs" id="detail-subtabs">
+        ${outTabs.map(t => `<button type="button" class="sub-tab${t.key === activeKey ? ' active' : ''}"
+            onclick="switchDetailTab('${t.key}')" data-tab="${t.key}">${t.label}</button>`).join('')}
       </div>
-      <pre id="${oid}" class="detail-output${testFailed ? ' detail-output-err' : ''}">${escHtml(imgData.test_output)}</pre>
+      <div style="margin-top:10px;width:100%">
+        ${outTabs.map(t => `<div data-tab-panel="${t.key}" style="${t.key === activeKey ? '' : 'display:none'}">${t.html}</div>`).join('')}
+      </div>
     </div>`;
     }
 
     document.getElementById('detail-drawer').classList.add('open');
+  }
+
+  function outputPanelHtml(oid, output, failed) {
+    return `
+    <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:4px">
+      <span class="detail-key" style="color:${failed ? 'var(--danger)' : 'var(--muted2)'}">Output${failed ? ' (failed)' : ''}</span>
+      <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px" onclick="copyOutput('${oid}',this)">Copy</button>
+    </div>
+    <pre id="${oid}" class="detail-output${failed ? ' detail-output-err' : ''}">${escHtml(output)}</pre>`;
+  }
+
+  // Real network traffic for one probe call -- a tcpdump sidecar sniffed the
+  // target container's own network namespace while the call was made, so
+  // this is the genuine on-the-wire packet capture, not a client-side
+  // reconstruction of the request/response.
+  function fingerprintCallHtml(label, status, trafficId, traffic, at, expectOk) {
+    if (!at) return `<div class="detail-note">No ${label.toLowerCase()} captured yet.</div>`;
+    const unexpected = expectOk ? status !== 200 : (status === 200 || !status);
+    return `
+    <div style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+        <span class="detail-key" style="color:${unexpected ? 'var(--danger)' : 'var(--muted2)'}">
+          ${label} → ${status ?? 'no response'}
+        </span>
+        <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px" onclick="copyOutput('${trafficId}',this)">Copy</button>
+      </div>
+      <pre id="${trafficId}" class="detail-output">${escHtml(traffic || '(no packets captured)')}</pre>
+      <div class="detail-note">Captured ${at.replace('T', ' ').slice(0, 19)}</div>
+    </div>`;
+  }
+
+  function fingerprintPanelHtml(id, d) {
+    return fingerprintCallHtml('Successful call', d.fp_ok_status,
+        `fpoktraffic-${id}`, d.fp_ok_traffic, d.fp_ok_at, true)
+      + fingerprintCallHtml('Unsuccessful call', d.fp_err_status,
+        `fperrtraffic-${id}`, d.fp_err_traffic, d.fp_err_at, false);
+  }
+
+  function switchDetailTab(key) {
+    document.querySelectorAll('#detail-subtabs .sub-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === key));
+    document.querySelectorAll('[data-tab-panel]').forEach(p =>
+      p.style.display = (p.dataset.tabPanel === key) ? '' : 'none');
   }
 
   // ── Reports ───────────────────────────────────────────────────────────────
@@ -4106,6 +4163,20 @@
     _cleanupMenu.classList.remove('open');
     dockerCleanup(false, true);
   });
+
+  // ── Keep fixed panels clear of the bottom dock ──────────────────────────────
+  // #bottom-dock's height changes (pagination-only vs. log console open/
+  // collapsed/expanded) but #detail-drawer is a separate fixed-position panel
+  // that doesn't sit in the same flex column, so it needs the current dock
+  // height mirrored into a CSS var to know how much to leave clear at its own
+  // bottom edge.
+  (function () {
+    const dock = document.getElementById('bottom-dock');
+    if (!dock) return;
+    const setDockH = () => document.documentElement.style.setProperty('--dock-h', `${dock.offsetHeight}px`);
+    setDockH();
+    new ResizeObserver(setDockH).observe(dock);
+  })();
 
   // Start
   window.loadImages = loadImagesWithCache;

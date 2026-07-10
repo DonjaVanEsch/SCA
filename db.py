@@ -128,13 +128,18 @@ CREATE TABLE IF NOT EXISTS images (
 -- ── Run labels ────────────────────────────────────────────────────────────
 -- docker_host: the DOCKER_HOST value active when the run was created ('' = local
 -- engine). Lets the Reports tab show which remote/local target produced a run.
+-- Unique per (name, docker_host) rather than name alone -- the auto-generated
+-- batch name is date + active filters with no time component, so running the
+-- same filter set against a different host later the same day must start a
+-- new run instead of merging into the other host's run.
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
-    name        TEXT    UNIQUE NOT NULL,
+    name        TEXT    NOT NULL,
     created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
     status      TEXT    NOT NULL DEFAULT 'running',
     finished_at TEXT,
-    docker_host TEXT    NOT NULL DEFAULT ''
+    docker_host TEXT    NOT NULL DEFAULT '',
+    UNIQUE(name, docker_host)
 );
 
 -- ── Result tables ──────────────────────────────────────────────────────────
@@ -165,6 +170,28 @@ CREATE TABLE IF NOT EXISTS test_results (
     response_data TEXT,
     output        TEXT,
     tested_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+    run_id        INTEGER REFERENCES runs(id)
+);
+
+-- Real network traffic captured (via a tcpdump sidecar sniffing the target
+-- container's own network namespace) against a running container, for
+-- fingerprinting. call_type distinguishes the successful probe (GET
+-- /version, expected 200) from the deliberately-invalid one (GET to a
+-- nonexistent path) -- exactly 2 rows per fingerprint pass. traffic_raw is
+-- the genuine on-the-wire packet dump (tcpdump -XX -v text), not a
+-- reconstruction from either side -- that's what a network fingerprint
+-- actually keys off.
+CREATE TABLE IF NOT EXISTS fingerprints (
+    id            INTEGER PRIMARY KEY,
+    image_id      INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    host          TEXT    NOT NULL DEFAULT '',
+    call_type     TEXT    NOT NULL CHECK(call_type IN ('success','failure')),
+    method        TEXT    NOT NULL,
+    path          TEXT    NOT NULL,
+    status_code   INTEGER,
+    traffic_raw   TEXT,
+    error_msg     TEXT,
+    captured_at   TEXT DEFAULT CURRENT_TIMESTAMP,
     run_id        INTEGER REFERENCES runs(id)
 );
 
@@ -264,6 +291,8 @@ CREATE INDEX IF NOT EXISTS idx_img_ignored  ON images(ignored);
 CREATE INDEX IF NOT EXISTS idx_img_tag      ON images(image_tag);
 CREATE INDEX IF NOT EXISTS idx_test_image   ON test_results(image_id);
 CREATE INDEX IF NOT EXISTS idx_test_time    ON test_results(tested_at);
+CREATE INDEX IF NOT EXISTS idx_fp_image     ON fingerprints(image_id);
+CREATE INDEX IF NOT EXISTS idx_fp_time      ON fingerprints(captured_at);
 CREATE INDEX IF NOT EXISTS idx_lva_libver   ON lib_version_algorithms(lib_version_id);
 CREATE INDEX IF NOT EXISTS idx_lva_algo     ON lib_version_algorithms(algorithm_id);
 CREATE INDEX IF NOT EXISTS idx_mp_lib       ON migration_paths(library_id);
@@ -334,13 +363,15 @@ JOIN libraries     lib  ON lib.id  = libv.library_id;
 
 
 def _status_sql() -> str:
-    """image_details, plus build/test status scoped to one Docker host.
+    """image_details, plus build/test/fingerprint status scoped to one Docker host.
 
-    Contains two '?' placeholders (build host, test host) that must be bound
-    to the SAME host value, in that order, before any other query params.
-    Superset of image_details' columns, so existing filters/sorts on
-    language/framework/... keep working unchanged; adds build_success,
-    built_at, build_output, build_run, test_success, tested_at, test_output.
+    Contains four '?' placeholders (build host, test host, fingerprint-success
+    host, fingerprint-failure host) that must all be bound to the SAME host
+    value, in that order, before any other query params. Superset of
+    image_details' columns, so existing filters/sorts on language/framework/...
+    keep working unchanged; adds build_success, built_at, build_output,
+    build_run, test_success, tested_at, test_output, fp_ok_status,
+    fp_ok_traffic, fp_ok_at, fp_err_status, fp_err_traffic, fp_err_at.
     """
     return """
     SELECT
@@ -351,7 +382,13 @@ def _status_sql() -> str:
         br.name       AS build_run,
         t.success     AS test_success,
         t.tested_at   AS tested_at,
-        t.output      AS test_output
+        t.output      AS test_output,
+        fpo.status_code  AS fp_ok_status,
+        fpo.traffic_raw  AS fp_ok_traffic,
+        fpo.captured_at  AS fp_ok_at,
+        fpe.status_code  AS fp_err_status,
+        fpe.traffic_raw  AS fp_err_traffic,
+        fpe.captured_at  AS fp_err_at
     FROM image_details d
     LEFT JOIN build_results b ON b.image_id = d.id AND b.host = ?
     LEFT JOIN runs br ON br.id = b.run_id
@@ -359,6 +396,16 @@ def _status_sql() -> str:
         SELECT tr.id FROM test_results tr
         WHERE tr.image_id = d.id AND tr.host = ?
         ORDER BY tr.tested_at DESC LIMIT 1
+    )
+    LEFT JOIN fingerprints fpo ON fpo.id = (
+        SELECT f.id FROM fingerprints f
+        WHERE f.image_id = d.id AND f.host = ? AND f.call_type = 'success'
+        ORDER BY f.captured_at DESC LIMIT 1
+    )
+    LEFT JOIN fingerprints fpe ON fpe.id = (
+        SELECT f.id FROM fingerprints f
+        WHERE f.image_id = d.id AND f.host = ? AND f.call_type = 'failure'
+        ORDER BY f.captured_at DESC LIMIT 1
     )
     """
 
@@ -406,6 +453,15 @@ def init_db() -> None:
                 DROP TABLE build_results_old;
             """)
 
+        # fingerprints moved from separate request_raw/response_raw text
+        # reconstructions to a single traffic_raw genuine tcpdump capture --
+        # drop and let _SCHEMA below recreate the new shape. Rows are just a
+        # capture cache re-derived by re-running the fingerprint action, so
+        # there's nothing worth migrating forward.
+        fp_cols = {row[1] for row in conn.execute("PRAGMA table_info(fingerprints)")}
+        if fp_cols and "traffic_raw" not in fp_cols:
+            conn.execute("DROP TABLE fingerprints")
+
         conn.executescript(_SCHEMA)
         # Add columns to existing tables (safe to call repeatedly)
         for ddl in [
@@ -421,6 +477,44 @@ def init_db() -> None:
                 conn.execute(ddl)
             except Exception:
                 pass
+
+        # runs moved from UNIQUE(name) to UNIQUE(name, docker_host) so the
+        # same batch name can be reused against a different Docker host
+        # without merging into the other host's run. SQLite can't ALTER a
+        # UNIQUE constraint in place, so rebuild when an old-shape table is
+        # found (checked here, after the ALTER above guarantees docker_host
+        # exists on every row).
+        runs_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='runs'"
+        ).fetchone()
+        if runs_row and "UNIQUE(name, docker_host)" not in runs_row[0]:
+            # build_results/test_results hold a run_id FK into runs, so a
+            # plain rename+drop leaves their FK text pointing at the
+            # dropped intermediate table -- disable FK enforcement for the
+            # rebuild, then use a second rename through that same
+            # intermediate name to make SQLite rewrite their FK text back
+            # to "runs" (its rename-triggered FK-text-rewrite only fires
+            # when the CURRENTLY referenced name is renamed away).
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.executescript("""
+                ALTER TABLE runs RENAME TO runs_old;
+                CREATE TABLE runs_tmp (
+                    id          INTEGER PRIMARY KEY,
+                    name        TEXT    NOT NULL,
+                    created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    status      TEXT    NOT NULL DEFAULT 'running',
+                    finished_at TEXT,
+                    docker_host TEXT    NOT NULL DEFAULT '',
+                    UNIQUE(name, docker_host)
+                );
+                INSERT INTO runs_tmp (id, name, created_at, status, finished_at, docker_host)
+                    SELECT id, name, created_at, status, finished_at, docker_host FROM runs_old;
+                DROP TABLE runs_old;
+                ALTER TABLE runs_tmp RENAME TO runs_old;
+                ALTER TABLE runs_old RENAME TO runs;
+            """)
+            conn.execute("PRAGMA foreign_keys=ON")
+
         conn.executescript(_VIEW)
 
 
@@ -1302,9 +1396,13 @@ def get_filter_options() -> dict:
 
 
 def get_or_create_run(name: str, host: str = "") -> int:
-    """Get an existing run by name or create it, returning the run id."""
+    """Get an existing run for this (name, host) pair or create it, returning
+    the run id. Scoped by host so reusing a batch name against a different
+    Docker host starts a new run rather than merging into the other host's."""
     with _connect() as conn:
-        row = conn.execute("SELECT id FROM runs WHERE name=?", (name,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM runs WHERE name=? AND docker_host=?", (name, host)
+        ).fetchone()
         if row:
             return row[0]
         cur = conn.execute(
@@ -1428,13 +1526,13 @@ def get_images(filters: dict | None = None,
     with _connect() as conn:
         total  = conn.execute(
             f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
-            [host, host] + params,
+            [host, host, host, host] + params,
         ).fetchone()[0]
 
         offset = (page - 1) * per_page
         rows   = conn.execute(
             f"SELECT * FROM ({status_sql}) s {where_sql} {order_sql} LIMIT ? OFFSET ?",
-            [host, host] + params + [per_page, offset],
+            [host, host, host, host] + params + [per_page, offset],
         ).fetchall()
 
     return {
@@ -1453,7 +1551,7 @@ def get_images_by_ids(image_ids: list, host: str = "") -> list[dict]:
         ph   = ",".join("?" * len(image_ids))
         rows = conn.execute(
             f"SELECT * FROM ({_status_sql()}) s WHERE id IN ({ph})",
-            [host, host] + list(image_ids),
+            [host, host, host, host] + list(image_ids),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1464,7 +1562,7 @@ def get_ignored_images(host: str = "") -> list[dict]:
         rows = conn.execute(
             f"SELECT * FROM ({_status_sql()}) s WHERE ignored = 1 "
             "ORDER BY language, framework, library",
-            [host, host],
+            [host, host, host, host],
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1494,7 +1592,7 @@ def get_all_ids_for_filter(filters: dict,
     with _connect() as conn:
         rows = conn.execute(
             f"SELECT id FROM ({_status_sql()}) s {where_sql}",
-            [host, host] + params,
+            [host, host, host, host] + params,
         ).fetchall()
     return [r[0] for r in rows]
 
@@ -1590,6 +1688,31 @@ def save_test_result(image_id: int, success: bool,
              json.dumps(response_data) if response_data is not None else None,
              output, tested_at, run_id),
         )
+
+
+def save_fingerprint_results(image_id: int,
+                             success_rec: dict | None,
+                             failure_rec: dict | None,
+                             run_id: int | None = None,
+                             host: str = "") -> None:
+    """Store the 2-record network-traffic capture (1 successful call + 1
+    failed call) taken against a running container for one fingerprint pass.
+    Either record may be None if the container never came up far enough to
+    probe (still writes whichever one succeeded)."""
+    captured_at = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        for call_type, rec in (("success", success_rec), ("failure", failure_rec)):
+            if rec is None:
+                continue
+            conn.execute(
+                """INSERT INTO fingerprints
+                       (image_id, host, call_type, method, path, status_code,
+                        traffic_raw, error_msg, captured_at, run_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (image_id, host, call_type, rec.get("method", ""), rec.get("path", ""),
+                 rec.get("status_code"), rec.get("traffic_raw", ""), rec.get("error", ""),
+                 captured_at, run_id),
+            )
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -1728,7 +1851,7 @@ def get_pending_images(filters: dict | None = None,
     with _connect() as conn:
         total = conn.execute(
             f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
-            [host, host] + params,
+            [host, host, host, host] + params,
         ).fetchone()[0]
 
         offset = (page - 1) * per_page
@@ -1739,7 +1862,7 @@ def get_pending_images(filters: dict | None = None,
             {where_sql}
             ORDER BY language, lang_version, framework, fw_version, library, lib_version
             LIMIT ? OFFSET ?
-        """, [host, host] + params + [per_page, offset]).fetchall()
+        """, [host, host, host, host] + params + [per_page, offset]).fetchall()
 
     return {
         "total": total, "page": page, "per_page": per_page,

@@ -217,12 +217,18 @@ def get_ignored_images_route():
 
 @app.route("/api/action", methods=["POST"])
 def action():
-    """Start a build / test / remove / stop job for the given image ids.
+    """Start a build / test / fingerprint / remove / stop job for the given image ids.
 
-    Body: {"action": "build"|"test"|"remove"|"stop",
+    Body: {"action": "build"|"test"|"fingerprint"|"remove"|"stop",
            "image_ids": [1, 2, ...],
-           "options": {"no_cache": false, "skip_existing": false}}
+           "options": {"no_cache": false, "skip_existing": false, "fingerprint": false}}
     Returns: {"job_id": "..."}
+
+    "fingerprint" (options.fingerprint=true on a "test" action, or its own
+    "fingerprint" action) captures network traffic -- one successful and one
+    failed call -- against the running container. When both test and
+    fingerprint are requested together, the frontend sends a single "test"
+    action with options.fingerprint=true so the container only starts once.
     """
     data       = request.json or {}
     action_str = data.get("action", "")
@@ -230,7 +236,7 @@ def action():
     opts       = data.get("options", {})
     run_name   = data.get("run_name", "")
 
-    if action_str not in ("build", "test", "remove", "stop", "mark_success", "run_container"):
+    if action_str not in ("build", "test", "fingerprint", "remove", "stop", "mark_success", "run_container"):
         return jsonify({"error": f"Unknown action: {action_str}"}), 400
     if not image_ids:
         return jsonify({"error": "No image ids provided"}), 400
@@ -249,6 +255,10 @@ def action():
     def run():
         run_id     = db.get_or_create_run(run_name, host=host) if run_name else None
         stop_event = _jobs[job_id]["stop_event"]
+
+        def _save_fp(entry, success_rec, failure_rec):
+            db.save_fingerprint_results(entry["_id"], success_rec, failure_rec, run_id, host=host)
+
         try:
             if action_str == "build":
                 def _save_build(entry, r):
@@ -280,10 +290,21 @@ def action():
                         r.get("output",     ""),
                         run_id, host=host,
                     )
+                fingerprint = bool(opts.get("fingerprint"))
                 manager._do_test(
                     entries,
                     log_fn=log,
                     save_fn=_save_test,
+                    stop_event=stop_event,
+                    fingerprint=fingerprint,
+                    save_fingerprint_fn=_save_fp if fingerprint else None,
+                )
+
+            elif action_str == "fingerprint":
+                manager._do_fingerprint(
+                    entries,
+                    log_fn=log,
+                    save_fn=_save_fp,
                     stop_event=stop_event,
                 )
 
