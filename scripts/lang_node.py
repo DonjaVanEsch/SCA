@@ -772,6 +772,26 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             if lib_npm else ""
         )
         scaffold_deps = " ".join(["git", *sys_deps])
+        # Cache-key diversifier (2026-07-12): every AdonisJS combo sharing
+        # the same node_ver+major has an IDENTICAL Dockerfile up through the
+        # `create-adonisjs` scaffold step (it doesn't vary per library) --
+        # deliberately left cacheable, since re-scaffolding from scratch
+        # costs ~60s. Confirmed via a real docker build+run that under
+        # parallel builds (this project's own --workers flag), BuildKit can
+        # reuse a cached `COPY routes.ts` layer from a DIFFERENT library's
+        # build sharing that same parent chain -- e.g. a `tweetnacl` image
+        # crashing at runtime with `Cannot find module 'node-jose'`, even
+        # though the on-disk routes.ts for that build was verified correct.
+        # Same root cause/class as the earlier Express+jose+crypto-js
+        # incident (see project memory), just one instruction later in the
+        # chain. `ARG` (a value baked directly into the generated Dockerfile
+        # text, not passed via `--build-arg`) forces a distinct cache
+        # lineage per combo from this point on WITHOUT invalidating the
+        # expensive shared scaffold step above it -- doesn't eliminate
+        # whatever race exists in BuildKit's cache store under concurrency,
+        # but makes a collision far less likely by making the cache key
+        # space leading into `COPY routes.ts` genuinely distinct per combo.
+        cache_bust = f'ARG PQC_LIB_ID="{lib_npm or lib_name}@{lib_ver}"\n'
         # NOT converted to multi-stage this pass: our CMD runs AdonisJS's
         # own dev-mode `ace serve`, which genuinely needs the scaffold's
         # devDependencies (its CLI/hot-reload tooling) present at runtime --
@@ -790,6 +810,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             "    && rm -rf /var/lib/apt/lists/*\n"
             f"{liboqs_stage}"
             "RUN npx --yes create-adonisjs@latest . --kit=api\n"
+            f"{cache_bust}"
             f"{npm_install_line}"
             "COPY routes.ts start/routes.ts\n"
             "EXPOSE 8000\n"

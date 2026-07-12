@@ -394,6 +394,46 @@ def _registry_error(output):
     return None
 
 
+# ── Stale build-cache detection ────────────────────────────────────────────────
+# Node's classic CommonJS resolution failure and Python's import failure both
+# name the exact missing package -- directly comparable against the combo's
+# own expected library. Confirmed twice in this project (Express+jose+
+# crypto-js, AdonisJS+routes.ts, see project memory) that a container
+# crashing with "missing module X" where X does NOT match the image's own
+# tagged library means Docker/BuildKit reused a cached layer (COPY app.js /
+# COPY routes.ts) from a DIFFERENT combo's build -- the on-disk source for
+# the failing combo was verified correct both times, and a plain rebuild
+# fixed it. This is a real, if infrequent, risk under this project's own
+# parallel builds (many combos sharing an identical Dockerfile prefix up to
+# the point their app code diverges), not a code/registry bug to chase.
+_MISSING_MODULE_PATTERNS = [
+    re.compile(r"Cannot find module '([^']+)'"),   # Node (CommonJS require)
+    re.compile(r"No module named '([^']+)'"),      # Python (ModuleNotFoundError)
+]
+
+
+def _stale_cache_hint(output: str, expected_library: str) -> str | None:
+    """None for an ordinary failure. A short hint string when the container's
+    logs name a missing module that does NOT match this combo's own
+    expected library -- likely the stale-build-cache issue above, not a
+    real incompatibility, so worth flagging distinctly rather than treating
+    like every other failure."""
+    if not expected_library:
+        return None
+    expected = expected_library.lower().lstrip("@").replace("/", "")
+    for pattern in _MISSING_MODULE_PATTERNS:
+        m = pattern.search(output)
+        if not m:
+            continue
+        missing = m.group(1).split("/")[0].lower().lstrip("@")
+        if missing and expected and missing not in expected and expected not in missing:
+            return (f"missing module '{m.group(1)}' doesn't match this combo's own "
+                     f"library ('{expected_library}') -- likely a stale Docker build "
+                     f"cache serving a different combo's source file, not a real "
+                     f"failure; this usually resolves on a plain rebuild/retest")
+    return None
+
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
@@ -1096,6 +1136,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
         )
         output_text = (logs.stdout + logs.stderr).strip()
 
+        cache_hint = None
         if not (root_ok and version_ok):
             state = subprocess.run(
                 ["docker", "inspect", "--format", "{{.State.Status}}", name],
@@ -1104,6 +1145,9 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             log_fn(f"         container state: {state}  last-err: {last_err}")
             for line in output_text.splitlines()[:30]:
                 log_fn(f"         | {line}")
+            cache_hint = _stale_cache_hint(output_text, e.get("library", ""))
+            if cache_hint:
+                log_fn(f"         ⚠ {cache_hint}")
 
         if fingerprint:
             fp_success, fp_failure = _capture_fingerprint(name, _docker_target_host(), port)
@@ -1119,11 +1163,15 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
         else:
             log_fn(f"         FAIL  ({fail_reason} did not respond correctly)")
 
+        error_text = fail_reason if not ok else ""
+        if cache_hint:
+            error_text = f"{error_text} -- {cache_hint}" if error_text else cache_hint
+
         _finish({
             "success":      ok,
             "root_ok":      root_ok,
             "version_ok":   version_ok,
-            "error":        fail_reason if not ok else "",
+            "error":        error_text,
             "version_data": version_data,
             "output":       output_text,
         })
