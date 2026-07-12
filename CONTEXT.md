@@ -583,7 +583,7 @@ images/{lang}/{lang_ver}/{Framework}/{fw_major}/{CryptoLib}/{lib_ver}/
 ```
 
 ### Dockerfile pattern
-1. **Multi-stage** where possible: compile/build in a fat image, copy artefact to a minimal runtime image
+1. **Multi-stage** where possible: compile/build in a fat image, copy artefact to a minimal runtime image. This was skipped for Python/PHP/Node's first passes and only retrofitted 2026-07-11 once ~276GB of built images made the cost obvious — **for any new language, decide this up front, not as a later retrofit**: check whether the Dockerfile installs a compiler/build toolchain (gcc, cmake, node-gyp's python3/make/g++, a JDK, a full SDK, etc.) that the RUNNING app never needs, and if so, split into a `builder` stage (keeps the toolchain, does the install/compile) and a final stage that starts fresh from the same base image and only `COPY --from=builder`s the built artefact (installed packages, a compiled binary, a JAR). Verify with a real `docker build+run` per combo (does it still start and serve `/version` correctly) AND measure the actual size delta (`docker images <tag> --format {{.Size}}` before/after) before rolling it out — don't assume it helps or is even needed (PHP's one compiling combo only shrank ~14%, since the base image's own weight dominated there, versus Python's universal ~70-73%). Also confirm multi-stage doesn't measurably slow the build itself (timed A/B on this project's own Python case: no measurable difference, since the expensive install/compile step is identical in both stages and the final stage's `COPY --from=builder` is cheap).
 2. Install system deps before app deps for better layer caching
 3. `EXPOSE 8000` always
 4. `CMD` runs the app on `0.0.0.0:8000`
@@ -628,10 +628,12 @@ Java and .NET were both originally built with a "pinned milestone" design (a han
 ```bash
 # Generate all image contexts for a language
 python scripts/generate_images.py --lang python
-python scripts/generate_images.py --lang go
 python scripts/generate_images.py --lang node
 python scripts/generate_images.py --lang java
 python scripts/generate_images.py --lang dotnet
+python scripts/generate_images.py --lang php
+# Go was dropped from the project (2026-07-11); its registry/lang_go.py were
+# moved to scripts/archive/ rather than deleted, in case it's ever revived.
 
 # ── CLI (manager.py) ──────────────────────────────────────────────────────────
 
