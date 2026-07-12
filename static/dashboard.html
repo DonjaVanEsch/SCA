@@ -2017,6 +2017,15 @@
           <button class="sub-tab" data-report="pending">Pending</button>
         </div>
       </div>
+      <div id="run-summary-bar" style="display:none;align-items:center;gap:14px;padding:8px 12px;margin:0 0 8px;
+           background:var(--surface2, var(--surface));border:1px solid var(--border);border-radius:6px;font-size:12px">
+        <strong id="run-summary-name" style="font-family:var(--mono)"></strong>
+        <span id="run-summary-build"></span>
+        <span id="run-summary-test"></span>
+        <span id="run-summary-duration" style="color:var(--muted2)"></span>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost btn-sm" id="btn-view-run-log">View full log</button>
+      </div>
       <div id="report-table-wrap">
         <table id="report-table" style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
@@ -2239,11 +2248,23 @@
             <div class="sel-menu-item" id="mnu-cleanup-dry">Dry run (preview)</div>
           </div>
         </div>
+        <div class="sel-menu-wrap" id="orphans-wrap">
+          <button class="btn btn-ghost btn-sm" id="btn-orphans" title="Remove images not in the current registry">🗑 Orphaned images ▾</button>
+          <div class="sel-menu" id="orphans-menu">
+            <div class="sel-menu-item" id="mnu-orphans-remove">Remove orphaned images</div>
+            <div class="sel-menu-sep"></div>
+            <div class="sel-menu-item" id="mnu-orphans-dry">Dry run (preview)</div>
+          </div>
+        </div>
       </div>
       <p class="settings-hint">
         Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
         registry metadata and re-syncs from disk (only needed after a registry change).
         Cleanup removes unused Docker containers, images, build cache, and (full) volumes.
+        Orphaned images are <code>pqc-*</code> tagged images built for a combo that no
+        longer exists in the current <code>images/</code> tree (e.g. after a registry fix
+        narrowed a version range, or a language was dropped) — Docker's own cleanup has no
+        way to know this, since it only tracks container references.
       </p>
     </div>
     <div class="review-panel-footer">
@@ -2815,6 +2836,7 @@
         while (sel.options.length > 1) sel.remove(1);
         runs.forEach(r => {
           const opt = new Option(r.name, r.name);
+          opt.dataset.host = r.docker_host || '';
           const host = `host: ${hostLabel(r.docker_host || '')}`;
           if (r.duration_seconds != null) {
             const s = r.duration_seconds;
@@ -3639,8 +3661,69 @@
   // ── Reports ───────────────────────────────────────────────────────────────
   const reportState = { page: 1, perPage: 100, total: 0, pages: 1 };
 
+  async function loadRunSummary() {
+    const sel = document.getElementById('rf-run');
+    const bar = document.getElementById('run-summary-bar');
+    const name = sel.value;
+    if (!name) { bar.style.display = 'none'; return; }
+    const host = sel.selectedOptions[0]?.dataset.host || '';
+    try {
+      const s = await api(`/api/runs/summary?name=${encodeURIComponent(name)}&host=${encodeURIComponent(host)}`);
+      document.getElementById('run-summary-name').textContent = s.name;
+      document.getElementById('run-summary-build').innerHTML =
+        `Build: <span style="color:var(--success)">${s.build_passed} passed</span> / <span style="color:var(--danger)">${s.build_failed} failed</span>`;
+      document.getElementById('run-summary-test').innerHTML =
+        `Test: <span style="color:var(--success)">${s.test_passed} passed</span> / <span style="color:var(--danger)">${s.test_failed} failed</span>`;
+      const d = s.duration_seconds;
+      document.getElementById('run-summary-duration').textContent = d != null
+        ? `duration: ${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`
+        : (s.status === 'running' ? 'still running…' : '');
+      bar.style.display = 'flex';
+      bar.dataset.runName = name;
+      bar.dataset.runHost = host;
+    } catch {
+      bar.style.display = 'none';
+    }
+  }
+
+  async function viewRunLog(name, host) {
+    try {
+      const data = await api(`/api/runs/summary?name=${encodeURIComponent(name)}&host=${encodeURIComponent(host || '')}`);
+      const con = document.getElementById('log-console');
+      const body = document.getElementById('log-body');
+      const dot = document.getElementById('log-dot');
+      if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+      document.getElementById('log-title').textContent = `Run log — ${name}`;
+      document.getElementById('log-status').textContent = data.status === 'running' ? 'Running…' : 'Done';
+      document.getElementById('log-progress').textContent = '';
+      document.getElementById('log-elapsed').textContent = data.duration_seconds != null
+        ? _fmtElapsed(data.duration_seconds * 1000) : '';
+      document.getElementById('btn-cancel-job').style.display = 'none';
+      body.innerHTML = '';
+      const text = data.log_text || '(no saved log for this run)';
+      text.split('\n').forEach(line => {
+        const div = document.createElement('div');
+        div.textContent = line;
+        body.appendChild(div);
+      });
+      dot.className = 'done';
+      con.classList.add('open');
+      con.classList.remove('collapsed');
+      document.getElementById('btn-collapse-log').textContent = '▼';
+      body.scrollTop = 0;
+    } catch (e) {
+      toast(`Failed to load run log: ${e.message}`, 'err');
+    }
+  }
+
+  document.getElementById('btn-view-run-log').addEventListener('click', () => {
+    const bar = document.getElementById('run-summary-bar');
+    if (bar.dataset.runName) viewRunLog(bar.dataset.runName, bar.dataset.runHost);
+  });
+
   async function loadReports(page = 1) {
     reportState.page = page;
+    loadRunSummary();
     const isPending = state.reportType === 'pending';
     const base = {
       language: document.getElementById('rf-lang').value,
@@ -4403,6 +4486,38 @@
   document.getElementById('mnu-cleanup-dry').addEventListener('click', () => {
     _cleanupMenu.classList.remove('open');
     dockerCleanup(false, true);
+  });
+
+  // ── Orphaned image cleanup ───────────────────────────────────────────────
+  async function removeOrphans(dryRun) {
+    const label = dryRun ? 'Orphaned images — dry run' : 'Removing orphaned images';
+    try {
+      const r = await api('/api/remove-orphans', {
+        method: 'POST',
+        body: JSON.stringify({ dry_run: dryRun }),
+      });
+      openLog(label, r.job_id, 'remove-orphans');
+    } catch (e) {
+      toast(`Orphaned-image cleanup failed: ${e.message}`, 'err');
+    }
+  }
+
+  const _orphansMenu = document.getElementById('orphans-menu');
+  document.getElementById('btn-orphans').addEventListener('click', e => {
+    e.stopPropagation();
+    _orphansMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', () => _orphansMenu.classList.remove('open'));
+  _orphansMenu.addEventListener('click', e => e.stopPropagation());
+
+  document.getElementById('mnu-orphans-remove').addEventListener('click', () => {
+    _orphansMenu.classList.remove('open');
+    if (!confirm('Remove all Docker images not present in the current registry/images tree?')) return;
+    removeOrphans(false);
+  });
+  document.getElementById('mnu-orphans-dry').addEventListener('click', () => {
+    _orphansMenu.classList.remove('open');
+    removeOrphans(true);
   });
 
   // ── Keep fixed panels clear of the bottom dock ──────────────────────────────

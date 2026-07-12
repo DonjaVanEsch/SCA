@@ -507,27 +507,62 @@ _LIBOQS_PYTHON_STAGE = (
 # briefly had it back). Python 3.9-3.11's OWN bundled setuptools predates all
 # of this and is left untouched by the `import setuptools` check; only the
 # 3.12+ branch that actively installs a fresh setuptools needs the cap.
+#
+# Multi-stage (2026-07-11): every image was previously single-stage, so the
+# full build-essential/gcc/libffi-dev/libssl-dev toolchain (~150-250MB) ended
+# up permanently baked into every one of this project's ~5,500+ Python
+# images, even the ones (hashlib, most pycryptodome/cryptography/pyOpenSSL
+# releases -- anything with a manylinux wheel for the target Python) that
+# never compile a single line of C. Split into a `builder` stage (keeps the
+# full toolchain, plus cmake/ninja/git for liboqs-python) that `pip install
+# --user`s everything, and a final stage that starts fresh from the same
+# base image and only `COPY --from=builder`s the installed packages
+# (`/root/.local`) -- Python's own `site` module auto-adds
+# `~/.local/lib/python{X.Y}/site-packages` for the SAME interpreter version,
+# so no PYTHONPATH wiring is needed. Confirmed via a real `docker run` that
+# both `python:{ver}-slim` (bookworm) and `-slim-bullseye` already ship
+# libssl.so.3/libffi.so.8 (resp. libssl.so.1.1/libffi.so.7) out of the box
+# -- as a dependency of Python's own ssl/_ctypes modules -- so M2Crypto
+# (dynamically linked against system OpenSSL) and cffi-based extensions
+# need NO extra runtime package at all. The one confirmed exception is
+# PyNaCl: libsodium is NOT part of any base image, so its runtime stage gets
+# `libsodium23` explicitly (covers the rare case pip falls back to a source
+# build instead of a prebuilt wheel). liboqs-python's compiled `liboqs*.so`
+# is copied from the builder stage instead of an apt package.
 def make_dockerfile(python_ver: str, lib_name: str, lib_ver: str) -> str:
     if _needs_legacy_openssl(lib_name, lib_ver):
         base_image = f"python:{python_ver}-slim-bullseye"
     else:
         base_image = f"python:{python_ver}-slim"
 
-    sys_deps = sorted({
+    build_sys_deps = sorted({
         "build-essential", "gcc", "libffi-dev", "libssl-dev",
         *LIB_META[lib_name]["sys_deps"],
     })
     if lib_name == "liboqs-python":
-        sys_deps = sorted(set(sys_deps) | {"cmake", "ninja-build", "git", "pkg-config"})
-    deps_line = " \\\n    ".join(sys_deps)
+        build_sys_deps = sorted(set(build_sys_deps) | {"cmake", "ninja-build", "git", "pkg-config"})
+    build_deps_line = " \\\n    ".join(build_sys_deps)
 
     liboqs_stage = _LIBOQS_PYTHON_STAGE if lib_name == "liboqs-python" else ""
+    liboqs_copy = (
+        "COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\n"
+        "RUN ldconfig\n"
+        "ENV LD_LIBRARY_PATH=/usr/local/lib\n"
+    ) if lib_name == "liboqs-python" else ""
+
+    runtime_apt = ""
+    if lib_name == "PyNaCl":
+        runtime_apt = (
+            "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+            "    libsodium23 \\\n"
+            "    && rm -rf /var/lib/apt/lists/*\n"
+        )
 
     return f"""\
-FROM {base_image}
+FROM {base_image} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    {deps_line} \\
+    {build_deps_line} \\
     && rm -rf /var/lib/apt/lists/*
 {liboqs_stage}
 WORKDIR /app
@@ -535,7 +570,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip wheel cffi pycparser \\
     && (python -c "import setuptools" 2>/dev/null || pip install --no-cache-dir "setuptools<81") \\
-    && pip install --no-cache-dir --no-build-isolation -r requirements.txt
+    && pip install --no-cache-dir --no-build-isolation --user -r requirements.txt
+
+FROM {base_image}
+{runtime_apt}{liboqs_copy}
+WORKDIR /app
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
 
 COPY app.py .
 

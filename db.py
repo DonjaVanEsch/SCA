@@ -473,6 +473,7 @@ def init_db() -> None:
             "ALTER TABLE runs ADD COLUMN status TEXT NOT NULL DEFAULT 'running'",
             "ALTER TABLE runs ADD COLUMN finished_at TEXT",
             "ALTER TABLE runs ADD COLUMN docker_host TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE runs ADD COLUMN log_text TEXT",
         ]:
             try:
                 conn.execute(ddl)
@@ -1445,6 +1446,60 @@ def update_run_status(run_id: int, status: str) -> None:
             "UPDATE runs SET status=?, finished_at=? WHERE id=?",
             (status, finished_at, run_id),
         )
+
+
+def save_run_log(run_id: int, log_text: str) -> None:
+    """Persist the full narrative log (the dashboard's bottom log panel
+    output -- section headers, per-image PASS/FAIL lines, etc.) for a run,
+    so it can be read back later. Distinct from build_results.output /
+    test_results.output, which capture each individual image's raw
+    stdout/stderr, not the combined run-level narrative."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE runs SET log_text=? WHERE id=?", (log_text, run_id)
+        )
+
+
+def get_run_summary(name: str, host: str = "") -> dict | None:
+    """One run's metadata (name, host, status, duration, saved log text)
+    plus build/test pass-fail counts, for the Reports tab's run summary.
+    Keyed by (name, host), matching get_or_create_run/the run-picker's own
+    dropdown value, rather than the internal numeric id."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, name, created_at, status, finished_at, docker_host, log_text "
+            "FROM runs WHERE name=? AND docker_host=?", (name, host)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        run_id = d["id"]
+
+        duration = None
+        if d.get("created_at") and d.get("finished_at"):
+            try:
+                t0 = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
+                t1 = datetime.fromisoformat(d["finished_at"].replace("Z", "+00:00"))
+                duration = int((t1 - t0).total_seconds())
+            except Exception:
+                pass
+        d["duration_seconds"] = duration
+
+        build_row = conn.execute(
+            "SELECT COALESCE(SUM(success), 0) AS passed, "
+            "       COALESCE(SUM(1 - success), 0) AS failed "
+            "FROM build_results WHERE run_id=?", (run_id,)
+        ).fetchone()
+        test_row = conn.execute(
+            "SELECT COALESCE(SUM(success), 0) AS passed, "
+            "       COALESCE(SUM(1 - success), 0) AS failed "
+            "FROM test_results WHERE run_id=?", (run_id,)
+        ).fetchone()
+        d["build_passed"] = build_row["passed"]
+        d["build_failed"] = build_row["failed"]
+        d["test_passed"]  = test_row["passed"]
+        d["test_failed"]  = test_row["failed"]
+        return d
 
 
 def get_cascading_filter_options(active: dict) -> dict:

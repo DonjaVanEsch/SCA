@@ -573,10 +573,51 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
     # 'composer:2' tag.
     security_flag = " --no-security-blocking" if composer_tag == "2" else ""
 
+    if lib_name != "php-liboqs":
+        # No compiler needed for a plain `composer install` (just unzip/git
+        # for package extraction) -- multi-stage would save almost nothing
+        # here, so this stays single-stage. See the "php-liboqs" branch
+        # below for the one PHP combo that genuinely benefits.
+        return (
+            f"FROM composer:{composer_tag} AS composer\n"
+            "\n"
+            f"FROM php:{php_ver}-cli\n"
+            f"{apt_sources}"
+            f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
+            f"    {extra_apt} \\\n"
+            "    && rm -rf /var/lib/apt/lists/*\n"
+            "COPY --from=composer /usr/bin/composer /usr/local/bin/composer\n"
+            "WORKDIR /app\n"
+            "ENV COMPOSER_ALLOW_SUPERUSER=1\n"
+            "COPY composer.json .\n"
+            f"RUN composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
+            "COPY index.php versions.php ./\n"
+            "EXPOSE 8000\n"
+            'CMD ["php", "-d", "display_errors=0", "-d", "log_errors=1", '
+            '"-S", "0.0.0.0:8000", "index.php"]\n'
+        )
+
+    # Multi-stage (2026-07-11): php-liboqs is the one PHP combo that compiles
+    # anything (liboqs itself via cmake/ninja, then the oqs PHP extension via
+    # phpize/make) -- cmake/ninja-build/gcc/g++/pkg-config/libssl-dev cost
+    # ~250MB+ and are only needed to PRODUCE liboqs.so + oqs.so, never to run
+    # them. `builder` keeps that toolchain and also runs `composer install`
+    # (composer/unzip/git are equally build-time-only -- the running app
+    # only needs `vendor/autoload.php` on disk, not the tool that put it
+    # there); the final stage starts fresh from the same `php:{ver}-cli`
+    # base and copies over just: liboqs's compiled shared library, the
+    # compiled `oqs.so` extension + its enabling ini (both land in
+    # version-specific paths that are identical between the two stages
+    # since both use the exact same base image, so copying the whole
+    # `extensions/`/`conf.d/` directories is simpler and just as correct as
+    # hardcoding the PHP build's internal API-version path), and `vendor/`.
+    # No apt-get at all is needed in the final stage -- confirmed via a real
+    # `docker run` that `php:{ver}-cli` already ships libssl/libcrypto
+    # (liboqs.so's own runtime dependency) out of the box.
     return (
         f"FROM composer:{composer_tag} AS composer\n"
         "\n"
-        f"FROM php:{php_ver}-cli\n"
+        f"FROM php:{php_ver}-cli AS builder\n"
         f"{apt_sources}"
         f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
         f"    {extra_apt} \\\n"
@@ -588,6 +629,14 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
         "ENV COMPOSER_ALLOW_SUPERUSER=1\n"
         "COPY composer.json .\n"
         f"RUN composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
+        "\n"
+        f"FROM php:{php_ver}-cli\n"
+        "COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\n"
+        "RUN ldconfig\n"
+        "COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/\n"
+        "COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/\n"
+        "WORKDIR /app\n"
+        "COPY --from=builder /app/vendor ./vendor\n"
         "COPY index.php versions.php ./\n"
         "EXPOSE 8000\n"
         'CMD ["php", "-d", "display_errors=0", "-d", "log_errors=1", '

@@ -735,6 +735,53 @@ def _do_docker_cleanup(full=False, dry_run=False, log_fn=print):
     log_fn("\nCleanup complete.")
 
 
+def _find_orphaned_image_tags(images_base=None) -> list:
+    """Docker images tagged 'pqc-*' that no longer correspond to any context
+    in the current images/ tree (e.g. a framework/library/version excluded
+    by a later registry fix, or a whole language dropped from the project).
+
+    docker's own `image prune` has no notion of "still valid per the current
+    registry" -- it only tracks container references, which this project's
+    build->test->stop workflow always clears anyway, so it can't tell an
+    orphan from a deliberately-kept fleet image. This walks the real
+    images/ tree (the source of truth for what SHOULD exist) and diffs it
+    against what actually exists on the engine.
+    """
+    base = Path(images_base) if images_base else IMAGES_BASE
+    entries = _collect(base)
+    expected_tags = {_image_tag(e) for e in entries}
+
+    r = subprocess.run(
+        ["docker", "images", "--format", "{{.Repository}}"],
+        capture_output=True, text=True,
+    )
+    actual_tags = {t for t in (r.stdout or "").splitlines() if t.startswith("pqc-")}
+    return sorted(actual_tags - expected_tags)
+
+
+def _do_remove_orphans(dry_run=False, log_fn=print):
+    """Remove (or, if dry_run, just report) Docker images tagged 'pqc-*'
+    that no longer correspond to anything in the current images/ tree."""
+    log_fn("\nScanning for orphaned images (built, but not in the current registry) ...\n")
+    orphans = _find_orphaned_image_tags()
+
+    if not orphans:
+        log_fn("No orphaned images found.")
+        return
+
+    if dry_run:
+        log_fn(f"[DRY RUN] Would remove {len(orphans)} orphaned image(s):\n")
+        for tag in orphans:
+            log_fn(f"  {tag}")
+        return
+
+    log_fn(f"Removing {len(orphans)} orphaned image(s) ...\n")
+    r = subprocess.run(["docker", "rmi", "-f", *orphans], capture_output=True, text=True)
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(f"  {line}")
+    log_fn(f"\nRemoved {len(orphans)} orphaned image(s).")
+
+
 def _do_stop_all(log_fn=print):
     """Stop and remove every container whose name starts with 'pqc-'."""
     proc = subprocess.run(
@@ -1251,6 +1298,20 @@ examples:
         help="Show what would be removed by --cleanup (no changes made)",
     )
     actions.add_argument(
+        "--remove-orphans",
+        action="store_true",
+        dest="remove_orphans",
+        help="Remove Docker images tagged 'pqc-*' that no longer correspond to "
+             "anything in the current images/ tree (e.g. after a registry fix "
+             "narrowed a combo, or a language was dropped)",
+    )
+    actions.add_argument(
+        "--remove-orphans-dry-run",
+        action="store_true",
+        dest="remove_orphans_dry_run",
+        help="Show which images --remove-orphans would remove (no changes made)",
+    )
+    actions.add_argument(
         "-y", "--yes",
         action="store_true",
         help=f"Skip confirmation when matched set exceeds {_CONFIRM_AT} contexts",
@@ -1290,7 +1351,9 @@ def main():
     parser = _build_parser()
     args   = parser.parse_args()
 
-    if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all or args.cleanup or args.cleanup_full or args.cleanup_dry_run):
+    if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all
+            or args.cleanup or args.cleanup_full or args.cleanup_dry_run
+            or args.remove_orphans or args.remove_orphans_dry_run):
         parser.print_help()
         sys.exit(0)
 
@@ -1298,6 +1361,12 @@ def main():
     if args.cleanup or args.cleanup_full or args.cleanup_dry_run:
         _require_docker()
         _do_docker_cleanup(full=args.cleanup_full, dry_run=args.cleanup_dry_run)
+        if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
+            sys.exit(0)
+
+    if args.remove_orphans or args.remove_orphans_dry_run:
+        _require_docker()
+        _do_remove_orphans(dry_run=args.remove_orphans_dry_run)
         if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
             sys.exit(0)
 

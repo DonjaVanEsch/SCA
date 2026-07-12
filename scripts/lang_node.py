@@ -669,6 +669,27 @@ _LIBOQS_NODE_STAGE = (
 )
 
 
+# Multi-stage (2026-07-11): a native node-gyp compile (sodium-native/bcrypt/
+# argon2's apt_block: python3/make/g++[/autoconf/automake/libtool]) or
+# liboqs-node's own heavier build (cmake/ninja/git/libssl-dev/pkg-config,
+# ~250MB+) previously stayed baked into the final image forever, and NestJS
+# needed the full TypeScript compiler present just to run its own compiled
+# output. `builder` keeps the toolchain, does the (only) `npm install`, and
+# for "typescript" additionally runs `npx tsc`; `npm prune --omit=dev`
+# then removes devDependency packages from the ALREADY-installed tree
+# in place. The final stage starts fresh and only `COPY --from=builder`s
+# the pruned `node_modules` (+ compiled `app.js` for NestJS, + the
+# self-contained `/opt/liboqs-node` tree for liboqs-node) -- no apt-get at
+# all in the final stage, since the native addons were already compiled by
+# npm in the builder and don't need recompiling. Deliberately NOT
+# `npm install --omit=dev` a second time in the final stage: that would
+# re-trigger the exact same native compile there, needing the toolchain a
+# second time and defeating the whole point. See registry node.json's
+# top-level notes for background.
+def _needs_multi_stage(kind: str, apt_block: str, lib_name: str) -> bool:
+    return bool(apt_block) or lib_name == "liboqs-node" or kind == "typescript"
+
+
 def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
     kind = _FW_KIND[fw_name]
     sys_deps = list(_lib_sys_deps(lib_name))
@@ -686,10 +707,14 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
         )
 
     liboqs_stage = _LIBOQS_NODE_STAGE if lib_name == "liboqs-node" else ""
+    liboqs_copy = (
+        "COPY --from=builder /opt/liboqs-node /opt/liboqs-node\n"
+        if lib_name == "liboqs-node" else ""
+    )
 
     if kind == "typescript":
         return (
-            f"FROM node:{node_ver}-slim\n"
+            f"FROM node:{node_ver}-slim AS builder\n"
             "WORKDIR /app\n"
             f"{apt_block}"
             f"{liboqs_stage}"
@@ -697,6 +722,13 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
             "RUN npm install --no-audit --no-fund\n"
             "COPY app.ts .\n"
             "RUN npx tsc\n"
+            "RUN npm prune --omit=dev\n"
+            "\n"
+            f"FROM node:{node_ver}-slim\n"
+            "WORKDIR /app\n"
+            f"{liboqs_copy}"
+            "COPY --from=builder /app/node_modules ./node_modules\n"
+            "COPY --from=builder /app/app.js .\n"
             "EXPOSE 8000\n"
             'CMD ["node", "app.js"]\n'
         )
@@ -705,6 +737,15 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
         # AdonisJS: scaffold the official minimal API starter, then
         # overwrite its routes file -- confirmed working end-to-end via a
         # real docker build+run (both endpoints curled on a live container).
+        # NOT converted to multi-stage this pass: our CMD runs AdonisJS's
+        # own dev-mode `ace serve`, which genuinely needs the scaffold's
+        # devDependencies (its CLI/hot-reload tooling) present at runtime --
+        # pruning them the way the other kinds do would break it. AdonisJS
+        # does have an official production `ace build` flow that compiles
+        # to a dependency-pruned `build/` directory instead, which is the
+        # right fix for its (by far the largest, 823MB-1.6GB) image size --
+        # flagged as a follow-up needing its own per-major verification
+        # pass, not silently done here alongside the safer conversions.
         return (
             f"FROM node:{node_ver}-slim\n"
             "WORKDIR /app\n"
@@ -720,11 +761,28 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
             'CMD ["node", "ace", "serve"]\n'
         )
 
+    if _needs_multi_stage(kind, apt_block, lib_name):
+        return (
+            f"FROM node:{node_ver}-slim AS builder\n"
+            "WORKDIR /app\n"
+            f"{apt_block}"
+            f"{liboqs_stage}"
+            "COPY package.json .\n"
+            "RUN npm install --no-audit --no-fund\n"
+            "RUN npm prune --omit=dev\n"
+            "\n"
+            f"FROM node:{node_ver}-slim\n"
+            "WORKDIR /app\n"
+            f"{liboqs_copy}"
+            "COPY --from=builder /app/node_modules ./node_modules\n"
+            "COPY app.js .\n"
+            "EXPOSE 8000\n"
+            'CMD ["node", "app.js"]\n'
+        )
+
     return (
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
-        f"{apt_block}"
-        f"{liboqs_stage}"
         "COPY package.json .\n"
         "RUN npm install --no-audit --no-fund\n"
         "COPY app.js .\n"

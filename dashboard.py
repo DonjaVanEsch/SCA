@@ -206,6 +206,22 @@ def get_runs():
     return jsonify(db.get_runs())
 
 
+@app.route("/api/runs/summary")
+def get_run_summary_route():
+    """Pass/fail counts, duration, and the saved narrative log text for one
+    run -- what the Reports tab's run summary/"view log" panel reads.
+    Query params: name (required), host (default '', matching the active
+    Docker host convention used everywhere else)."""
+    name = request.args.get("name", "")
+    host = request.args.get("host", "")
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    summary = db.get_run_summary(name, host)
+    if summary is None:
+        return jsonify({"error": "Run not found"}), 404
+    return jsonify(summary)
+
+
 @app.route("/api/stats")
 def get_stats():
     return jsonify(db.get_stats(host=_current_host()))
@@ -304,8 +320,12 @@ def action():
     entries = _entries_from_db_rows(rows)
     job_id, q = _new_job(action_str)
 
+    log_lines = []
+
     def log(msg=""):
-        q.put(str(msg))
+        text = str(msg)
+        log_lines.append(text)
+        q.put(text)
 
     def run():
         run_id     = db.get_or_create_run(run_name, host=host) if run_name else None
@@ -397,6 +417,7 @@ def action():
                 status = "interrupted" if stop_event.is_set() else "completed"
                 try:
                     db.update_run_status(run_id, status)
+                    db.save_run_log(run_id, "\n".join(log_lines))
                 except Exception:
                     pass
             _finish_job(job_id)
@@ -418,6 +439,29 @@ def docker_cleanup():
         try:
             manager._do_docker_cleanup(
                 full=full,
+                dry_run=dry_run,
+                log_fn=lambda msg="": q.put(str(msg)),
+            )
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/remove-orphans", methods=["POST"])
+def remove_orphans():
+    """Remove Docker images tagged 'pqc-*' with no context in the current
+    images/ tree. Body: {"dry_run": false}"""
+    data    = request.json or {}
+    dry_run = bool(data.get("dry_run", False))
+    job_id, q = _new_job(f"remove-orphans-{'dry-run' if dry_run else 'live'}")
+
+    def run():
+        try:
+            manager._do_remove_orphans(
                 dry_run=dry_run,
                 log_fn=lambda msg="": q.put(str(msg)),
             )
