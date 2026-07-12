@@ -690,7 +690,7 @@ def _needs_multi_stage(kind: str, apt_block: str, lib_name: str) -> bool:
     return bool(apt_block) or lib_name == "liboqs-node" or kind == "typescript"
 
 
-def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
+def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "") -> str:
     kind = _FW_KIND[fw_name]
     sys_deps = list(_lib_sys_deps(lib_name))
     needs_apt = bool(sys_deps) or lib_name == "liboqs-node" or fw_name == "AdonisJS"
@@ -737,6 +737,41 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
         # AdonisJS: scaffold the official minimal API starter, then
         # overwrite its routes file -- confirmed working end-to-end via a
         # real docker build+run (both endpoints curled on a live container).
+        #
+        # BUG FIXED 2026-07-12: the scaffold (`create-adonisjs`) creates its
+        # OWN package.json (Adonis's own deps only) -- write_context() never
+        # wrote a package.json for this "kind" at all, and nothing here ever
+        # installed the target crypto library, even though the injected
+        # routes.ts unconditionally `require()`s it. Every combo except
+        # "crypto" (Node builtin, no install needed) and "liboqs-node"
+        # (fetched separately, no npm install needed) failed at runtime with
+        # "Cannot find module '<lib>'" -- confirmed via a real docker run.
+        # Fixed by running `npm install <pkg>@<resolved-version>` against
+        # the scaffolded project AFTER scaffolding (adds to its existing
+        # package.json/node_modules rather than replacing them). The same
+        # gap existed for native (node-gyp) libraries' own sys_deps
+        # (python3/make/g++/...) -- previously only `git` was installed
+        # here, so bcrypt/argon2/sodium-native would have failed to compile
+        # too; merged into the same apt-get call below.
+        #
+        # `--legacy-peer-deps`: AdonisJS's own scaffold declares an OPTIONAL
+        # peer dependency on a specific bcrypt major via `@adonisjs/hash`
+        # (e.g. `@adonisjs/core@7.3.5` wants `bcrypt@^6.0.0`) -- confirmed
+        # via a real docker build failure installing `bcrypt@5.1.1` (npm's
+        # strict peer-dependency resolution, default since npm 7, refuses
+        # any version that doesn't satisfy it). This project deliberately
+        # installs specific old/pinned library versions for research
+        # regardless of what a framework's own optional peer wants, so
+        # `--legacy-peer-deps` (skip peer-dependency validation entirely,
+        # not `--force`, which also re-resolves already-installed packages)
+        # is the correct bypass -- the same class of fix as Composer's
+        # `--no-security-blocking` elsewhere in this project.
+        lib_npm = _lib_npm(lib_name)
+        npm_install_line = (
+            f"RUN npm install --no-audit --no-fund --legacy-peer-deps {lib_npm}@{lib_ver}\n"
+            if lib_npm else ""
+        )
+        scaffold_deps = " ".join(["git", *sys_deps])
         # NOT converted to multi-stage this pass: our CMD runs AdonisJS's
         # own dev-mode `ace serve`, which genuinely needs the scaffold's
         # devDependencies (its CLI/hot-reload tooling) present at runtime --
@@ -751,10 +786,11 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str) -> str:
             "WORKDIR /app\n"
             f"{apt_sources}"
             f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
-            "    git \\\n"
+            f"    {scaffold_deps} \\\n"
             "    && rm -rf /var/lib/apt/lists/*\n"
             f"{liboqs_stage}"
             "RUN npx --yes create-adonisjs@latest . --kit=api\n"
+            f"{npm_install_line}"
             "COPY routes.ts start/routes.ts\n"
             "EXPOSE 8000\n"
             'ENV PORT=8000 HOST=0.0.0.0\n'
@@ -919,6 +955,6 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         )
 
     (out / "Dockerfile").write_text(
-        make_dockerfile(lang_ver, fw_name, lib_name), encoding="utf-8"
+        make_dockerfile(lang_ver, fw_name, lib_name, lib_resolved or lib_ver), encoding="utf-8"
     )
     return True
