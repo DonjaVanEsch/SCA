@@ -590,8 +590,24 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
         f"RUN composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
         "COPY index.php versions.php ./\n"
         "EXPOSE 8000\n"
-        'CMD ["php", "-S", "0.0.0.0:8000", "index.php"]\n'
+        'CMD ["php", "-d", "display_errors=0", "-d", "log_errors=1", '
+        '"-S", "0.0.0.0:8000", "index.php"]\n'
     )
+
+
+# Laravel 4's own composer.json hard-requires `phpseclib/phpseclib: 0.3.*`
+# on EVERY v4.x tag (confirmed via the real Packagist p2 metadata for
+# laravel/framework -- every v4.1/4.2 release listed requires exactly
+# "0.3.*", never anything else across the whole v4 line). None of this
+# registry's three tracked phpseclib buckets resolve to a 0.3.x release
+# (bucket "1" is the legacy-but-still-1.x branch, latest patch 1.0.30) so
+# Composer always hits "requires phpseclib 0.3.* ... but it conflicts with
+# your root composer.json require" for every bucket, not just one --
+# confirmed via a real `composer install` failure. This is a genuine
+# same-package-two-versions impossibility (Composer can't install two
+# versions of phpseclib/phpseclib in one tree), not a convenience
+# exclusion, so the whole Laravel-4 x phpseclib combo is skipped.
+_INCOMPATIBLE_COMBOS = {("Laravel", "4", "phpseclib")}
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
@@ -602,9 +618,17 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     image context.
 
     Returns False (and removes any stale directory) when a required
-    Packagist package version cannot be resolved.
+    Packagist package version cannot be resolved, or when the
+    framework/library pairing is a known unresolvable dependency conflict.
     """
     out = images_base / "php" / lang_ver / fw_name / fw_major / lib_name / lib_ver
+
+    if (fw_name, fw_major, lib_name) in _INCOMPATIBLE_COMBOS:
+        print(f"  [SKIP] {fw_name} {fw_major} + {lib_name}: "
+              f"hard version conflict in {fw_name}'s own composer.json", flush=True)
+        if out.exists():
+            shutil.rmtree(out)
+        return False
 
     fw_pkg = _FW_PACKAGE[fw_name]
     fw_resolved = _resolve(fw_pkg, fw_major)

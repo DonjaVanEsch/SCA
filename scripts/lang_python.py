@@ -149,6 +149,25 @@ FW_VERSION_EXTRA = {
     ("aiohttp", "2"): ["async-timeout==3.0.1"],
 }
 
+# Pins for specific crypto-library versions to fix transitive dependency breaks.
+LIB_VERSION_EXTRA = {
+    # pyOpenSSL 17.5.0 (2017) leaves its `cryptography` dependency
+    # unversioned, so pip resolves the newest release (49.0.0 seen live) --
+    # but its own `crypto.py` references `_lib.GEN_EMAIL`, a symbol
+    # `cryptography` has since dropped from its cffi binding, causing a real
+    # `AttributeError: module 'lib' has no attribute 'GEN_EMAIL'` at `import
+    # OpenSSL` on every Python this registry tracks (not a Python-version
+    # ceiling). Confirmed via a real docker build+run: unpinned fails,
+    # `cryptography<36` (resolves to 35.0.0, a cp36-abi3 wheel so it installs
+    # cleanly everywhere) fixes it. pyOpenSSL 22.1.0/26.3.0 dropped the
+    # legacy call and need no pin -- confirmed working unpinned via the same
+    # real build+run check. pyOpenSSL 0.15.1 (2015) hits a DIFFERENT, deeper
+    # legacy symbol (`SSL_ST_INIT`) that no pin can fix -- see its registry
+    # entry's `available: false` note in `registry python.json` for why that
+    # one was excluded outright instead of pinned.
+    ("pyOpenSSL", "17.5.0"): ["cryptography<36"],
+}
+
 
 # ── App templates ─────────────────────────────────────────────────────────────
 
@@ -479,6 +498,15 @@ _LIBOQS_PYTHON_STAGE = (
 )
 
 
+# setuptools<81 pin (below, in the Python 3.12+ conditional-install branch):
+# setuptools 78/82+ dropped `pkg_resources` outright (its own runtime warning
+# says removal was slated "as early as 2025-11-30"), breaking any app that
+# still does `import pkg_resources` (Pyramid 1.x, and likely others) with
+# `ModuleNotFoundError` -- confirmed via a real docker build+run, and NOT
+# monotonic across setuptools releases (78.0.0 already lacked it, 80/81.0.0
+# briefly had it back). Python 3.9-3.11's OWN bundled setuptools predates all
+# of this and is left untouched by the `import setuptools` check; only the
+# 3.12+ branch that actively installs a fresh setuptools needs the cap.
 def make_dockerfile(python_ver: str, lib_name: str, lib_ver: str) -> str:
     if _needs_legacy_openssl(lib_name, lib_ver):
         base_image = f"python:{python_ver}-slim-bullseye"
@@ -506,7 +534,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip wheel cffi pycparser \\
-    && (python -c "import setuptools" 2>/dev/null || pip install --no-cache-dir setuptools) \\
+    && (python -c "import setuptools" 2>/dev/null || pip install --no-cache-dir "setuptools<81") \\
     && pip install --no-cache-dir --no-build-isolation -r requirements.txt
 
 COPY app.py .
@@ -580,6 +608,7 @@ def make_requirements(fw_name: str, fw_major: str,
         if exact is None:
             return None
         lines.append(f"{pip}=={exact}")
+        lines += LIB_VERSION_EXTRA.get((lib_name, lib_ver), [])
     return "\n".join(lines) + "\n"
 
 

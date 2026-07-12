@@ -129,6 +129,9 @@ def main() -> None:
     if lang_data is None:
         print(f"ERROR: Language '{lang_id}' not found in {registry_path.name}")
         sys.exit(1)
+    if not lang_data.get("include", True):
+        print(f"'{lang_id}' is marked include:false in {registry_path.name} -- skipping.")
+        return
 
     included_versions = [v["nr"] for v in lang_data["versions"] if v.get("include")]
     if args.version:

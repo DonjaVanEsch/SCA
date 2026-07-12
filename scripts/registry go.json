@@ -3,6 +3,7 @@
     {
       "id": "go",
       "display_name": "Go",
+      "include": false,
       "versions": [
         { "nr": "1.0",  "release_date": "2012-03-28", "include": false },
         { "nr": "1.1",  "release_date": "2013-05-13", "include": false },

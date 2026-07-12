@@ -35,6 +35,12 @@ _DEFAULT_SETTINGS = {"docker_host": "", "default_workers": 4, "accessibility_mod
 # opt-in per deployment, not a per-user dashboard setting.
 FINGERPRINT_ENABLED = os.environ.get("PQC_ENABLE_FINGERPRINT", "false").strip().lower() in ("1", "true", "yes")
 
+# Multi-host scoping (the "local"/host badge that switches which Docker
+# engine's build/tested status is shown) is only useful once more than one
+# host is actually in play -- off by default, same on/off mechanism as
+# fingerprinting, until it's needed again.
+HOST_SCOPE_ENABLED = os.environ.get("PQC_ENABLE_HOST_SCOPE", "false").strip().lower() in ("1", "true", "yes")
+
 
 def _load_settings() -> dict:
     if not SETTINGS_FILE.exists():
@@ -96,14 +102,38 @@ def _finish_job(job_id: str) -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _annotate_docker_exists(items: list[dict]) -> list[dict]:
-    """Add a `docker_exists` flag to each row: whether its image is actually
-    present on the active Docker engine right now (vs. just recorded as
-    built in the DB -- it may have since been pruned or removed manually).
-    None means the engine couldn't be reached, so presence is unknown.
+    """Add `docker_exists` / `running` / `run_url` to each row.
+
+    docker_exists: whether its image is actually present on the active
+    Docker engine right now (vs. just recorded as built in the DB -- it may
+    have since been pruned or removed manually). None means the engine
+    couldn't be reached, so presence is unknown.
+
+    running / run_url: whether a container for this image is currently
+    running, and if so, the URL to reach it -- resolved through the same
+    host logic manager.py uses for its own "Launch" log output, so this is
+    never "localhost" when the active Docker engine is remote (SSH).
+
+    manager._docker_target_host() says "localhost" when Docker is local to
+    *this process* -- correct for the CLI, but dashboard.py's caller is a
+    browser that may be on a different machine (e.g. dashboard.py + Docker
+    both run on a Linux box, opened from a Windows browser at
+    http://<server-ip>:5050). In that case "localhost" would resolve to the
+    browser's own machine, not the server, so fall back to whatever
+    hostname the browser actually used to reach us.
     """
     existing = manager.list_existing_image_repos()
+    running  = manager.list_running_containers()
+    target_host = manager._docker_target_host()
+    if target_host == "localhost":
+        browser_host = request.host.split(":")[0]
+        if browser_host not in ("localhost", "127.0.0.1"):
+            target_host = browser_host
     for item in items:
         item["docker_exists"] = None if existing is None else item.get("image_tag") in existing
+        port = running.get(item.get("image_tag")) if running else None
+        item["running"] = None if running is None else bool(port)
+        item["run_url"] = f"http://{target_host}:{port}" if port else None
     return items
 
 
@@ -323,6 +353,7 @@ def action():
                     stop_event=stop_event,
                     fingerprint=fingerprint,
                     save_fingerprint_fn=_save_fp if fingerprint else None,
+                    workers=int(opts.get("workers", 4)),
                 )
 
             elif action_str == "fingerprint":
@@ -436,6 +467,7 @@ def get_settings():
     settings = _load_settings()
     # Read-only, environment-controlled -- not persisted in the settings file.
     settings["fingerprint_enabled"] = FINGERPRINT_ENABLED
+    settings["host_scope_enabled"] = HOST_SCOPE_ENABLED
     return jsonify(settings)
 
 

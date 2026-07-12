@@ -300,6 +300,38 @@ def list_existing_image_repos(timeout=10):
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
+def list_running_containers(timeout=10):
+    """Return {container_name: host_port} for every running pqc-* container
+    (host_port is the published port mapped to the container's internal
+    8000, or None if it couldn't be parsed out of `docker ps`'s output), or
+    None if the engine couldn't be reached.
+
+    One bulk `docker ps` call instead of one lookup per row -- same rationale
+    as list_existing_image_repos().
+    """
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "--filter", "name=pqc-", "--format", "{{.Names}}\t{{.Ports}}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    result = {}
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        name, _, ports = line.partition("\t")
+        port = None
+        m = re.search(r":(\d+)->8000/tcp", ports)
+        if m:
+            port = m.group(1)
+        result[name] = port
+    return result
+
+
 def _get_host_port(container, retries=8, delay=0.4):
     """Return the host port Docker assigned to container's internal port 8000.
 
@@ -893,7 +925,7 @@ def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
 # ── Test ─────────────────────────────────────────────────────────────────────
 
 def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event=None,
-             fingerprint=False, save_fingerprint_fn=None):
+             fingerprint=False, save_fingerprint_fn=None, workers=4):
     """Start each container, test / and /version, stop it.
 
     save_fn(entry, result_dict) is called immediately after each image completes.
@@ -902,40 +934,46 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
     and one unsuccessful call against the same running container -- before it
     gets stopped -- instead of starting it a second time; save_fingerprint_fn
     (entry, success_record, failure_record) is called right after.
+    workers controls how many containers are tested in parallel -- each entry
+    runs under its own uniquely-tagged container/port, so this is safe the
+    same way _do_build's parallel docker build processes are.
     Returns {tag: {"success": bool, "root_ok": bool, "version_ok": bool,
                    "error": str, "version_data": dict|None, "output": str}}.
     """
     n   = len(entries)
     pad = len(str(n))
-    log_fn(f"\nTesting {n:,} image(s) ...\n")
+    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    log_fn(f"\nTesting {n:,} image(s){parallel_note} ...\n")
     results = {}
+    _lock = threading.Lock()
 
-    for i, e in enumerate(entries, 1):
+    def _test_one(i, e):
         if stop_event is not None and stop_event.is_set():
-            log_fn(f"\n[CANCELLED] Test stopped after {i - 1} of {n} image(s).")
-            break
+            return
 
         tag  = _image_tag(e)
         name = tag
         log_fn(f"[{i:{pad}}/{n}] {tag}")
 
+        def _finish(result):
+            with _lock:
+                results[tag] = result
+                if save_fn is not None:
+                    save_fn(e, result)
+
         if build_results is not None and not build_results.get(tag, {}).get("success"):
             log_fn(f"         SKIP  (build failed)")
-            results[tag] = {"success": False, "root_ok": False,
-                            "version_ok": False, "error": "build failed",
-                            "version_data": None, "output": ""}
-            if save_fn is not None:
-                save_fn(e, results[tag])
-            continue
+            _finish({"success": False, "root_ok": False,
+                     "version_ok": False, "error": "build failed",
+                     "version_data": None, "output": ""})
+            return
 
         if not _image_exists(tag):
             log_fn(f"         SKIP  (not built)")
-            results[tag] = {"success": False, "root_ok": False,
-                            "version_ok": False, "error": "image not found",
-                            "version_data": None, "output": ""}
-            if save_fn is not None:
-                save_fn(e, results[tag])
-            continue
+            _finish({"success": False, "root_ok": False,
+                     "version_ok": False, "error": "image not found",
+                     "version_data": None, "output": ""})
+            return
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -948,18 +986,17 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             for line in proc.stderr.strip().splitlines()[-3:]:
                 log_fn(f"         | {line}")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-            results[tag] = {"success": False, "root_ok": False,
-                            "version_ok": False, "error": "container start failed",
-                            "version_data": None, "output": proc.stderr.strip()}
-            if save_fn is not None:
-                save_fn(e, results[tag])
-            continue
+            _finish({"success": False, "root_ok": False,
+                     "version_ok": False, "error": "container start failed",
+                     "version_data": None, "output": proc.stderr.strip()})
+            return
 
         port        = _get_host_port(name)
         root_ok     = False
         version_ok  = False
         version_data = None
         fail_reason  = ""
+        last_err     = None
 
         if port == "?":
             # Container may have exited immediately; check its state
@@ -974,18 +1011,15 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             output_text = (logs.stdout + logs.stderr).strip()
             log_fn(f"         FAIL  (port not assigned, container state: {state})")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-            results[tag] = {"success": False, "root_ok": False,
-                            "version_ok": False, "error": f"port not assigned ({state})",
-                            "version_data": None, "output": output_text}
-            if save_fn is not None:
-                save_fn(e, results[tag])
-            continue
+            _finish({"success": False, "root_ok": False,
+                     "version_ok": False, "error": f"port not assigned ({state})",
+                     "version_data": None, "output": output_text})
+            return
 
         for path, check in [("/",        lambda d: d.get("message") == "Hello World"),
                              ("/version", lambda d: isinstance(d, dict) and len(d) > 0)]:
             passed = False
             last_data = None
-            last_err  = None
             for _ in range(20):
                 try:
                     with urllib.request.urlopen(
@@ -1038,20 +1072,32 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
         else:
             log_fn(f"         FAIL  ({fail_reason} did not respond correctly)")
 
-        results[tag] = {
+        _finish({
             "success":      ok,
             "root_ok":      root_ok,
             "version_ok":   version_ok,
             "error":        fail_reason if not ok else "",
             "version_data": version_data,
             "output":       output_text,
-        }
-        if save_fn is not None:
-            save_fn(e, results[tag])
+        })
 
-    passed = sum(1 for v in results.values() if v["success"])
-    failed = len(results) - passed
-    log_fn(f"\nTest complete: {passed} passed, {failed} failed.")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_test_one, i, e): (i, e)
+                for i, e in enumerate(entries, 1)}
+        for fut in as_completed(futs):
+            try:
+                fut.result()
+            except Exception as exc:
+                i, _ = futs[fut]
+                log_fn(f"[{i:{pad}}/{n}] ERROR: {exc}")
+
+    passed    = sum(1 for v in results.values() if v["success"])
+    failed    = sum(1 for v in results.values() if not v["success"])
+    cancelled = n - len(results)
+    parts     = [f"{passed} passed", f"{failed} failed"]
+    if cancelled:
+        parts.append(f"{cancelled} cancelled")
+    log_fn(f"\nTest complete: {', '.join(parts)}.")
     return results
 
 
@@ -1319,7 +1365,7 @@ def main():
     # ── Test ──────────────────────────────────────────────────────────────────
     if args.test:
         _require_docker()
-        _do_test(entries, build_results)
+        _do_test(entries, build_results, workers=args.workers)
 
     # ── Remove images ─────────────────────────────────────────────────────────
     if args.remove:

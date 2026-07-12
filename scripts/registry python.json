@@ -197,7 +197,7 @@
               "release_date": "2010-04-01",
               "compatibility": [
                 "2.6+",
-                "3.3+"
+                "3.3-3.13"
               ]
             },
             {
@@ -205,7 +205,7 @@
               "release_date": "2018-04-26",
               "compatibility": [
                 "2.7+",
-                "3.4+"
+                "3.4-3.13"
               ]
             },
             {
@@ -223,7 +223,7 @@
               ]
             }
           ],
-          "notes": "Compatibility is the minimum Python requirement for the major line; later minor releases in the same major may require newer Python versions."
+          "notes": "Compatibility is the minimum Python requirement for the major line; later minor releases in the same major may require newer Python versions. Majors 0/1 genuinely break on Python 3.14 -- confirmed via a real docker build+run using this project's own FW_VERSION_EXTRA-pinned dependency set (Jinja2<3.1.0/MarkupSafe<2.1.0/itsdangerous, etc, see lang_python.py): `flask/helpers.py`'s `get_root_path()`/`_find_package_path()` call `pkgutil.get_loader()`, deprecated since Python 3.12 and actually REMOVED in 3.14, raising `AttributeError: module 'pkgutil' has no attribute 'get_loader'` at `Flask(__name__)` construction time (not at import time). Verified the exact boundary directly: works on 3.11/3.12/3.13, fails only on 3.14. Majors 2/3 don't share this ceiling -- both rewrote this code path onto `importlib` and are confirmed working on 3.14 directly."
         },
         {
           "name": "Django",
@@ -310,10 +310,10 @@
           "name": "CherryPy",
           "version": [
             { "nr": "3",  "release_date": "2015-03-24", "compatibility": [ "2.7+", "3.1-3.7" ] },
-            { "nr": "17", "release_date": "2018-07-13", "compatibility": [ "2.7+", "3.5+" ] },
+            { "nr": "17", "release_date": "2018-07-13", "compatibility": [ "2.7+", "3.5-3.10" ] },
             { "nr": "18", "release_date": "2018-09-01", "compatibility": [ "2.7+", "3.5+" ] }
           ],
-          "notes": "Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 18, `cherrypy.quickstart()` + `@cherrypy.expose`/`@cherrypy.tools.json_out()`). CherryPy released 16 numbered majors between 2015 and 2018 (3 through 18) -- confirmed via PyPI's real release history -- reflecting loose semver discipline in that era rather than 16 genuinely distinct API eras, the same pattern already documented for Node's Hapi package. Majors 4-16 are real, PyPI-installable releases but are NOT individually version-bucketed here (a disclosed density tradeoff, not a claim that they don't work); 3 and 17/18 were chosen as the long-lived-stable and current/final eras respectively. 18.x is CherryPy's last major (still receiving patches). Major 3 genuinely breaks starting Python 3.8 -- confirmed via a real docker build: `_cperror.py` does `from cgi import escape`, removed from the `cgi` module in Python 3.8 (deprecated since 3.2); verified the exact boundary directly (works on 3.7, ImportError on 3.8)."
+          "notes": "Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 18, `cherrypy.quickstart()` + `@cherrypy.expose`/`@cherrypy.tools.json_out()`). CherryPy released 16 numbered majors between 2015 and 2018 (3 through 18) -- confirmed via PyPI's real release history -- reflecting loose semver discipline in that era rather than 16 genuinely distinct API eras, the same pattern already documented for Node's Hapi package. Majors 4-16 are real, PyPI-installable releases but are NOT individually version-bucketed here (a disclosed density tradeoff, not a claim that they don't work); 3 and 17/18 were chosen as the long-lived-stable and current/final eras respectively. 18.x is CherryPy's last major (still receiving patches). Major 3 genuinely breaks starting Python 3.8 -- confirmed via a real docker build: `_cperror.py` does `from cgi import escape`, removed from the `cgi` module in Python 3.8 (deprecated since 3.2); verified the exact boundary directly (works on 3.7, ImportError on 3.8). Major 17 genuinely breaks starting Python 3.11, unlike 18 -- confirmed via a real docker build: `_cpdispatch.py` does `getargspec = inspect.getargspec`, removed from `inspect` in 3.11 (deprecated since 3.0); this is unrelated to the FW_PIP mechanism's own version-pin resolution since frameworks use a pip range (`>=17.0,<18.0`) rather than this file's per-version PyPI lookup, so pip always installs 17's actual latest patch, which still has this call. 18.x's own maintenance patches fixed it (confirmed working on 3.11 and 3.12 directly) -- don't assume adjacent CherryPy majors 17/18 share a Python ceiling just because they were released two months apart."
         },
         {
           "name": "Bottle",
@@ -1094,19 +1094,19 @@
           "name": "liboqs-python",
           "version": [
             { "nr": "0.14", "release_date": "2025-02-25", "compatibility": [ "3.9+" ] },
-            { "nr": "0.15", "release_date": "2026-05-06", "compatibility": [ "3.9+" ] }
+            { "nr": "0.15", "release_date": "2026-05-06", "compatibility": [ "3.10+" ] }
           ],
-          "notes": "The official Open Quantum Safe project's Python binding (github.com/open-quantum-safe/liboqs-python), a ctypes wrapper around the liboqs C library -- the Python equivalent of Go's liboqs-go / PHP's php-liboqs / .NET's LibOQS.NET / Node's liboqs-node, and the one language in this project that previously had NO liboqs binding tracked at all despite every other language having one. Requires the liboqs C library built from source in the same Dockerfile stage (git clone + cmake + ninja, the same recipe already used for the other languages' liboqs bindings) plus `LD_LIBRARY_PATH=/usr/local/lib` so the ctypes loader can find the resulting shared library at runtime -- no compilation of the Python package itself (it's pure ctypes, not a C extension). Confirmed working end-to-end via a real docker build+run: `import oqs; oqs.KeyEncapsulation('ML-KEM-768').generate_keypair()` returns a real 1184-byte ML-KEM-768 public key -- unlike Node's liboqs-node, this binding is built against a current liboqs release and exposes the final NIST algorithm names directly, no draft-name caveat needed."
+          "notes": "The official Open Quantum Safe project's Python binding (github.com/open-quantum-safe/liboqs-python), a ctypes wrapper around the liboqs C library -- the Python equivalent of Go's liboqs-go / PHP's php-liboqs / .NET's LibOQS.NET / Node's liboqs-node, and the one language in this project that previously had NO liboqs binding tracked at all despite every other language having one. Requires the liboqs C library built from source in the same Dockerfile stage (git clone + cmake + ninja, the same recipe already used for the other languages' liboqs bindings) plus `LD_LIBRARY_PATH=/usr/local/lib` so the ctypes loader can find the resulting shared library at runtime -- no compilation of the Python package itself (it's pure ctypes, not a C extension). Confirmed working end-to-end via a real docker build+run: `import oqs; oqs.KeyEncapsulation('ML-KEM-768').generate_keypair()` returns a real 1184-byte ML-KEM-768 public key -- unlike Node's liboqs-node, this binding is built against a current liboqs release and exposes the final NIST algorithm names directly, no draft-name caveat needed. '0.15's compatibility floor was originally (wrongly) recorded as '3.9+', the same as '0.14' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own per-file `requires_python` metadata directly: 0.14.1 declares `>=3.9`, but 0.15.0 raised it to `>=3.10` (same bug class as this file's Authlib entry above). Corrected to '3.10+'; Python 3.9 now only gets the 0.14 bucket for this library."
         },
         {
           "name": "pyOpenSSL",
           "version": [
-            { "nr": "0.15.1",  "release_date": "2008-06-04", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "0.15.1",  "release_date": "2015-04-14", "compatibility": [ "2.6+", "3.3+" ], "available": false },
             { "nr": "17.5.0",  "release_date": "2017-04-20", "compatibility": [ "2.7+", "3.4+" ] },
             { "nr": "22.1.0",  "release_date": "2022-01-29", "compatibility": [ "3.6+" ] },
             { "nr": "26.3.0",  "release_date": "2026-03-15", "compatibility": [ "3.7+" ] }
           ],
-          "notes": "Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 26, `import OpenSSL`). Switched to calendar-year versioning at major 16 (2016) -- every year from 16 through 26 has at least one real release (confirmed via PyPI's full history); this registry tracks a representative subset (0 legacy, 17/22/26 spanning the calendar-versioning era) rather than all 11 yearly majors, a density tradeoff disclosed here rather than silently applied."
+          "notes": "Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 26, `import OpenSSL`). Switched to calendar-year versioning at major 16 (2016) -- every year from 16 through 26 has at least one real release (confirmed via PyPI's full history); this registry tracks a representative subset (0 legacy, 17/22/26 spanning the calendar-versioning era) rather than all 11 yearly majors, a density tradeoff disclosed here rather than silently applied. '0.15.1's own release_date was ALSO originally wrong here (recorded as 2008-06-04; PyPI's real upload_time is 2015-04-14) -- corrected. '0.15.1' is marked `available: false`: a real docker build+run investigation (not a bare-import check) found it hard-broken on every Python version this registry tracks, for a GENUINE, exhaustively-verified reason, not a convenience exclusion. Its `rand.py`/`SSL.py`/`crypto.py` call OpenSSL-1.0.x-only symbols (`ERR_load_RAND_strings`, `SSL_ST_INIT` -- part of OpenSSL's pre-1.1.0 explicit SSL state machine, replaced by an enum in 1.1.0 -- and `GEN_EMAIL`) via `cryptography`'s cffi `_lib` binding, which it depends on completely unversioned (`cryptography (>=0.7)`, no upper bound, confirmed via PyPI's own requires_dist). Bisected exhaustively: `cryptography` 3.4.8 (the LAST release before its 2021 renumbering jump straight to 35.0.0 -- no intermediate real version exists) still lacks `SSL_ST_INIT`; genuinely ancient cryptography releases contemporaneous with pyOpenSSL 0.15.1's 2015 vintage (1.7.2, 1.9) have no installable wheel for any currently-tracked Python and fail to build from source against EITHER this project's default Bookworm base (OpenSSL 3.x headers) OR a Bullseye base (OpenSSL 1.1.1 headers) -- `SSL_ST_INIT` requires genuine OpenSSL-1.0.x C headers that neither base image ships, and no practical Docker base for currently-tracked Python versions does either. pyOpenSSL 17.5.0 (2017) does NOT share this ceiling -- it never calls `ERR_load_RAND_strings`/`SSL_ST_INIT`, only hits a DIFFERENT now-removed symbol (`GEN_EMAIL`, in `crypto.py`), fixed by the `cryptography<36` pin in `LIB_VERSION_EXTRA` (see `lang_python.py`) -- don't assume adjacent old pyOpenSSL majors share either the same broken symbol or the same fix."
         },
         {
           "name": "ecdsa",
@@ -1119,9 +1119,9 @@
           "name": "Authlib",
           "version": [
             { "nr": "0.15.6", "release_date": "2017-11-18", "compatibility": [ "2.7+", "3.4+" ] },
-            { "nr": "1.7.2",  "release_date": "2022-03-15", "compatibility": [ "3.6+" ] }
+            { "nr": "1.7.2",  "release_date": "2022-03-15", "compatibility": [ "3.10+" ] }
           ],
-          "notes": "OAuth/OIDC/JOSE (JWT/JWS/JWE/JWK) implementation. Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 1, `import authlib`). No ML-DSA/PQC JOSE support as of this writing (same gap already noted for Java's Nimbus JOSE+JWT in this project)."
+          "notes": "OAuth/OIDC/JOSE (JWT/JWS/JWE/JWK) implementation. Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 1, `import authlib`). No ML-DSA/PQC JOSE support as of this writing (same gap already noted for Java's Nimbus JOSE+JWT in this project). '1.7.2's compatibility floor was originally (wrongly) recorded as '3.6+' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own classifier data: 1.7.0/1.7.1/1.7.2 all declare `Requires-Python >=3.10` (a jump made partway through the 1.x line, not from 1.0.0). Corrected to '3.10+'; Python 3.6-3.9 fall back to only the 0.15.6 bucket for this library, same as pre-1.7 Authlib users would see in real life."
         }
       ]
     }

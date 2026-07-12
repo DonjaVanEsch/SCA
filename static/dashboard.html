@@ -1748,8 +1748,7 @@
     <button class="tab-btn" data-tab="agility">Crypto Agility</button>
   </nav>
   <div class="header-actions">
-    <button class="btn btn-ghost btn-sm" id="btn-ignore-review" title="Review the ignore list">🚫 Ignored</button>
-    <button class="btn btn-ghost btn-sm" id="btn-host-badge"
+    <button class="btn btn-ghost btn-sm host-scope-feature" id="btn-host-badge"
             title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span id="host-badge-label">local</span></button>
     <button class="btn btn-ghost btn-sm" id="btn-settings" title="Docker host settings">⚙ Settings</button>
   </div>
@@ -1830,7 +1829,13 @@
           <span class="docker-group-label">Selection</span>
           <div class="docker-group-inner">
             <span id="sel-count">0 selected</span>
-            <button class="btn btn-ghost btn-sm" id="btn-sel-review" title="Review the full selection in a separate screen">📋 Review</button>
+            <div class="sel-menu-wrap" id="review-wrap">
+              <button class="btn btn-ghost btn-sm" id="btn-review-menu">📋 Review ▾</button>
+              <div class="sel-menu" id="review-menu">
+                <div class="sel-menu-item" id="mnu-review-selection" title="Review the full selection in a separate screen">Selection</div>
+                <div class="sel-menu-item" id="mnu-review-ignored" title="Review the ignore list">Ignore list</div>
+              </div>
+            </div>
             <div class="action-sep"></div>
             <div class="sel-menu-wrap">
               <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
@@ -1850,24 +1855,32 @@
             </div>
             <div class="action-sep"></div>
             <label class="opt-label" title="Deselect all sources automatically when a run finishes">
-              <input type="checkbox" id="opt-deselect-after"> deselect after batch
+              <input type="checkbox" id="opt-deselect-after" checked> deselect after batch
             </label>
           </div>
         </div>
         <div class="action-sep"></div>
 
-        <!-- Docker group -->
+        <!-- Docker group: existing images that can be started/stopped/removed -->
         <div class="docker-group">
           <span class="docker-group-label">🐳 Docker</span>
           <div class="docker-group-inner">
-            <label class="act-check" id="act-run-wrap"><input type="checkbox" id="act-run" disabled> Launch</label>
+            <button class="btn btn-success btn-sm" id="btn-launch" disabled
+              title="Start containers for selected sources right away">▶ Launch</button>
             <button class="btn btn-warning btn-sm" id="btn-stop" disabled
               title="Stop containers for selected sources">Stop</button>
             <button class="btn btn-ghost btn-sm" id="btn-stop-all" title="Stop all running pqc-* containers">Stop
               All</button>
-            <label class="act-check" id="act-remove-wrap" style="color:var(--danger)"><input type="checkbox"
-                id="act-remove" disabled> Remove</label>
-            <div class="action-sep"></div>
+            <button class="btn btn-danger btn-sm" id="btn-remove" disabled
+              title="Remove Docker images for selected sources right away">🗑 Remove</button>
+          </div>
+        </div>
+        <div class="action-sep"></div>
+
+        <!-- Build/Test group: building and testing sources, queued via Execute -->
+        <div class="docker-group">
+          <span class="docker-group-label">🔨 Build &amp; Test</span>
+          <div class="docker-group-inner">
             <label class="act-check" id="act-build-wrap"><input type="checkbox" id="act-build" disabled> Build</label>
             <label class="act-check" id="act-test-wrap"><input type="checkbox" id="act-test" disabled> Test</label>
             <label class="act-check fingerprint-feature" id="act-fingerprint-wrap"
@@ -1901,6 +1914,7 @@
             <tr>
               <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="header-cb" class="row-cb"></th>
               <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
+              <th class="col-narrow" title="Whether a container for this image is currently running -- click the dot/circle to open it in a new tab"></th>
               <th class="sortable" data-sort="language">Language <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="lang_version">Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="framework">Framework <span class="sort-icon">⬍</span></th>
@@ -1914,7 +1928,7 @@
           </thead>
           <tbody id="img-tbody">
             <tr id="loading-row">
-              <td colspan="11" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
+              <td colspan="12" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
             </tr>
           </tbody>
         </table>
@@ -2438,7 +2452,7 @@
     });
 
     const tbody = document.getElementById('img-tbody');
-    tbody.innerHTML = '<tr id="loading-row"><td colspan="11" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    tbody.innerHTML = '<tr id="loading-row"><td colspan="12" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
 
     try {
       const data = await api(`/api/images?${params}`);
@@ -2447,7 +2461,7 @@
       renderTable(data.items);
       renderPagination(data.total, data.page, data.pages, data.per_page);
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
     }
   }
 
@@ -2473,23 +2487,37 @@
   function copyOutput(preId, btn) {
     const pre = document.getElementById(preId);
     if (!pre) return;
-    navigator.clipboard.writeText(pre.textContent).then(() => {
-      const orig = btn.textContent;
+
+    const orig = btn.textContent;
+    const showCopied = () => {
       btn.textContent = 'Copied!';
       btn.style.color = 'var(--success)';
       setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
-    }).catch(() => {
-      // Fallback for browsers without clipboard API
-      const sel = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(pre);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      document.execCommand('copy');
-      sel.removeAllRanges();
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-    });
+    };
+    const fallbackCopy = () => {
+      // execCommand fallback for non-secure origins (plain http://<ip>:port,
+      // not localhost) where navigator.clipboard doesn't exist at all --
+      // accessing .writeText on it would throw before any promise/catch runs.
+      try {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        const ok = document.execCommand('copy');
+        sel.removeAllRanges();
+        if (ok) showCopied();
+        else toast('Copy failed — select the text manually', 'err');
+      } catch (e) {
+        toast('Copy failed — select the text manually', 'err');
+      }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(pre.textContent).then(showCopied).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
   }
 
   function statusCircle(state, title) {
@@ -2523,10 +2551,24 @@
     return statusCircle('absent', 'Image not found on the Docker engine (never built, or removed since)');
   }
 
+  // Unlike the other status indicators this one is clickable when running --
+  // opens the container's endpoint in a new tab. The URL is resolved
+  // server-side through the same host logic manager.py's own "Launch" log
+  // output uses, so it's the real reachable address (never "localhost" when
+  // the active Docker engine is a remote SSH host).
+  function runningBadge(running, url) {
+    if (running === null || running === undefined) return statusCircle('skip', 'Could not reach the Docker engine');
+    if (!running || !url) return statusCircle('skip', 'Not running');
+    const cls = _accessibilityMode ? 'status-circle status-circle-ok' : 'status-dot status-dot-ok';
+    const glyph = _accessibilityMode ? '✓' : '';
+    return `<span class="${cls}" style="cursor:pointer" title="${escHtml(`Running — click to open ${url}`)}"
+              onclick="event.stopPropagation();window.open('${escHtml(url)}','_blank')">${glyph}</span>`;
+  }
+
   function renderTable(items) {
     const tbody = document.getElementById('img-tbody');
     if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="11">
+      tbody.innerHTML = `<tr><td colspan="12">
       <div class="empty-state">
         <div style="font-size:28px;opacity:.3">⬜</div>
         <p>No sources match the current filters.</p>
@@ -2546,6 +2588,7 @@
                onclick="event.stopPropagation();toggleSelect(${r.id},event)">
       </td>
       <td class="col-narrow">${dockerExistsBadge(r.docker_exists)}</td>
+      <td class="col-narrow">${runningBadge(r.running, r.run_url)}</td>
       <td>${r.language}</td>
       <td class="mono-cell">${r.lang_version}</td>
       <td>${r.framework}</td>
@@ -2683,7 +2726,7 @@
     const n = state.selected.size;
     document.getElementById('sel-count').textContent = `${n.toLocaleString()} selected`;
     const dis = n === 0;
-    ['act-run', 'act-build', 'act-test', 'act-fingerprint', 'act-remove', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
+    ['btn-launch', 'btn-remove', 'act-build', 'act-test', 'act-fingerprint', 'btn-start', 'btn-stop', 'btn-mark-success'].forEach(id => {
       document.getElementById(id).disabled = dis;
     });
   }
@@ -2812,8 +2855,8 @@
     if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
     const testChecked = document.getElementById('act-test').checked;
     const fingerprintChecked = document.getElementById('act-fingerprint').checked;
-    const _actionMap = { run: 'run_container', build: 'build', remove: 'remove' };
-    const actions = ['run', 'build'].filter(a =>
+    const _actionMap = { build: 'build' };
+    const actions = ['build'].filter(a =>
       document.getElementById(`act-${a}`).checked
     ).map(a => _actionMap[a]);
     // Test and Fingerprint share one container start/stop cycle: when both are
@@ -2821,10 +2864,10 @@
     // instead of starting the container a second time just for fingerprinting.
     if (testChecked) actions.push('test');
     else if (fingerprintChecked) actions.push('fingerprint');
-    if (document.getElementById('act-remove').checked) actions.push('remove');
-    if (!actions.length) { toast('Select at least one action (Run / Build / Test / Fingerprint / Remove)', 'err'); return; }
+    if (!actions.length) { toast('Select at least one action (Build / Test / Fingerprint)', 'err'); return; }
 
     const ids = [...state.selected];
+
     const opts = {
       no_cache: document.getElementById('opt-no-cache').checked,
       skip_existing: document.getElementById('opt-skip-existing').checked,
@@ -2858,6 +2901,41 @@
     }
 
     runNext(0);
+  }
+
+  // Standalone Launch/Remove buttons -- act on the current selection
+  // immediately, without going through the checkbox + Execute combo flow.
+  // That flow still exists for Build/Test/Fingerprint, which are commonly
+  // combined into one queued run; Launch and Remove are Docker-lifecycle
+  // actions on sources that already have an image, not build/test steps.
+  async function launchSelected() {
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
+    const ids = [...state.selected];
+    document.getElementById('btn-launch').disabled = true;
+    runAction('run_container', ids, {}, (err, cancelled) => {
+      document.getElementById('btn-launch').disabled = state.selected.size === 0;
+      if (!err && !cancelled) {
+        loadImages(state.page);
+        loadStats();
+      }
+    });
+  }
+
+  async function removeSelected() {
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
+    const ids = [...state.selected];
+    const noun = ids.length === 1 ? 'this image' : `these ${ids.length} images`;
+    if (!confirm(`Remove ${noun} from Docker? This deletes the built image(s) permanently and cannot be undone.`)) {
+      return;
+    }
+    document.getElementById('btn-remove').disabled = true;
+    runAction('remove', ids, {}, (err, cancelled) => {
+      document.getElementById('btn-remove').disabled = state.selected.size === 0;
+      if (!err && !cancelled) {
+        loadImages(state.page);
+        loadStats();
+      }
+    });
   }
 
   async function markSuccess() {
@@ -3153,11 +3231,15 @@
   // so both values survive a browser restart.
   let _defaultWorkers = 4;
   let _fingerprintEnabled = false;
+  let _hostScopeEnabled = false;
   let _accessibilityMode = false;
 
-  function applyFingerprintVisibility() {
+  function applyFeatureVisibility() {
     document.querySelectorAll('.fingerprint-feature').forEach(el => {
       el.style.display = _fingerprintEnabled ? '' : 'none';
+    });
+    document.querySelectorAll('.host-scope-feature').forEach(el => {
+      el.style.display = _hostScopeEnabled ? '' : 'none';
     });
   }
 
@@ -3167,8 +3249,9 @@
       document.getElementById('host-badge-label').textContent = hostLabel(s.docker_host || '');
       _defaultWorkers = s.default_workers || 4;
       _fingerprintEnabled = !!s.fingerprint_enabled;
+      _hostScopeEnabled = !!s.host_scope_enabled;
       _accessibilityMode = !!s.accessibility_mode;
-      applyFingerprintVisibility();
+      applyFeatureVisibility();
     } catch { }
   }
 
@@ -4029,6 +4112,24 @@
     else deselectAll();
   });
 
+  // ── Review dropdown menu ────────────────────────────────────────────────────
+  const _reviewMenu = document.getElementById('review-menu');
+  document.getElementById('btn-review-menu').addEventListener('click', e => {
+    e.stopPropagation();
+    _reviewMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', () => _reviewMenu.classList.remove('open'));
+  _reviewMenu.addEventListener('click', e => e.stopPropagation());
+
+  document.getElementById('mnu-review-selection').addEventListener('click', () => {
+    _reviewMenu.classList.remove('open');
+    openSelectionPanel();
+  });
+  document.getElementById('mnu-review-ignored').addEventListener('click', () => {
+    _reviewMenu.classList.remove('open');
+    openIgnorePanel();
+  });
+
   // ── Select dropdown menu ──────────────────────────────────────────────────
   const _selMenu = document.getElementById('sel-menu');
   document.getElementById('btn-sel-menu').addEventListener('click', e => {
@@ -4059,6 +4160,8 @@
   });
 
   document.getElementById('btn-start').addEventListener('click', startActions);
+  document.getElementById('btn-launch').addEventListener('click', launchSelected);
+  document.getElementById('btn-remove').addEventListener('click', removeSelected);
   document.getElementById('btn-stop').addEventListener('click', () => {
     const ids = [...state.selected];
     const opts = {};
@@ -4084,7 +4187,6 @@
   document.getElementById('btn-close-detail').addEventListener('click', () =>
     document.getElementById('detail-drawer').classList.remove('open'));
 
-  document.getElementById('btn-sel-review').addEventListener('click', openSelectionPanel);
   document.getElementById('btn-close-sel-panel').addEventListener('click', closeSelectionPanel);
   document.getElementById('btn-sel-panel-cancel').addEventListener('click', closeSelectionPanel);
   document.getElementById('btn-sel-panel-apply').addEventListener('click', applySelectionPanelChanges);
@@ -4093,7 +4195,6 @@
     if (e.target.id === 'sel-panel-overlay') closeSelectionPanel();
   });
 
-  document.getElementById('btn-ignore-review').addEventListener('click', openIgnorePanel);
   document.getElementById('btn-close-ignore-panel').addEventListener('click', closeIgnorePanel);
   document.getElementById('btn-ignore-panel-cancel').addEventListener('click', closeIgnorePanel);
   document.getElementById('btn-ignore-panel-apply').addEventListener('click', applyIgnorePanelChanges);
