@@ -1351,9 +1351,20 @@ _DETAIL_FILTER_MAP = [
 ]
 
 
-def _build_where(filters: dict, prefix: str = "") -> tuple[str, list]:
+def _build_where(filters: dict, prefix: str = "", exclude: frozenset = frozenset()) -> tuple[str, list]:
+    """exclude: filter keys to skip -- for callers whose base query doesn't
+    expose every column _DETAIL_FILTER_MAP assumes. Notably "run" maps to
+    "build_run", a column that only exists in _status_sql()'s superset
+    (used by get_images()/get_pending_images()), NOT in the bare
+    image_details view get_test_reports()/get_build_reports() query --
+    those two already handle "run" themselves via their own properly-scoped
+    `r.name` join, so they must exclude it here or crash with "no such
+    column: build_run" the moment a batch filter is applied (confirmed via
+    a real 500 error)."""
     clauses, params = [], []
     for col, key in _DETAIL_FILTER_MAP:
+        if key in exclude:
+            continue
         field = f"{prefix}{col}" if prefix else col
         frag, param = _wildcard_clause(field, filters.get(key, ""))
         if frag:
@@ -1777,7 +1788,7 @@ def get_test_reports(filters: dict | None = None,
                      page: int = 1, per_page: int = 100) -> dict:
     """Return paginated test results joined with image metadata."""
     filters   = filters or {}
-    where_sql, params = _build_where(filters)
+    where_sql, params = _build_where(filters, exclude=frozenset({"run"}))
 
     success_val = filters.get("success", "")
     if success_val not in ("", None):
@@ -1839,7 +1850,7 @@ def get_build_reports(filters: dict | None = None,
                       page: int = 1, per_page: int = 100) -> dict:
     """Return paginated build results joined with image metadata."""
     filters   = filters or {}
-    where_sql, params = _build_where(filters)
+    where_sql, params = _build_where(filters, exclude=frozenset({"run"}))
 
     success_val = filters.get("success", "")
     if success_val not in ("", None):
