@@ -657,16 +657,39 @@ _TSCONFIG_JSON = json.dumps({
 # stripping -Werror from the vendored liboqs' own CMake files before
 # building. Confirmed working end-to-end (a real ML-KEM-equivalent Kyber768
 # keypair generated) after both fixes.
-_LIBOQS_NODE_STAGE = (
-    "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-    "    python3 make g++ git cmake ninja-build ca-certificates libssl-dev pkg-config \\\n"
-    "    && rm -rf /var/lib/apt/lists/*\n"
-    f"RUN git clone --recurse-submodules --depth 1 --branch {_LIBOQS_TAG} \\\n"
-    "    https://github.com/TapuCosmo/liboqs-node /opt/liboqs-node \\\n"
-    "    && find /opt/liboqs-node/deps/liboqs -type f \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) \\\n"
-    "       -exec sed -i 's/-Werror//g' {} \\; \\\n"
-    "    && cd /opt/liboqs-node && npm install --no-audit --no-fund\n"
-)
+def _liboqs_node_stage(apt_sources: str, apt_flag: str, allow_unauth: str) -> str:
+    # BUG FIXED 2026-07-12: this stage's own `apt-get update` never used
+    # this project's shared archive.debian.org fix (apt_sources/apt_flag/
+    # allow_unauth, already computed by make_dockerfile() for every OTHER
+    # apt-get call) -- confirmed via a real docker build failure on Node
+    # 8/10 ("404 Not Found" against the long-dead deb.debian.org/stretch
+    # mirror). Every other native-lib apt-get call in this file already
+    # gets this fix; this one was just never wired up to it.
+    return (
+        f"{apt_sources}"
+        f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
+        "    python3 make g++ git cmake ninja-build ca-certificates libssl-dev pkg-config \\\n"
+        "    && rm -rf /var/lib/apt/lists/*\n"
+        "ENV PYTHON=python3\n"
+        f"RUN git clone --recurse-submodules --depth 1 --branch {_LIBOQS_TAG} \\\n"
+        "    https://github.com/TapuCosmo/liboqs-node /opt/liboqs-node \\\n"
+        "    && find /opt/liboqs-node/deps/liboqs -type f \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) \\\n"
+        "       -exec sed -i 's/-Werror//g' {} \\; \\\n"
+        # `--unsafe-perm`: confirmed via a real docker build that `npm
+        # install` (no args -- installing liboqs-node's OWN dependencies
+        # for ITSELF, not as a third-party dependency of an outer project)
+        # printed `npm WARN lifecycle ... cannot run in wd ... node-pre-gyp
+        # install --fallback-to-build` and silently skipped it -- npm
+        # refuses to run a LOCAL package's own lifecycle scripts as UID 0
+        # without this flag (a safety guard against untrusted scripts
+        # running with root privilege, moot here since this is our own
+        # pinned build step). The whole point of this install IS that
+        # script (it's what actually compiles oqs_node.node) -- exit code
+        # 0 with no such binary produced silently passed this project's
+        # own build step, only surfacing as a runtime crash ("Could not
+        # locate the bindings file").
+        "    && cd /opt/liboqs-node && npm install --no-audit --no-fund --unsafe-perm\n"
+    )
 
 
 # Multi-stage (2026-07-11): a native node-gyp compile (sodium-native/bcrypt/
@@ -705,8 +728,20 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             f"    {deps_line} \\\n"
             "    && rm -rf /var/lib/apt/lists/*\n"
         )
+        # node-gyp bundled with old npm/Node (node-gyp <4, shipped through
+        # roughly Node 8) hardcodes looking for an executable literally
+        # named "python" (Python 2) -- confirmed via a real docker build
+        # failure on Node 4/6: "Can't find Python executable 'python'",
+        # even though python3 (this project's own sys_dep, Python 2 isn't
+        # installable on a current Debian release at all) is right there.
+        # The error message itself names the documented workaround.
+        if "python3" in sys_deps:
+            apt_block += "ENV PYTHON=python3\n"
 
-    liboqs_stage = _LIBOQS_NODE_STAGE if lib_name == "liboqs-node" else ""
+    liboqs_stage = (
+        _liboqs_node_stage(apt_sources, apt_flag, allow_unauth)
+        if lib_name == "liboqs-node" else ""
+    )
     liboqs_copy = (
         "COPY --from=builder /opt/liboqs-node /opt/liboqs-node\n"
         if lib_name == "liboqs-node" else ""
