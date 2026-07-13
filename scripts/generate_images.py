@@ -165,9 +165,15 @@ def main() -> None:
             for fw_ver in fw_ver_list:
                 fw_major = fw_ver["nr"]
                 fw_compat = fw_ver.get("compatibility")  # None → no restriction
+                fw_dir = images_base / lang_id / lang_ver / fw_name / fw_major
+
+                if not fw_ver.get("available", True):
+                    if fw_dir.exists():
+                        shutil.rmtree(fw_dir)
+                    skipped += 1
+                    continue
 
                 if not _included(lang_ver, fw_compat):
-                    fw_dir = images_base / lang_id / lang_ver / fw_name / fw_major
                     if fw_dir.exists():
                         shutil.rmtree(fw_dir)
                     skipped += 1

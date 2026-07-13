@@ -373,6 +373,22 @@ init();
 # Restify -- confirmed via a real docker run: handlers on the tracked
 # majors (9-11) must be declared `async`, a plain sync handler throws a
 # hard AssertionError at route-registration time.
+#
+# BUG FIXED 2026-07-13: `res.json(...)` throws "res.json is not a function"
+# on major "0" (resolves to 0.5.7, restify's actual last-ever 0.x release,
+# confirmed via the real npm version list) -- that ancient release only
+# monkey-patches `http.ServerResponse.prototype.send`, `res.json()` doesn't
+# exist as a convenience method yet. Confirmed via a real docker build+run
+# failure (batch test run node-Restify-20260713-001, 672 failures spanning
+# almost every tracked major, not just "0" -- see below). Fixed by switching
+# to `res.send(200, {...})`, the one call shape confirmed to work across
+# restify's ENTIRE tracked history: 0.5.7's `send()` requires a numeric
+# first argument in its "legacy" positional form (an object with no `.code`
+# property throws `TypeError: options.code must be a number`), while the
+# latest restify (11.x) documents `res.send(201, {hello: 'world'})` as a
+# first-class supported call shape in its own source comments -- so the
+# explicit status code isn't just an 0.5.7 workaround, it's the one form
+# guaranteed stable at both ends of the version range.
 _RESTIFY_TPL = """\
 const restify = require("restify");
 __LIB_LINE__
@@ -380,11 +396,11 @@ __LIB_LINE__
 const server = restify.createServer();
 
 server.get("/", async (req, res) => {
-\tres.json({ message: "Hello World" });
+\tres.send(200, { message: "Hello World" });
 });
 
 server.get("/version", async (req, res) => {
-\tres.json({
+\tres.send(200, {
 \t\tlanguage: { name: "Node.js", version: process.version },
 \t\tframework: { name: "Restify", version: pkgVersion("restify") },
 \t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
@@ -394,17 +410,73 @@ server.get("/version", async (req, res) => {
 server.listen(8000, "0.0.0.0");
 """
 
+# Restify majors 0-8 -- a plain (non-async) handler, needed because these
+# majors' own compatibility ranges reach back to Node 4-9 (pre-7.6, unable
+# to even PARSE `async (req, res) =>` syntax -- a hard SyntaxError, not a
+# runtime one). Confirmed via a real docker build+run failure (Node 6,
+# restify major "1") that the unconditional `async` in `_RESTIFY_TPL` broke
+# every one of these older majors, even though majors 9-11 (whose own
+# compatibility never reaches below Node 10, already async-capable)
+# structurally REQUIRE async and must keep it -- there is no Node-version
+# overlap between "major needs async" and "Node can't parse async", so a
+# plain per-major template split (not a Node-version check) is the correct
+# and simplest fix.
+_RESTIFY_LEGACY_TPL = """\
+const restify = require("restify");
+__LIB_LINE__
+
+const server = restify.createServer();
+
+server.get("/", (req, res, next) => {
+\tres.send(200, { message: "Hello World" });
+\treturn next();
+});
+
+server.get("/version", (req, res, next) => {
+\tres.send(200, {
+\t\tlanguage: { name: "Node.js", version: process.version },
+\t\tframework: { name: "Restify", version: pkgVersion("restify") },
+\t\tlibrary: { name: "__LIB_NAME__", version: __LIB_VER_EXPR__ },
+\t});
+\treturn next();
+});
+
+server.listen(8000, "0.0.0.0");
+"""
+
 # Sails -- confirmed via a real docker run: every non-routing hook
-# (grunt/views/session/policies/orm/pubsub) can be disabled via config,
+# (grunt/views/session/policies/orm/pubsub/i18n) can be disabled via config,
 # leaving a genuinely standalone 2-route app despite the full-MVC framework
 # underneath.
+#
+# BUG FIXED 2026-07-13: without `i18n: false`, major "0" (0.12.14) crashed on
+# Node 4 with `error: A hook (i18n) failed to load! [SyntaxError: Block-scoped
+# declarations (let, const, function, class) not yet supported outside strict
+# mode]` -- confirmed via a real docker run, then traced by manually
+# require()-ing the actual failing file inside the container
+# (`node_modules/sails/node_modules/i18n/node_modules/debug/src/index.js`).
+# Root cause: the bundled `i18n` package's own package.json declares
+# `"debug": "*"` -- an unpinned WILDCARD, meaning npm resolves it to
+# whatever debug's own absolute-latest release is at install time, and a
+# recent debug release uses `let`/`const` outside strict mode, which V8
+# versions before ~Node 6 can't parse. This is a moving target (which debug
+# version resolves can shift over time as new releases ship, unlike this
+# project's other unpinned-transitive-dependency fixes, which pin a Node
+# floor because OUR OWN package.json can't reach three levels into another
+# package's nested node_modules to override it) -- rather than narrowing the
+# registry's Node floor (which would have meant permanently dropping Node
+# 4/5 support for a dependency this project's app code never even uses),
+# simply disabling the i18n hook entirely sidesteps the whole unpinned
+# dependency -- confirmed via a real docker run that Node 4 now boots and
+# serves both routes correctly with `i18n: false` added alongside the other
+# already-disabled hooks.
 _SAILS_TPL = """\
 const sails = require("sails");
 __LIB_LINE__
 
 sails.lift(
 \t{
-\t\thooks: { grunt: false, views: false, session: false, policies: false, orm: false, pubsub: false },
+\t\thooks: { grunt: false, views: false, session: false, policies: false, orm: false, pubsub: false, i18n: false },
 \t\tlog: { level: "warn" },
 \t\troutes: {
 \t\t\t"GET /": (req, res) => res.json({ message: "Hello World" }),
@@ -443,6 +515,7 @@ _LEGACY_APP_TPL = {
     ("Express", "1"): _EXPRESS_LEGACY_TPL,
     ("Express", "2"): _EXPRESS_LEGACY_TPL,
     ("Koa", "1"):     _KOA_LEGACY_TPL,
+    **{("Restify", str(m)): _RESTIFY_LEGACY_TPL for m in range(0, 9)},
 }
 
 # ── NestJS (TypeScript compile step) ────────────────────────────────────────
@@ -453,6 +526,18 @@ _LEGACY_APP_TPL = {
 # *runtime* flag either doesn't parse on some Node majors or never actually
 # wires up DI). This template is TypeScript source, compiled via `tsc`
 # before running -- see make_dockerfile()'s "typescript" framework kind.
+#
+# BUG FIXED 2026-07-12: `app.listen(8000, "0.0.0.0")` -- the explicit host
+# argument -- fails to type-check on @nestjs/core majors 1-5 ("Argument of
+# type 'string' is not assignable to parameter of type '() => void'"),
+# confirmed via a real docker build: `INestApplication.listen()`'s overload
+# only gained an explicit host parameter in a later Nest version; before
+# that it was `listen(port, callback?)`. Simply dropping the host argument
+# (`app.listen(8000)`) works identically across every major and needs no
+# version branching -- Node's own default `http.Server.listen(port)`
+# behavior (no host given) already binds all interfaces, which is exactly
+# why Express/Koa/Hapi's own templates in this file already just call
+# `app.listen(8000)` with no host either.
 _NESTJS_TPL = """\
 import "reflect-metadata";
 import { Controller, Get, Module } from "@nestjs/common";
@@ -481,7 +566,7 @@ class AppModule {}
 
 async function bootstrap() {
 \tconst app = await NestFactory.create(AppModule);
-\tawait app.listen(8000, "0.0.0.0");
+\tawait app.listen(8000);
 }
 bootstrap();
 """
@@ -557,6 +642,19 @@ _FW_KIND = {
 # reflect-metadata) via a real docker build; older eras' exact peer pins
 # follow Nest's own documented compatibility matrix, not independently
 # re-verified this pass (disclosed here, not silently assumed).
+#
+# BUG FIXED 2026-07-12: `@nestjs/platform-express` was unconditionally
+# pinned to the same version as @nestjs/core for EVERY major, including
+# 1-5 -- confirmed via a real docker build failure ("No matching version
+# found for @nestjs/platform-express@1.0.2") that this package's own first
+# ever npm release is 6.0.0-alpha.3; no 1.x-5.x line exists at all.
+# NestJS's "platform adapter" architecture (separating the HTTP framework
+# integration into its own package) was introduced in v6 -- before that,
+# @nestjs/core bundled Express directly as its own dependency (confirmed
+# via `npm view @nestjs/core@5.7.4 dependencies`, which lists `express`
+# itself). `NestFactory.create(AppModule)` needs no platform-adapter import
+# either way, so majors <=5 simply omit the package instead of needing any
+# template change.
 def _nestjs_extra_deps(fw_major: str) -> dict:
     major = int(fw_major)
     if major <= 5:
@@ -565,8 +663,10 @@ def _nestjs_extra_deps(fw_major: str) -> dict:
         rxjs, reflect = "^6.6.0", "^0.1.13"
     else:
         rxjs, reflect = "^7.8.0", "^0.1.13"
-    return {"@nestjs/common": None, "@nestjs/platform-express": None,
-            "reflect-metadata": reflect, "rxjs": rxjs}
+    deps = {"@nestjs/common": None, "reflect-metadata": reflect, "rxjs": rxjs}
+    if major >= 6:
+        deps["@nestjs/platform-express"] = None
+    return deps
 
 
 _LIBOQS_NODE_VERSION = "0.1.0"
@@ -605,15 +705,40 @@ def make_adonis_routes(fw_resolved: str, lib_name: str, lib_ver: str) -> str:
 
 # ── package.json generation ───────────────────────────────────────────────────
 
+# BUG FIXED 2026-07-12: `typescript` (a devDependency, needed to compile
+# NestJS's app.ts, not something the running app itself depends on at
+# runtime) was pinned to a single unconditional `"^5.6.0"` regardless of
+# which Node version was compiling it -- confirmed via a real docker build
+# failure ("Unexpected token ?" from `npx tsc` itself, not from our app.ts)
+# that this resolves to 5.9.x, which requires Node >=14.17 to even RUN (its
+# own bundled JS uses syntax older V8 can't parse) -- meaning EVERY NestJS
+# combo on Node <14 failed at the compile step, regardless of which crypto
+# library or NestJS major was involved. Verified empirically (not just
+# trusting each release's declared `engines` field) by installing and
+# running `tsc --version` against the real Docker base image for each
+# Node major: typescript 4.9.5 runs on node:8-slim (v8.17.0) and
+# node:10-slim (v10.24.1); typescript 5.0.4 runs on node:12-slim
+# (v12.22.12, which satisfies TS 5.0's >=12.20 floor but not 5.1+'s
+# >=14.17); typescript 5.6.3 (the existing `^5.6.0` pin) runs fine on
+# node:14-slim (v14.21.3, well past >=14.17).
+def _nestjs_typescript_pin(node_ver: str) -> str:
+    major = int(node_ver) if node_ver else 999
+    if major < 12:
+        return "4.9.5"
+    if major < 14:
+        return "5.0.4"
+    return "^5.6.0"
+
+
 def make_package_json(fw_name: str, fw_major: str, fw_resolved: str,
-                      lib_name: str, lib_resolved: str) -> dict:
+                      lib_name: str, lib_resolved: str, node_ver: str = "") -> dict:
     deps = {_FW_MODULE[fw_name]: fw_resolved}
     dev_deps = {}
 
     if fw_name == "NestJS":
         for pkg, pinned in _nestjs_extra_deps(fw_major).items():
             deps[pkg] = pinned or fw_resolved
-        dev_deps["typescript"] = "^5.6.0"
+        dev_deps["typescript"] = _nestjs_typescript_pin(node_ver)
         dev_deps["@types/node"] = "^22.0.0"
 
     # liboqs-node is never a package.json dependency -- see LIB_META's
@@ -639,10 +764,23 @@ def make_package_json_text(*args, **kwargs) -> str:
 
 # ── Dockerfile generation ─────────────────────────────────────────────────────
 
+# `skipLibCheck`: confirmed via a real docker build failure that older
+# @nestjs/core majors (1-5) ship their own .d.ts referencing types from
+# @nestjs/microservices unconditionally (e.g. `nest-factory.d.ts` imports
+# from '@nestjs/microservices/interfaces/...') even though microservices
+# support is an entirely optional feature this project's minimal REST-only
+# app never uses and deliberately doesn't install (see
+# `_nestjs_extra_deps()`). Without this flag, `tsc` still type-checks
+# every .d.ts it can find in node_modules and fails to resolve that
+# unresolvable cross-package type reference. `skipLibCheck` is the
+# standard, narrowly-scoped fix (skip type-checking *.d.ts files, which we
+# don't control anyway) rather than installing an unused optional package
+# just to satisfy its type declarations.
 _TSCONFIG_JSON = json.dumps({
     "compilerOptions": {
         "module": "commonjs", "target": "ES2020",
         "experimentalDecorators": True, "emitDecoratorMetadata": True,
+        "skipLibCheck": True,
     },
 }, indent=2) + "\n"
 
@@ -719,6 +857,25 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
     needs_apt = bool(sys_deps) or lib_name == "liboqs-node" or fw_name == "AdonisJS"
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(node_ver) if needs_apt else ("", "", "")
 
+    # Cache-key diversifier (2026-07-12): EVERY combo sharing the same
+    # node_ver+framework+kind has an otherwise byte-identical Dockerfile
+    # prefix (FROM/WORKDIR/apt block are templated, not content-specific) --
+    # under this project's own parallel builds (--workers), confirmed via a
+    # real docker run that this lets BuildKit's cache alias a COPY layer
+    # across two totally unrelated combos: roughly half of all built
+    # `koa-*-jose-3` images were found to have `crypto-js`'s `app.js` baked
+    # in instead of jose's, even though package.json (and the on-disk source
+    # tree) were always correct for jose -- same root cause/class as the
+    # AdonisJS `routes.ts` collision below, just in the plain/multi-stage
+    # templates which never got the same fix. `ARG` (baked directly into the
+    # generated Dockerfile text, not passed via `--build-arg`) forces a
+    # distinct cache lineage per combo from this point on -- doesn't fix
+    # whatever race exists in BuildKit's cache store under concurrency, but
+    # makes a collision across combos structurally impossible instead of
+    # merely unlikely.
+    lib_npm = _lib_npm(lib_name)
+    cache_bust = f'ARG PQC_LIB_ID="{lib_npm or lib_name}@{lib_ver}"\n'
+
     apt_block = ""
     if sys_deps:
         deps_line = " ".join(sys_deps)
@@ -751,16 +908,40 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
         return (
             f"FROM node:{node_ver}-slim AS builder\n"
             "WORKDIR /app\n"
+            f"{cache_bust}"
             f"{apt_block}"
             f"{liboqs_stage}"
             "COPY package.json tsconfig.json .\n"
-            "RUN npm install --no-audit --no-fund\n"
+            # `--legacy-peer-deps`: @nestjs/core's own OPTIONAL peer deps
+            # (@nestjs/websockets, @nestjs/microservices) are declared with
+            # a matching-major range (e.g. major 1 wants
+            # @nestjs/microservices@^1.0.0) -- confirmed via a real docker
+            # build failure on Node 18 (npm 10, which auto-installs peer
+            # deps by default since npm 7) that @nestjs/microservices never
+            # had a 1.x release at all (its own first-ever version is
+            # 2.0.0), so npm's auto-resolution hits a real ETARGET. Node
+            # 10's older bundled npm 6 only warns about unmet peers instead
+            # of trying to install them, which is why this only surfaced on
+            # newer Node/npm pairings. This project's minimal REST-only Nest
+            # app never needs the optional websockets/microservices
+            # features, so skipping strict peer resolution entirely (same
+            # bypass already used for AdonisJS's bcrypt peer conflict) is
+            # the correct fix rather than trying to chase down a real
+            # version for a package release that doesn't exist.
+            "RUN npm install --no-audit --no-fund --legacy-peer-deps\n"
             "COPY app.ts .\n"
             "RUN npx tsc\n"
-            "RUN npm prune --omit=dev\n"
+            # `npm prune` re-resolves the dependency tree on its own and does
+            # NOT inherit `--legacy-peer-deps` from the earlier `npm install`
+            # call (it's a separate command invocation) -- confirmed via a
+            # real docker build failure on Node 18/npm 10 hitting the exact
+            # same ETARGET on @nestjs/microservices@^1.0.0 as the install
+            # step above, just one command later. Needs the same flag again.
+            "RUN npm prune --omit=dev --legacy-peer-deps\n"
             "\n"
             f"FROM node:{node_ver}-slim\n"
             "WORKDIR /app\n"
+            f"{cache_bust}"
             f"{liboqs_copy}"
             "COPY --from=builder /app/node_modules ./node_modules\n"
             "COPY --from=builder /app/app.js .\n"
@@ -801,32 +982,22 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
         # not `--force`, which also re-resolves already-installed packages)
         # is the correct bypass -- the same class of fix as Composer's
         # `--no-security-blocking` elsewhere in this project.
-        lib_npm = _lib_npm(lib_name)
         npm_install_line = (
             f"RUN npm install --no-audit --no-fund --legacy-peer-deps {lib_npm}@{lib_ver}\n"
             if lib_npm else ""
         )
         scaffold_deps = " ".join(["git", *sys_deps])
-        # Cache-key diversifier (2026-07-12): every AdonisJS combo sharing
-        # the same node_ver+major has an IDENTICAL Dockerfile up through the
-        # `create-adonisjs` scaffold step (it doesn't vary per library) --
-        # deliberately left cacheable, since re-scaffolding from scratch
-        # costs ~60s. Confirmed via a real docker build+run that under
-        # parallel builds (this project's own --workers flag), BuildKit can
-        # reuse a cached `COPY routes.ts` layer from a DIFFERENT library's
-        # build sharing that same parent chain -- e.g. a `tweetnacl` image
-        # crashing at runtime with `Cannot find module 'node-jose'`, even
-        # though the on-disk routes.ts for that build was verified correct.
-        # Same root cause/class as the earlier Express+jose+crypto-js
-        # incident (see project memory), just one instruction later in the
-        # chain. `ARG` (a value baked directly into the generated Dockerfile
-        # text, not passed via `--build-arg`) forces a distinct cache
-        # lineage per combo from this point on WITHOUT invalidating the
-        # expensive shared scaffold step above it -- doesn't eliminate
-        # whatever race exists in BuildKit's cache store under concurrency,
-        # but makes a collision far less likely by making the cache key
-        # space leading into `COPY routes.ts` genuinely distinct per combo.
-        cache_bust = f'ARG PQC_LIB_ID="{lib_npm or lib_name}@{lib_ver}"\n'
+        # `cache_bust` (defined above, shared with every other template kind)
+        # is placed AFTER the `create-adonisjs` scaffold step here rather
+        # than right after WORKDIR like the other kinds -- every AdonisJS
+        # combo sharing the same node_ver+major has an identical, expensive
+        # (~60s) scaffold step that's deliberately left cacheable; the
+        # diversifier only needs to guard the instructions from here on
+        # (routes.ts + the target library's install), which is where the
+        # actual collision was confirmed via a real docker build+run: a
+        # `tweetnacl` image crashing at runtime with `Cannot find module
+        # 'node-jose'`, even though the on-disk routes.ts for that build was
+        # verified correct.
         # NOT converted to multi-stage this pass: our CMD runs AdonisJS's
         # own dev-mode `ace serve`, which genuinely needs the scaffold's
         # devDependencies (its CLI/hot-reload tooling) present at runtime --
@@ -857,6 +1028,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
         return (
             f"FROM node:{node_ver}-slim AS builder\n"
             "WORKDIR /app\n"
+            f"{cache_bust}"
             f"{apt_block}"
             f"{liboqs_stage}"
             "COPY package.json .\n"
@@ -865,6 +1037,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             "\n"
             f"FROM node:{node_ver}-slim\n"
             "WORKDIR /app\n"
+            f"{cache_bust}"
             f"{liboqs_copy}"
             "COPY --from=builder /app/node_modules ./node_modules\n"
             "COPY app.js .\n"
@@ -875,6 +1048,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
     return (
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
+        f"{cache_bust}"
         "COPY package.json .\n"
         "RUN npm install --no-audit --no-fund\n"
         "COPY app.js .\n"
@@ -987,6 +1161,19 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
                     shutil.rmtree(out)
                 return False
 
+    # BUG FIXED 2026-07-13: regenerating an EXISTING context directory used to
+    # just overwrite each file in place (`.write_text()` on an already-present
+    # file keeps the same inode on most filesystems) -- confirmed via a real
+    # docker build investigation that this can leave a stale BuildKit build
+    # CONTEXT snapshot keyed to that inode/path, served instead of the file's
+    # current content, even with `--no-cache` and even under a brand-new
+    # destination tag (ruled both out with real docker builds). Deleting the
+    # directory first forces a genuinely fresh inode on every regeneration,
+    # closing off that stale-context class of bug at the source rather than
+    # only mitigating cross-combo layer collisions (see the `ARG` cache-bust
+    # fix elsewhere in this file, which is a different, narrower mechanism).
+    if out.exists():
+        shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
     kind = _FW_KIND[fw_name]
 
@@ -1000,7 +1187,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         )
         (out / "tsconfig.json").write_text(_TSCONFIG_JSON, encoding="utf-8")
         (out / "package.json").write_text(
-            make_package_json_text(fw_name, fw_major, fw_resolved, lib_name, lib_resolved), encoding="utf-8"
+            make_package_json_text(fw_name, fw_major, fw_resolved, lib_name, lib_resolved, lang_ver),
+            encoding="utf-8"
         )
     else:
         (out / "app.js").write_text(
