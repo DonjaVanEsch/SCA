@@ -683,6 +683,38 @@ def vulnerabilities():
 
 # ── Update-availability scanner ───────────────────────────────────────────────
 
+def _release_url(item: dict) -> str | None:
+    """Link to the package's own registry page for the exact detected
+    version -- lets the user skim the description/changelog/source link
+    there to judge an Include before ever building anything. Deliberately
+    just a URL-pattern construction (no extra network call, no rate-limit
+    risk -- see the Maven Central 429 hit earlier this session) rather than
+    trying to resolve an actual changelog link per package."""
+    lang, pkg, ver = item["language"], item["package_id"], item["latest_version"]
+    if not pkg or not ver:
+        return None
+    if lang == "python":
+        return f"https://pypi.org/project/{pkg}/{ver}/"
+    if lang == "node":
+        return f"https://www.npmjs.com/package/{pkg}/v/{ver}"
+    if lang == "php":
+        return f"https://packagist.org/packages/{pkg}#{ver}"
+    if lang == "java":
+        if ":" not in pkg:
+            return None
+        group, artifact = pkg.split(":", 1)
+        return f"https://search.maven.org/artifact/{group}/{artifact}/{ver}/jar"
+    if lang == "dotnet":
+        return f"https://www.nuget.org/packages/{pkg}/{ver}"
+    return None
+
+
+def _with_release_urls(items: list) -> list:
+    for item in items:
+        item["release_url"] = _release_url(item)
+    return items
+
+
 @app.route("/api/updates")
 def list_updates():
     """Pending framework/library updates not yet dismissed (or all, with
@@ -690,7 +722,7 @@ def list_updates():
     include_dismissed = request.args.get("include_dismissed") == "1"
     return jsonify({
         "count": db.count_pending_updates(),
-        "items": db.get_pending_updates(include_dismissed=include_dismissed),
+        "items": _with_release_urls(db.get_pending_updates(include_dismissed=include_dismissed)),
     })
 
 
@@ -868,7 +900,7 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
 def update_log():
     """Permanent history of included updates -- see db.get_update_log()."""
     hide_tested = request.args.get("hide_tested") == "1"
-    return jsonify({"items": db.get_update_log(hide_tested=hide_tested)})
+    return jsonify({"items": _with_release_urls(db.get_update_log(hide_tested=hide_tested))})
 
 
 @app.route("/api/updates/<int:update_id>/mark-tested", methods=["POST"])

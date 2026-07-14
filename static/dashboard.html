@@ -1759,16 +1759,15 @@
 
   .update-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+    flex-direction: column;
+    gap: 4px;
     padding: 8px 10px;
     background: var(--surface3);
     border: 1px solid var(--border);
     border-radius: var(--radius);
   }
 
-  .update-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .update-row-top { display: flex; align-items: center; gap: 10px; }
 
   .update-row-title { font-size: 13px; font-weight: 600; }
 
@@ -1780,6 +1779,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .update-row-sub.expanded {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: break-word;
+  }
+
+  .update-row-sub-toggle {
+    align-self: flex-start;
+    font-size: 10.5px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .update-row-sub-toggle:hover { text-decoration: underline; }
 
   .update-lang-tag {
     display: inline-block;
@@ -1809,6 +1825,16 @@
     color: var(--muted2);
     white-space: nowrap;
   }
+
+  .update-row-tested-line { align-self: flex-start; }
+
+  .update-row-release-link {
+    margin-left: 6px;
+    color: var(--accent);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .update-row-release-link:hover { text-decoration: underline; }
 </style>
 
 <!-- ── Toast container ─────────────────────────────────────────────────── -->
@@ -3507,6 +3533,22 @@
       ? `Include selected (${_updatesSelected.size})` : 'Include selected';
   }
 
+  // Only show the "more" toggle when the line is actually being clipped by
+  // its own single-line ellipsis truncation -- avoids a pointless toggle on
+  // rows short enough to already show everything.
+  function _revealRowSubToggles(body) {
+    body.querySelectorAll('.update-row-sub-toggle').forEach(btn => {
+      const sub = btn.previousElementSibling;
+      if (sub.scrollWidth > sub.clientWidth + 1) btn.style.display = 'inline';
+    });
+  }
+
+  function toggleRowSub(btn) {
+    const sub = btn.previousElementSibling;
+    const expanded = sub.classList.toggle('expanded');
+    btn.textContent = expanded ? 'less' : 'more';
+  }
+
   function renderUpdatesList(items) {
     const body = document.getElementById('updates-body');
     if (!items.length) {
@@ -3515,19 +3557,22 @@
     }
     body.innerHTML = items.map(u => `
       <div class="update-row" data-id="${u.id}">
-        <input type="checkbox" class="update-row-checkbox" data-id="${u.id}"
-               ${_updatesSelected.has(u.id) ? 'checked' : ''}>
-        <div class="update-row-main">
+        <div class="update-row-top">
+          <input type="checkbox" class="update-row-checkbox" data-id="${u.id}"
+                 ${_updatesSelected.has(u.id) ? 'checked' : ''}>
           <div class="update-row-title">
             <span class="update-lang-tag">${u.language}</span>${u.name}
             <span style="color:var(--muted2);font-weight:400">— ${u.kind}</span>
           </div>
-          <div class="update-row-sub">
-            new major ${u.new_major} (latest ${u.latest_version || '?'}) —
-            currently tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
-          </div>
+          ${u.release_url ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="update-row-release-link">release page ↗</a>` : ''}
+          <div style="flex:1"></div>
+          <button class="btn btn-ghost btn-sm" onclick="dismissUpdate(${u.id})">Dismiss</button>
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="dismissUpdate(${u.id})">Dismiss</button>
+        <div class="update-row-sub">
+          new major ${u.new_major} (latest ${u.latest_version || '?'}) —
+          currently tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
+        </div>
+        <button type="button" class="update-row-sub-toggle" style="display:none" onclick="toggleRowSub(this)">more</button>
       </div>
     `).join('');
     body.querySelectorAll('.update-row-checkbox').forEach(cb => {
@@ -3537,6 +3582,7 @@
         _updateIncludeButtonState();
       });
     });
+    _revealRowSubToggles(body);
   }
 
   function renderUpdatesLog(items) {
@@ -3547,22 +3593,28 @@
     }
     body.innerHTML = items.map(u => `
       <div class="update-row">
-        <div class="update-row-main">
+        <div class="update-row-top">
           <div class="update-row-title">
             <span class="update-lang-tag">${u.language}</span>${u.name}
             <span style="color:var(--muted2);font-weight:400">— ${u.kind}</span>
           </div>
-          <div class="update-row-sub">
-            major ${u.new_major} included ${u.included_at || ''} —
-            was tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
-          </div>
+          ${u.release_url ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="update-row-release-link">release page ↗</a>` : ''}
+          <div style="flex:1"></div>
+          <span class="update-row-images-added">+${u.images_added ?? '?'} image(s)</span>
         </div>
-        <span class="update-row-images-added">+${u.images_added ?? '?'} image(s)</span>
-        ${u.tested
-          ? `<span class="update-row-tested">✓ tested (new ${u.detected_at || ''})</span>`
-          : `<button class="btn btn-ghost btn-sm" onclick="markUpdateTested(${u.id})">Mark tested</button>`}
+        <div class="update-row-sub">
+          major ${u.new_major} included ${u.included_at || ''} —
+          was tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
+        </div>
+        <button type="button" class="update-row-sub-toggle" style="display:none" onclick="toggleRowSub(this)">more</button>
+        <div class="update-row-tested-line">
+          ${u.tested
+            ? `<span class="update-row-tested">✓ tested (new ${u.detected_at || ''})</span>`
+            : `<button class="btn btn-ghost btn-sm" onclick="markUpdateTested(${u.id})">Mark tested</button>`}
+        </div>
       </div>
     `).join('');
+    _revealRowSubToggles(body);
   }
 
   async function markUpdateTested(id) {

@@ -548,6 +548,13 @@
               "compatibility": [
                 "3.9+"
               ]
+            },
+            {
+              "nr": "49.0",
+              "release_date": null,
+              "compatibility": [
+                "3.9+"
+              ]
             }
           ],
           "notes": "Widely used library with support for modern cryptographic primitives, including post-quantum algorithms. Actively maintained and regularly updated with security patches."
