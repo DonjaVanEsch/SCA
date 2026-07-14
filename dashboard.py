@@ -8,6 +8,7 @@ Opens: http://localhost:5050
 import json
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -19,9 +20,12 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import db
 import manager
+import check_updates
+import registry_writer
 
 app = Flask(__name__, static_folder=str(PROJECT_ROOT / "static"))
 
@@ -675,6 +679,202 @@ def framework_platform_constraints():
 def vulnerabilities():
     filters = {k: request.args.get(k, "") for k in ("language", "library")}
     return jsonify(db.get_vulnerabilities(filters))
+
+
+# ── Update-availability scanner ───────────────────────────────────────────────
+
+@app.route("/api/updates")
+def list_updates():
+    """Pending framework/library updates not yet dismissed (or all, with
+    ?include_dismissed=1) -- detection only, see scripts/check_updates.py."""
+    include_dismissed = request.args.get("include_dismissed") == "1"
+    return jsonify({
+        "count": db.count_pending_updates(),
+        "items": db.get_pending_updates(include_dismissed=include_dismissed),
+    })
+
+
+@app.route("/api/updates/check", methods=["POST"])
+def run_update_check():
+    """Manually trigger scripts/check_updates.py now, streamed like any
+    other long-running action. Body: {"lang": "node"} to check one language,
+    omit for all 5."""
+    data = request.json or {}
+    lang = data.get("lang") or None
+    job_id, q = _new_job(f"update-check-{lang or 'all'}")
+
+    def run():
+        try:
+            results = check_updates.check_all([lang] if lang else None)
+            for r in results:
+                db.save_pending_update(**r)
+                q.put(f"NEW: {r['language']}/{r['kind']} {r['name']} -> "
+                      f"major {r['new_major']} (latest {r['latest_version']})")
+            q.put(f"Done -- {len(results)} update(s) found, "
+                  f"{db.count_pending_updates()} total not yet dismissed.")
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+_KIND_TO_SECTION = {"framework": "frameworks", "library": "cryptography_libs"}
+
+
+@app.route("/api/updates/<int:update_id>/dismiss", methods=["POST"])
+def dismiss_update(update_id: int):
+    """Dismiss = record the version as a known-but-not-enabled reference row
+    (`"available": false`, this project's existing convention -- see e.g.
+    the NestJS 1-5 / bcrypt "0" exclusions from earlier this session)
+    instead of just hiding it from the review queue. The user can flip
+    `available` to true by hand later in the registry file if it turns out
+    to be needed after all."""
+    item = db.get_pending_update(update_id)
+    if item is None:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not item["dismissed"] and not item["included"]:
+        registry_path = registry_writer.registry_path_for(item["language"])
+        section_key = _KIND_TO_SECTION[item["kind"]]
+        # A stale row from a DIFFERENT host's database (each Docker host has
+        # its own SQLite db, but they share the same checked-in registry
+        # file) may already have this bucket if another host acted on it
+        # first -- that's "already done", not an error, so only write if
+        # it's genuinely still missing.
+        if not registry_writer.bucket_exists(registry_path, section_key, item["name"], item["new_major"]):
+            try:
+                registry_writer.add_bucket(
+                    registry_path, section_key, item["name"], item["new_major"],
+                    None, [], available=False,
+                )
+            except registry_writer.RegistryWriteError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+    db.dismiss_pending_update(update_id)
+    return jsonify({"ok": True, "count": db.count_pending_updates()})
+
+
+@app.route("/api/updates/include", methods=["POST"])
+def include_updates():
+    """Multi-select: for each id, add a real (enabled) registry bucket --
+    compatibility inherited from the nearest lower already-tracked major,
+    since an empty array would make generate_images.py skip it entirely --
+    then regenerate images for every affected language and report how many
+    new image contexts resulted, per (language, framework/library, major).
+    Body: {"ids": [1, 2, 3]}."""
+    data = request.json or {}
+    ids = data.get("ids") or []
+    job_id, q = _new_job(f"include-updates-{len(ids)}")
+
+    def run():
+        try:
+            _do_include_updates(ids, log_fn=lambda msg="": q.put(str(msg)))
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+def _do_include_updates(ids: list, log_fn=print) -> None:
+    affected_languages = set()
+    to_process = []
+
+    for uid in ids:
+        item = db.get_pending_update(uid)
+        if item is None:
+            log_fn(f"  [SKIP] update id {uid} not found")
+            continue
+        if item["dismissed"] or item["included"]:
+            log_fn(f"  [SKIP] {item['language']}/{item['name']} {item['new_major']} "
+                   f"already dismissed/included")
+            continue
+
+        section_key = _KIND_TO_SECTION[item["kind"]]
+        registry_path = registry_writer.registry_path_for(item["language"])
+
+        # A stale row from a DIFFERENT host's database (each Docker host has
+        # its own SQLite db, but they share the same checked-in registry
+        # file) may already have this bucket if another host included it
+        # first -- that's "already done", not an error, so skip the write
+        # but still regenerate/count/mark it for THIS host's own images/ tree.
+        if registry_writer.bucket_exists(registry_path, section_key, item["name"], item["new_major"]):
+            log_fn(f"{item['language']}/{item['kind']} {item['name']} major {item['new_major']} "
+                   f"already tracked (added by another host?) -- skipping registry write")
+        else:
+            tracked = item["tracked_majors"]
+            inherited_compat = []
+            if tracked:
+                inherited_compat = registry_writer.get_entry_compatibility(
+                    registry_path, section_key, item["name"], tracked[-1]) or []
+
+            log_fn(f"Including {item['language']}/{item['kind']} {item['name']} "
+                   f"major {item['new_major']} (compatibility inherited from "
+                   f"{tracked[-1] if tracked else 'n/a'}: {inherited_compat})")
+            try:
+                registry_writer.add_bucket(
+                    registry_path, section_key, item["name"], item["new_major"],
+                    None, inherited_compat, available=None,
+                )
+            except registry_writer.RegistryWriteError as exc:
+                log_fn(f"  ERROR writing registry: {exc}")
+                continue
+
+        affected_languages.add(item["language"])
+        to_process.append(item)
+
+    if not to_process:
+        log_fn("Nothing included.")
+        return
+
+    # New buckets were just written straight to the registry JSON via
+    # registry_writer -- the DB's reference tables (fw_versions/lib_versions,
+    # used below to FK-resolve newly generated images) won't see them until
+    # the registry is re-parsed.
+    log_fn("Syncing registry reference tables ...")
+    db.load_registry()
+
+    for lang in sorted(affected_languages):
+        log_fn(f"Regenerating images for {lang} ...")
+        proc = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "generate_images.py"), "--lang", lang],
+            capture_output=True, text=True,
+        )
+        for line in proc.stdout.splitlines():
+            log_fn(f"  {line}")
+        if proc.returncode != 0:
+            log_fn(f"  [WARN] generate_images.py exited {proc.returncode}: {proc.stderr[-500:]}")
+
+    for item in to_process:
+        images_base = PROJECT_ROOT / "images" / item["language"]
+        if item["kind"] == "framework":
+            pattern = f"*/{item['name']}/{item['new_major']}/**/Dockerfile"
+        else:
+            pattern = f"*/*/*/{item['name']}/{item['new_major']}/Dockerfile"
+        count = len(list(images_base.glob(pattern)))
+        db.mark_pending_update_included(item["id"], count)
+        log_fn(f"  {item['language']}/{item['name']} {item['new_major']}: {count} new image(s)")
+
+    log_fn("Syncing image database ...")
+    _total, inserted, _removed = db.sync_images()
+    log_fn(f"Done -- {inserted} new image(s) synced into the database "
+           f"(now build/test them via the Sources tab).")
+
+
+@app.route("/api/updates/log")
+def update_log():
+    """Permanent history of included updates -- see db.get_update_log()."""
+    hide_tested = request.args.get("hide_tested") == "1"
+    return jsonify({"items": db.get_update_log(hide_tested=hide_tested)})
+
+
+@app.route("/api/updates/<int:update_id>/mark-tested", methods=["POST"])
+def mark_update_tested(update_id):
+    db.mark_pending_update_tested(update_id)
+    return jsonify({"ok": True})
 
 
 # ── Export helpers ────────────────────────────────────────────────────────────

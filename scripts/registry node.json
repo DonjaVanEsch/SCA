@@ -255,7 +255,8 @@
           "version": [
             { "nr": "0.1", "release_date": "2022-12-04", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
             { "nr": "1.0", "release_date": "2023-04-12", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
-            { "nr": "2.0", "release_date": "2025-08-25", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+            { "nr": "2.0", "release_date": "2025-08-25", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2.2", "release_date": null, "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
           ],
           "notes": "Auditable pure-JS elliptic curves (secp256k1, ed25519, NIST curves). Sibling project to @noble/post-quantum, same author (paulmillr). 2.x requires Node >=20.19.0 (reduces to major 20 at our granularity)."
         },

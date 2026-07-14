@@ -107,6 +107,7 @@ FW_PIP = {
     ("Django",  "3"): "Django>=3.0,<4.0",
     ("Django",  "4"): "Django>=4.0,<5.0",
     ("Django",  "5"): "Django>=5.0,<6.0",
+    ("Django",  "6"): "Django>=6.0,<7.0",
     ("FastAPI", "0"): "fastapi>=0.1,<1.0",
     ("Tornado", "1"): "tornado>=1.0,<2.0",
     ("Tornado", "2"): "tornado>=2.0,<3.0",
@@ -568,8 +569,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip wheel cffi pycparser \\
-    && (python -c "import setuptools" 2>/dev/null || pip install --no-cache-dir "setuptools<81") \\
+RUN pip install --no-cache-dir --user --upgrade pip wheel cffi pycparser \\
+    && (python -c "import setuptools" 2>/dev/null || pip install --no-cache-dir --user "setuptools<81") \\
     && pip install --no-cache-dir --no-build-isolation --user -r requirements.txt
 
 FROM {base_image}

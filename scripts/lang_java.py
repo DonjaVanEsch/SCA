@@ -742,17 +742,26 @@ public class Main {
 		__LIB_TOUCH__
 	}
 
+	// Map.of(...) is Java 9+ only -- Javalin 3/4/5 are still tracked as
+	// JDK 8-compatible, so this can't use it (confirmed via a real
+	// docker build: "cannot find symbol" on javac 8 for Map.of).
+	private static Map<String, Object> mapOf(Object... kv) {
+		Map<String, Object> m = new java.util.LinkedHashMap<>();
+		for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+		return m;
+	}
+
 __VERSIONS_HELPER__
 	public static void main(String[] args) {
 		Properties v = versions();
 		Javalin app = Javalin.create().start(8000);
 
-		app.get("/", ctx -> ctx.json(Map.of("message", "Hello World")));
+		app.get("/", ctx -> ctx.json(mapOf("message", "Hello World")));
 
-		app.get("/version", ctx -> ctx.json(Map.of(
-				"language", Map.of("name", "Java", "version", System.getProperty("java.version")),
-				"framework", Map.of("name", "__FW_NAME__", "version", v.getProperty("framework.version", "unknown")),
-				"library", Map.of("name", "__LIB_NAME__", "version", v.getProperty("library.version", "unknown"))
+		app.get("/version", ctx -> ctx.json(mapOf(
+				"language", mapOf("name", "Java", "version", System.getProperty("java.version")),
+				"framework", mapOf("name", "__FW_NAME__", "version", v.getProperty("framework.version", "unknown")),
+				"library", mapOf("name", "__LIB_NAME__", "version", v.getProperty("library.version", "unknown"))
 		)));
 	}
 }
@@ -777,15 +786,24 @@ public class Main {
 		__LIB_TOUCH__
 	}
 
+	// Kept in sync with the legacy template's own JDK 8-safe helper (see its
+	// comment) even though 7.x itself only tracks JDK 21+ -- avoids silently
+	// reintroducing the same Map.of() bug if 7.x's floor is ever lowered.
+	private static Map<String, Object> mapOf(Object... kv) {
+		Map<String, Object> m = new java.util.LinkedHashMap<>();
+		for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+		return m;
+	}
+
 __VERSIONS_HELPER__
 	public static void main(String[] args) {
 		Properties v = versions();
 		Javalin.create(cfg -> {
-			cfg.routes.get("/", ctx -> ctx.json(Map.of("message", "Hello World")));
-			cfg.routes.get("/version", ctx -> ctx.json(Map.of(
-					"language", Map.of("name", "Java", "version", System.getProperty("java.version")),
-					"framework", Map.of("name", "__FW_NAME__", "version", v.getProperty("framework.version", "unknown")),
-					"library", Map.of("name", "__LIB_NAME__", "version", v.getProperty("library.version", "unknown"))
+			cfg.routes.get("/", ctx -> ctx.json(mapOf("message", "Hello World")));
+			cfg.routes.get("/version", ctx -> ctx.json(mapOf(
+					"language", mapOf("name", "Java", "version", System.getProperty("java.version")),
+					"framework", mapOf("name", "__FW_NAME__", "version", v.getProperty("framework.version", "unknown")),
+					"library", mapOf("name", "__LIB_NAME__", "version", v.getProperty("library.version", "unknown"))
 			)));
 		}).start(8000);
 	}

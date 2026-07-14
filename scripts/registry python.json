@@ -269,6 +269,13 @@
               "compatibility": [
                 "3.10+"
               ]
+            },
+            {
+              "nr": "6",
+              "release_date": null,
+              "compatibility": [
+                "3.12+"
+              ]
             }
           ],
           "notes": "Compatibility is the minimum Python requirement for the major line; later minor releases in the same major may require newer Python versions. Bucket '0' is Django's real pre-1.0 line (0.90-0.96, 2005-11-16 to 2007-03-23, confirmed via PyPI/release-note dates) -- the last 'unstable' releases before the 1.0 stability baseline; recorded as an explicit reference row (compatibility: []) rather than silently omitted, per this project's standing convention for historical versions. Not independently build-verified this pass (ancient Python 2.3/2.4-era code, no PyPI-installable artifact for most of this range -- it predates PyPI's own package-upload conventions)."

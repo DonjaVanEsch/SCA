@@ -863,6 +863,11 @@
     z-index: 100;
     display: flex;
     align-items: flex-end;
+    /* log-console (flex:1) fills all free space whenever it's open, so this
+       only actually matters while it's closed (display:none, removed from
+       flex layout) -- pushes the updates badge to the right edge instead of
+       sitting right next to pagination with a big empty gap. */
+    justify-content: space-between;
     pointer-events: none;
     background: var(--surface3);
     border-radius: 10px 10px 0 0;
@@ -1707,6 +1712,103 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+
+  /* ── Update-availability badge (bottom-right, Docker-Desktop style) ────── */
+  /* Lives inside #bottom-dock now (a flex sibling of #pagination/#log-console)
+     rather than floating above it -- so an open log console visually shrinks
+     to make room instead of the badge overlapping its status text. */
+  #updates-badge {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 14px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #04121f;
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: inherit;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    pointer-events: all;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+  }
+
+  #updates-badge.show { display: flex; }
+  #updates-badge:hover { filter: brightness(1.08); }
+
+  .updates-panel { width: min(620px, 92vw); }
+
+  .updates-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 16px;
+    overflow: auto;
+    max-height: 60vh;
+  }
+
+  .updates-empty {
+    color: var(--muted2);
+    font-size: 12.5px;
+    padding: 20px 4px;
+    text-align: center;
+  }
+
+  .update-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .update-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+  .update-row-title { font-size: 13px; font-weight: 600; }
+
+  .update-row-sub {
+    font-size: 11px;
+    color: var(--muted2);
+    font-family: var(--mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .update-lang-tag {
+    display: inline-block;
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--muted2);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-right: 6px;
+  }
+
+  .updates-view-toggle { display: flex; gap: 4px; margin-left: auto; margin-right: 10px; }
+  .updates-view-toggle .btn.active { background: var(--surface3); color: var(--text); }
+
+  .update-row-checkbox { flex-shrink: 0; width: 16px; height: 16px; cursor: pointer; }
+
+  .update-row-images-added {
+    font-size: 11px;
+    color: var(--success);
+    font-family: var(--mono);
+    white-space: nowrap;
+  }
+
+  .update-row-tested {
+    font-size: 11px;
+    color: var(--muted2);
+    white-space: nowrap;
+  }
 </style>
 
 <!-- ── Toast container ─────────────────────────────────────────────────── -->
@@ -2109,6 +2211,9 @@
     </div>
     <div id="log-body"></div>
   </div>
+  <button id="updates-badge" title="New framework/library versions detected upstream">
+    🔔 <span id="updates-badge-count">0</span> new versions
+  </button>
 </div>
 
 <!-- ── Detail drawer ───────────────────────────────────────────────────── -->
@@ -2256,6 +2361,8 @@
             <div class="sel-menu-item" id="mnu-orphans-dry">Dry run (preview)</div>
           </div>
         </div>
+        <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
+                title="Check upstream registries for new framework/library versions">🔔 New versions</button>
       </div>
       <p class="settings-hint">
         Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
@@ -2265,12 +2372,50 @@
         longer exists in the current <code>images/</code> tree (e.g. after a registry fix
         narrowed a version range, or a language was dropped) — Docker's own cleanup has no
         way to know this, since it only tracks container references.
+        New versions scans npm/PyPI/Packagist/Maven Central/NuGet for framework/library
+        majors newer than what's currently tracked — detection only, nothing is added or
+        built until you include it (also runs weekly via cron; the 🔔 badge in the bottom
+        bar shows the current pending count).
       </p>
     </div>
     <div class="review-panel-footer">
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="btn-settings-cancel">Cancel</button>
       <button class="btn btn-primary btn-sm" id="btn-settings-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── New versions panel ────────────────────────────────────────────────── -->
+<div id="updates-panel-overlay" class="review-overlay">
+  <div class="review-panel updates-panel">
+    <div class="review-panel-header">
+      <h3>New versions</h3>
+      <div class="updates-view-toggle">
+        <button class="btn btn-ghost btn-sm active" id="btn-updates-view-pending">Pending</button>
+        <button class="btn btn-ghost btn-sm" id="btn-updates-view-log">Included log</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btn-close-updates-panel">✕</button>
+    </div>
+    <div class="review-body updates-body" id="updates-body">
+      <p class="updates-empty">Loading…</p>
+    </div>
+    <div class="review-panel-footer" id="updates-footer-pending">
+      <span style="font-size:11.5px;color:var(--muted2)">
+        Detection only — nothing is added or built until you include it.
+      </span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-updates-check-now">Check now</button>
+      <button class="btn btn-primary btn-sm" id="btn-updates-include" disabled>Include selected</button>
+    </div>
+    <div class="review-panel-footer" id="updates-footer-log" style="display:none">
+      <span style="font-size:11.5px;color:var(--muted2)">
+        Included versions and how many new images each added — build/test them via the Sources tab.
+      </span>
+      <div style="flex:1"></div>
+      <label style="font-size:11.5px;color:var(--muted2);display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="chk-updates-hide-tested">Hide tested
+      </label>
     </div>
   </div>
 </div>
@@ -3342,6 +3487,166 @@
     }
   }
 
+  // ── Update-availability badge/panel ───────────────────────────────────────
+  let _updatesView = 'pending';      // 'pending' | 'log'
+  const _updatesSelected = new Set();
+
+  async function loadUpdatesBadge() {
+    try {
+      const r = await api('/api/updates');
+      const badge = document.getElementById('updates-badge');
+      document.getElementById('updates-badge-count').textContent = r.count;
+      badge.classList.toggle('show', r.count > 0);
+    } catch { }
+  }
+
+  function _updateIncludeButtonState() {
+    const btn = document.getElementById('btn-updates-include');
+    btn.disabled = _updatesSelected.size === 0;
+    btn.textContent = _updatesSelected.size
+      ? `Include selected (${_updatesSelected.size})` : 'Include selected';
+  }
+
+  function renderUpdatesList(items) {
+    const body = document.getElementById('updates-body');
+    if (!items.length) {
+      body.innerHTML = '<p class="updates-empty">No new versions detected. Use "Check now" to scan again.</p>';
+      return;
+    }
+    body.innerHTML = items.map(u => `
+      <div class="update-row" data-id="${u.id}">
+        <input type="checkbox" class="update-row-checkbox" data-id="${u.id}"
+               ${_updatesSelected.has(u.id) ? 'checked' : ''}>
+        <div class="update-row-main">
+          <div class="update-row-title">
+            <span class="update-lang-tag">${u.language}</span>${u.name}
+            <span style="color:var(--muted2);font-weight:400">— ${u.kind}</span>
+          </div>
+          <div class="update-row-sub">
+            new major ${u.new_major} (latest ${u.latest_version || '?'}) —
+            currently tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="dismissUpdate(${u.id})">Dismiss</button>
+      </div>
+    `).join('');
+    body.querySelectorAll('.update-row-checkbox').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = parseInt(cb.dataset.id);
+        if (cb.checked) _updatesSelected.add(id); else _updatesSelected.delete(id);
+        _updateIncludeButtonState();
+      });
+    });
+  }
+
+  function renderUpdatesLog(items) {
+    const body = document.getElementById('updates-body');
+    if (!items.length) {
+      body.innerHTML = '<p class="updates-empty">Nothing included yet.</p>';
+      return;
+    }
+    body.innerHTML = items.map(u => `
+      <div class="update-row">
+        <div class="update-row-main">
+          <div class="update-row-title">
+            <span class="update-lang-tag">${u.language}</span>${u.name}
+            <span style="color:var(--muted2);font-weight:400">— ${u.kind}</span>
+          </div>
+          <div class="update-row-sub">
+            major ${u.new_major} included ${u.included_at || ''} —
+            was tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
+          </div>
+        </div>
+        <span class="update-row-images-added">+${u.images_added ?? '?'} image(s)</span>
+        ${u.tested
+          ? `<span class="update-row-tested">✓ tested (new ${u.detected_at || ''})</span>`
+          : `<button class="btn btn-ghost btn-sm" onclick="markUpdateTested(${u.id})">Mark tested</button>`}
+      </div>
+    `).join('');
+  }
+
+  async function markUpdateTested(id) {
+    try {
+      await api(`/api/updates/${id}/mark-tested`, { method: 'POST' });
+      await _loadUpdatesView();
+    } catch (e) {
+      toast(`Failed to mark tested: ${e.message}`, 'err');
+    }
+  }
+
+  async function _loadUpdatesView() {
+    const body = document.getElementById('updates-body');
+    body.innerHTML = '<p class="updates-empty">Loading…</p>';
+    document.getElementById('btn-updates-view-pending').classList.toggle('active', _updatesView === 'pending');
+    document.getElementById('btn-updates-view-log').classList.toggle('active', _updatesView === 'log');
+    document.getElementById('updates-footer-pending').style.display = _updatesView === 'pending' ? 'flex' : 'none';
+    document.getElementById('updates-footer-log').style.display = _updatesView === 'log' ? 'flex' : 'none';
+    try {
+      if (_updatesView === 'pending') {
+        const r = await api('/api/updates');
+        renderUpdatesList(r.items);
+      } else {
+        const hideTested = document.getElementById('chk-updates-hide-tested').checked;
+        const r = await api(`/api/updates/log?hide_tested=${hideTested ? '1' : '0'}`);
+        renderUpdatesLog(r.items);
+      }
+    } catch (e) {
+      body.innerHTML = `<p class="updates-empty">Error loading updates: ${e.message}</p>`;
+    }
+  }
+
+  async function openUpdatesPanel() {
+    document.getElementById('updates-panel-overlay').classList.add('open');
+    await _loadUpdatesView();
+  }
+
+  function closeUpdatesPanel() {
+    document.getElementById('updates-panel-overlay').classList.remove('open');
+  }
+
+  function switchUpdatesView(view) {
+    _updatesView = view;
+    _loadUpdatesView();
+  }
+
+  async function dismissUpdate(id) {
+    try {
+      await api(`/api/updates/${id}/dismiss`, { method: 'POST' });
+      _updatesSelected.delete(id);
+      _updateIncludeButtonState();
+      await _loadUpdatesView();
+      await loadUpdatesBadge();
+    } catch (e) {
+      toast(`Error dismissing update: ${e.message}`, 'err');
+    }
+  }
+
+  async function runUpdateCheckNow() {
+    try {
+      const r = await api('/api/updates/check', { method: 'POST', body: JSON.stringify({}) });
+      openLog('Checking for new framework/library versions', r.job_id, 'update-check',
+        async () => { await _loadUpdatesView(); await loadUpdatesBadge(); });
+    } catch (e) {
+      toast(`Update check failed: ${e.message}`, 'err');
+    }
+  }
+
+  async function includeSelectedUpdates() {
+    const ids = Array.from(_updatesSelected);
+    if (!ids.length) return;
+    if (!confirm(`Add ${ids.length} new version(s) to the registry and regenerate images? `
+      + `Compatibility is inherited from the nearest lower tracked major — unverified until you build/test.`)) return;
+    try {
+      const r = await api('/api/updates/include', { method: 'POST', body: JSON.stringify({ ids }) });
+      _updatesSelected.clear();
+      _updateIncludeButtonState();
+      openLog(`Including ${ids.length} version(s)`, r.job_id, 'include-updates',
+        async () => { await _loadUpdatesView(); await loadUpdatesBadge(); });
+    } catch (e) {
+      toast(`Include failed: ${e.message}`, 'err');
+    }
+  }
+
   // ── Log console (SSE) ─────────────────────────────────────────────────────
   let _es = null;
   let _currentJobId = null;
@@ -4130,6 +4435,7 @@
     await loadImages(1);
     loadStats();
     loadRuns();
+    loadUpdatesBadge();
     await tryReconnect();
   }
 
@@ -4294,6 +4600,28 @@
   document.getElementById('btn-test-docker').addEventListener('click', testDockerConnection);
   document.getElementById('settings-panel-overlay').addEventListener('click', e => {
     if (e.target.id === 'settings-panel-overlay') closeSettingsPanel();
+  });
+
+  document.getElementById('updates-badge').addEventListener('click', openUpdatesPanel);
+  document.getElementById('btn-close-updates-panel').addEventListener('click', closeUpdatesPanel);
+  document.getElementById('btn-updates-check-now').addEventListener('click', runUpdateCheckNow);
+  document.getElementById('btn-updates-include').addEventListener('click', includeSelectedUpdates);
+  document.getElementById('btn-updates-view-pending').addEventListener('click', () => switchUpdatesView('pending'));
+  document.getElementById('btn-updates-view-log').addEventListener('click', () => switchUpdatesView('log'));
+  {
+    const chk = document.getElementById('chk-updates-hide-tested');
+    chk.checked = localStorage.getItem('pqc-updates-hide-tested') === '1';
+    chk.addEventListener('change', () => {
+      localStorage.setItem('pqc-updates-hide-tested', chk.checked ? '1' : '0');
+      _loadUpdatesView();
+    });
+  }
+  document.getElementById('updates-panel-overlay').addEventListener('click', e => {
+    if (e.target.id === 'updates-panel-overlay') closeUpdatesPanel();
+  });
+  document.getElementById('btn-settings-updates').addEventListener('click', () => {
+    closeSettingsPanel();
+    openUpdatesPanel();
   });
 
   document.getElementById('btn-sync').addEventListener('click', async () => {

@@ -300,6 +300,37 @@ CREATE INDEX IF NOT EXISTS idx_pc_langver   ON platform_constraints(lang_version
 CREATE INDEX IF NOT EXISTS idx_pc_libver    ON platform_constraints(lib_version_id);
 CREATE INDEX IF NOT EXISTS idx_pc_fwver     ON platform_constraints(fw_version_id);
 CREATE INDEX IF NOT EXISTS idx_vuln_lib     ON vulnerabilities(library_id);
+
+-- ── Update-availability scanner (scripts/check_updates.py) ──────────────────
+-- One row per (language, kind, name, new_major) combination the scanner has
+-- ever seen upstream but that isn't yet a tracked registry.json bucket.
+-- Detection only -- never auto-implemented; the human reviews and decides
+-- whether to add the bucket and test it. `dismissed` survives re-detection
+-- of the SAME new_major (upsert never resets it) so acknowledging an update
+-- doesn't make it reappear next scan; a genuinely newer major creates a
+-- fresh row instead.
+-- `included`/`included_at`/`images_added` double this table as the
+-- "update log" the user reads back later: once a pending row is included
+-- (registry bucket added + generate_images run), it's never deleted --
+-- just flagged, so `WHERE included=1` is a permanent history of what was
+-- added and how many new images resulted, per (language, kind, name).
+CREATE TABLE IF NOT EXISTS pending_updates (
+    id             INTEGER PRIMARY KEY,
+    language       TEXT NOT NULL,
+    kind           TEXT NOT NULL CHECK(kind IN ('framework','library')),
+    name           TEXT NOT NULL,
+    package_id     TEXT,
+    new_major      TEXT NOT NULL,
+    latest_version TEXT,
+    tracked_majors TEXT,
+    detected_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    dismissed      INTEGER NOT NULL DEFAULT 0,
+    included       INTEGER NOT NULL DEFAULT 0,
+    included_at    TEXT,
+    images_added   INTEGER,
+    UNIQUE(language, kind, name, new_major)
+);
+CREATE INDEX IF NOT EXISTS idx_pu_dismissed ON pending_updates(dismissed);
 """
 
 # Metadata only -- deliberately excludes build/test status. Build results are
@@ -474,11 +505,25 @@ def init_db() -> None:
             "ALTER TABLE runs ADD COLUMN finished_at TEXT",
             "ALTER TABLE runs ADD COLUMN docker_host TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE runs ADD COLUMN log_text TEXT",
+            "ALTER TABLE pending_updates ADD COLUMN included INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE pending_updates ADD COLUMN included_at TEXT",
+            "ALTER TABLE pending_updates ADD COLUMN images_added INTEGER",
+            "ALTER TABLE pending_updates ADD COLUMN tested INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE pending_updates ADD COLUMN tested_at TEXT",
         ]:
             try:
                 conn.execute(ddl)
             except Exception:
                 pass
+
+        # Index needs the ALTER-added `included` column above to already
+        # exist, so it can't live in _SCHEMA (executescript runs before this
+        # loop, and CREATE INDEX on a not-yet-added column fails outright on
+        # any pre-existing database from before this column was added).
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_pu_included ON pending_updates(included)")
+        except Exception:
+            pass
 
         # runs moved from UNIQUE(name) to UNIQUE(name, docker_host) so the
         # same batch name can be reused against a different Docker host
@@ -2159,3 +2204,105 @@ def get_vulnerabilities(filters: dict | None = None) -> list[dict]:
             ORDER BY v.severity, g.name, l.name
         """, params).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Update-availability scanner (scripts/check_updates.py) ──────────────────
+
+def save_pending_update(language: str, kind: str, name: str, package_id: str | None,
+                        new_major: str, latest_version: str | None,
+                        tracked_majors: list) -> None:
+    """Upsert one detected-but-not-yet-tracked major. Never touches
+    `dismissed` on conflict, so re-detecting the same new_major on a later
+    scan doesn't resurrect a row the user already dismissed."""
+    with _connect() as conn:
+        conn.execute("""
+            INSERT INTO pending_updates
+                (language, kind, name, package_id, new_major, latest_version, tracked_majors)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(language, kind, name, new_major) DO UPDATE SET
+                latest_version = excluded.latest_version,
+                tracked_majors = excluded.tracked_majors,
+                package_id     = excluded.package_id
+        """, (language, kind, name, package_id, new_major, latest_version,
+              json.dumps(tracked_majors)))
+
+
+def _rows_with_parsed_majors(rows) -> list:
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["tracked_majors"] = json.loads(d["tracked_majors"]) if d["tracked_majors"] else []
+        result.append(d)
+    return result
+
+
+def get_pending_updates(include_dismissed: bool = False) -> list:
+    """Active review queue -- excludes already-included rows (those live in
+    get_update_log() instead) and, by default, dismissed ones too."""
+    with _connect() as conn:
+        where = "WHERE included = 0"
+        if not include_dismissed:
+            where += " AND dismissed = 0"
+        rows = conn.execute(f"""
+            SELECT * FROM pending_updates {where}
+            ORDER BY language, kind, name, new_major
+        """).fetchall()
+    return _rows_with_parsed_majors(rows)
+
+
+def get_update_log(hide_tested: bool = False) -> list:
+    """Permanent history of every update actually included (registry bucket
+    added + generate_images run), newest first -- what the user reads back
+    to see which images still need building/testing. `hide_tested` drops
+    rows already marked as having a successful test run, once the user is
+    done with them."""
+    with _connect() as conn:
+        where = "WHERE included = 1"
+        if hide_tested:
+            where += " AND tested = 0"
+        rows = conn.execute(f"""
+            SELECT * FROM pending_updates {where}
+            ORDER BY included_at DESC
+        """).fetchall()
+    return _rows_with_parsed_majors(rows)
+
+
+def dismiss_pending_update(update_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE pending_updates SET dismissed = 1 WHERE id = ?", (update_id,))
+
+
+def get_pending_update(update_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM pending_updates WHERE id = ?", (update_id,)).fetchone()
+    if row is None:
+        return None
+    return _rows_with_parsed_majors([row])[0]
+
+
+def mark_pending_update_included(update_id: int, images_added: int) -> None:
+    with _connect() as conn:
+        conn.execute("""
+            UPDATE pending_updates
+            SET included = 1, included_at = CURRENT_TIMESTAMP, images_added = ?
+            WHERE id = ?
+        """, (images_added, update_id))
+
+
+def mark_pending_update_tested(update_id: int) -> None:
+    """Record that the user ran a successful test on the images this update
+    added -- lets the Included log be filtered down to what still needs
+    attention."""
+    with _connect() as conn:
+        conn.execute("""
+            UPDATE pending_updates
+            SET tested = 1, tested_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (update_id,))
+
+
+def count_pending_updates() -> int:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM pending_updates WHERE dismissed = 0 AND included = 0"
+        ).fetchone()[0]

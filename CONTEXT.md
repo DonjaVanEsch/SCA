@@ -268,6 +268,14 @@ The UI subscribes to `GET /api/stream/<job_id>` (SSE) to receive live log lines.
 `POST /api/cancel/<job_id>` sets the job's `stop_event`, which causes the worker to stop after the current image.  
 The `run_name` field in the action body associates all results with a named `runs` row.
 
+**New-versions scanner (`scripts/check_updates.py`, added 2026-07-13):**
+
+For every tracked framework/library across all 5 registries, checks the real upstream package registry (npm/PyPI/Packagist/Maven Central/NuGet, reusing each `lang_X.py`'s own existing version-fetch function) for majors *beyond* the current tracked ceiling. Results land in the `pending_updates` table (`db.py`) and surface as a "🔔 N new versions" badge bottom-right in the dashboard. Runs weekly via cron on the server (`0 6 * * 1`, Mondays 6am, logs to `check_updates.log`) in addition to the manual trigger ("New versions" in Settings, or the badge itself). Deliberately scoped to framework/library versions only, not new *language* major releases (those follow known per-language release calendars, a different problem).
+
+Two review actions, both human-triggered — nothing happens on its own beyond detection:
+- **Dismiss** (per row) — adds the version to its registry as a reference-only bucket (`"available": false`, this project's existing convention), then hides it from the pending list. Flip `available` to `true` by hand later if it turns out to be needed after all.
+- **Include** (multi-select) — adds the version as a real, enabled bucket (compatibility inherited from the nearest lower already-tracked major, since an empty array would make `generate_images.py` skip it entirely — unverified until built/tested), regenerates images for every affected language, and reports how many new image contexts resulted per framework/library. Both actions write via `scripts/registry_writer.py`'s format-preserving text-surgery (never a raw `json.dump`, which would reformat these hand-curated files wholesale — verified this empirically before trusting it) and validate the result re-parses as JSON before touching disk. Included rows become permanent history in the "Included log" tab, so you can read back later which images still need building/testing.
+
 ---
 
 ## What is already covered

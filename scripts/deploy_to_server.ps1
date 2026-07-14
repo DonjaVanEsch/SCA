@@ -2,6 +2,12 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 
+python (Join-Path $PSScriptRoot "check_deploy_safety.py")
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "Deploy safety check failed -- see above. Aborting push to server."
+}
+
 $archive = Join-Path $env:TEMP "pqc_deploy.tar.gz"
 tar -czf $archive `
     --exclude=images `
