@@ -1138,6 +1138,55 @@
           ],
           "notes": "OAuth/OIDC/JOSE (JWT/JWS/JWE/JWK) implementation. Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 1, `import authlib`). No ML-DSA/PQC JOSE support as of this writing (same gap already noted for Java's Nimbus JOSE+JWT in this project). '1.7.2's compatibility floor was originally (wrongly) recorded as '3.6+' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own classifier data: 1.7.0/1.7.1/1.7.2 all declare `Requires-Python >=3.10` (a jump made partway through the 1.x line, not from 1.0.0). Corrected to '3.10+'; Python 3.6-3.9 fall back to only the 0.15.6 bucket for this library, same as pre-1.7 Authlib users would see in real life."
         }
+      ],
+      "_comment_http_clients": "New axis for the client-fingerprinting experiment (branch client-fingerprinting-python) -- outbound HTTP(S) call generators, not servers. Deliberately a flat list (no separate framework/library dimensions): a crypto-lib-driven client (pyopenssl-raw/m2crypto-raw) is just another entry here, not a cross product. pyopenssl-raw/m2crypto-raw don't use a normal HTTP-client library at all -- they open a raw socket and drive the TLS handshake themselves via that specific crypto library's own SSL API (against the fingerprint-target app's HTTPS port, 9443, self-signed cert), so the crypto library itself is what's visible in the TLS fingerprint, not the language's default ssl module.",
+      "http_clients": [
+        {
+          "name": "http.client",
+          "module": null,
+          "version": "built-in",
+          "notes": "Python's own stdlib HTTP client, no dependencies -- the lowest-level baseline for comparison against higher-level clients."
+        },
+        {
+          "name": "requests",
+          "module": "requests",
+          "version": [
+            { "nr": "2.34.2", "release_date": null, "compatibility": [ "3.8+" ] }
+          ],
+          "notes": "The de-facto standard high-level Python HTTP client, built on urllib3."
+        },
+        {
+          "name": "httpx",
+          "module": "httpx",
+          "version": [
+            { "nr": "0.28.1", "release_date": null, "compatibility": [ "3.8+" ] }
+          ],
+          "notes": "Modern HTTP client with sync/async support, HTTP/2 capable."
+        },
+        {
+          "name": "urllib3",
+          "module": "urllib3",
+          "version": [
+            { "nr": "2.7.0", "release_date": null, "compatibility": [ "3.9+" ] }
+          ],
+          "notes": "Low-level connection-pooling HTTP client -- requests itself is built on top of this."
+        },
+        {
+          "name": "pyopenssl-raw",
+          "module": "pyOpenSSL",
+          "version": [
+            { "nr": "26.3.0", "release_date": null, "compatibility": [ "3.7+" ] }
+          ],
+          "notes": "Not a general-purpose HTTP client -- a raw socket wrapped by pyOpenSSL's own SSL.Connection, driving the outbound TLS handshake itself."
+        },
+        {
+          "name": "m2crypto-raw",
+          "module": "M2Crypto",
+          "version": [
+            { "nr": "0.48", "release_date": null, "compatibility": [ "3.6+" ] }
+          ],
+          "notes": "Same rationale as pyopenssl-raw -- a raw socket wrapped by M2Crypto's own SSL.Connection, driving the outbound TLS handshake itself. Needs build-essential/swig/libssl-dev at build time (SWIG-generated C extension)."
+        }
       ]
     }
   ]

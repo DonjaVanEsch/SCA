@@ -32,6 +32,28 @@
     --dock-h: 44px; /* live-updated by a ResizeObserver on #bottom-dock */
   }
 
+  /* Client-fingerprinting mode: a distinct color scheme, not just a text
+     label -- re-themes every existing var(--accent)/--sel-*  use (buttons,
+     active tab, selection highlight, sort icons, ...) at the token level,
+     the same cyan used for "client-side" throughout the process diagram.
+     The base surface colors lean toward a deeper navy blue (not the same
+     blue-black as server mode, and deliberately not teal/turquoise -- that
+     read too close to the accent hue) so the base still feels distinct and
+     considered without competing with the cyan accent. Applied to <html>,
+     not <body>, so html's own `background: var(--bg)` (the true page root)
+     picks the override up too. */
+  html.client-mode {
+    --bg: #0a121c;
+    --surface: #121b28;
+    --surface2: #17222f;
+    --surface3: #1b2735;
+    --row-h: #16233a;
+    --accent: #2FB8C4;
+    --accent-h: #4DCBD6;
+    --sel-bg: #0d3236;
+    --sel-border: #1e7a82;
+  }
+
   /* ── Reset ──────────────────────────────────────────────────────────────── */
   *,
   *::before,
@@ -105,9 +127,40 @@
     gap: 16px;
     padding: 0 16px;
     height: 52px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 2px solid var(--accent);
     flex-shrink: 0;
     background: var(--surface);
+  }
+
+  .mode-badge {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    color: var(--muted2);
+    background: var(--surface2);
+  }
+  html.client-mode .mode-badge {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--sel-bg);
+  }
+
+  /* The actual "do the thing" primary action deliberately stays the same
+     blue as server mode's own Execute button -- the cyan re-theme is for
+     mode-identifying chrome (header border, badge, tab/selection
+     highlight), not for the button that does the equivalent job either
+     mode. */
+  html.client-mode #btn-client-start {
+    background: #1e7bd9;
+    border-color: #1e7bd9;
+  }
+  html.client-mode #btn-client-start:hover {
+    background: #2b8fe8;
   }
 
   #header h1 {
@@ -222,7 +275,8 @@
   }
 
   /* ── Filter sidebar ─────────────────────────────────────────────────────── */
-  #filter-panel {
+  #filter-panel,
+  #client-filter-panel {
     width: 220px;
     flex-shrink: 0;
     border-right: 1px solid var(--border);
@@ -419,7 +473,8 @@
   }
 
   /* ── Main panel ─────────────────────────────────────────────────────────── */
-  #main-panel {
+  #main-panel,
+  #client-main-panel {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -428,7 +483,8 @@
   }
 
   /* ── Action bar ─────────────────────────────────────────────────────────── */
-  #action-bar {
+  #action-bar,
+  #client-action-bar {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -583,7 +639,8 @@
   }
 
   /* ── Table ──────────────────────────────────────────────────────────────── */
-  #table-wrap {
+  #table-wrap,
+  #client-table-wrap {
     flex: 1;
     overflow: auto;
     min-height: 0;
@@ -759,6 +816,21 @@
   .badge-ignored {
     background: rgba(74, 85, 104, .3);
     color: #a8b3c4
+  }
+
+  .badge-fp-yes {
+    background: none;
+    padding: 0;
+  }
+
+  .badge-fp-no {
+    background: none;
+    padding: 0;
+    /* The 🫆 glyph renders in its own fixed emoji colors regardless of the
+       `color` property, so a "not captured" state needs to desaturate the
+       whole thing -- otherwise it looks identical to the captured one. */
+    filter: grayscale(1);
+    opacity: .5;
   }
 
   /* ── Status circle (compact Build/Test/Docker indicator) ──────────────────── */
@@ -1844,6 +1916,7 @@
 <header id="header">
   <h1><span title="Side-Channel / Software Crypto Analysis" style="cursor:help">SCA</span> <span
       class="header-accent">Source Manager</span></h1>
+  <span class="mode-badge" id="mode-badge">Server mode</span>
   <div class="stats-bar" id="stats-bar">
     <span class="stat"><b id="s-total">–</b> sources</span>
 
@@ -1869,13 +1942,25 @@
       <span class="stat"><b id="s-ignored" style="color:var(--muted2)">–</b> ignored</span>
     </span>
   </div>
-  <nav class="tabs">
+  <div class="stats-bar" id="client-stats-bar" style="display:none">
+    <span class="stat"><b id="cs-total">–</b> client images</span>
+    <span class="stat-sep">·</span>
+    <span class="stat"><b id="cs-built" style="color:var(--success)">–</b> built</span>
+    <span class="stat-sep">·</span>
+    <span class="stat"><b id="cs-fingerprinted" style="color:var(--accent)">–</b> fingerprinted</span>
+  </div>
+  <nav class="tabs" id="tabs-server">
     <button class="tab-btn active" data-tab="images">Sources</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
     <button class="tab-btn" data-tab="reference">Reference</button>
     <button class="tab-btn" data-tab="agility">Crypto Agility</button>
   </nav>
+  <nav class="tabs" id="tabs-client" style="display:none">
+    <button class="tab-btn active" data-tab="clients">Clients</button>
+  </nav>
   <div class="header-actions">
+    <button class="btn btn-ghost btn-sm" id="btn-mode-toggle"
+            title="Switch between server-side probing and client-side outbound-call fingerprinting">⇄ Switch to client mode</button>
     <button class="btn btn-ghost btn-sm host-scope-feature" id="btn-host-badge"
             title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span id="host-badge-label">local</span></button>
     <button class="btn btn-ghost btn-sm" id="btn-settings" title="Docker host settings">⚙ Settings</button>
@@ -2062,6 +2147,149 @@
         </table>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ── Clients tab (client-fingerprinting mode) ──────────────────────── -->
+  <div id="tab-clients" class="tab-panel">
+    <aside id="client-filter-panel">
+      <div class="filter-section">
+        <span class="filter-label">Filters</span>
+        <div class="filter-group">
+          <div class="filter-row">
+            <label>Language</label>
+            <select class="filter-select" id="cf-lang">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lang version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="cf-ver" placeholder="e.g. 3.13 or 3.1x">
+          </div>
+          <div class="filter-row">
+            <label>HTTP client</label>
+            <select class="filter-select" id="cf-hc">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Client version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="cf-hcver" placeholder="e.g. 2.34.2 or 2.x">
+          </div>
+        </div>
+        <div class="filter-divider"></div>
+        <label class="filter-check">
+          <input type="checkbox" id="cf-ignored" checked>
+          Show ignored clients
+        </label>
+        <div class="filter-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-clear-client-filter" style="flex:1">Clear filters</button>
+        </div>
+      </div>
+    </aside>
+
+    <div id="client-main-panel">
+      <div id="client-action-bar">
+        <div class="docker-group">
+          <span class="docker-group-label">Selection</span>
+          <div class="docker-group-inner">
+            <span id="client-sel-count">0 selected</span>
+            <div class="sel-menu-wrap">
+              <button class="btn btn-ghost btn-sm" id="btn-client-sel-menu">Select ▾</button>
+              <div class="sel-menu" id="client-sel-menu">
+                <div class="sel-menu-item" id="mnu-client-sel-page">Current page</div>
+                <div class="sel-menu-item" id="mnu-client-sel-all">All filtered</div>
+                <div class="sel-menu-sep"></div>
+                <div class="sel-menu-item" id="mnu-client-desel-all">Deselect all</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="action-sep"></div>
+        <div class="docker-group">
+          <span class="docker-group-label">🐳 Docker</span>
+          <div class="docker-group-inner">
+            <button class="btn btn-success btn-sm" id="btn-client-launch" disabled
+              title="Start containers for selected client images right away, targeting the fingerprint-target app -- each exits after its one call">▶ Launch</button>
+            <button class="btn btn-warning btn-sm" id="btn-client-stop" disabled
+              title="Stop containers for selected client images">Stop</button>
+            <button class="btn btn-ghost btn-sm" id="btn-client-stop-all" title="Stop all running pqc-* containers">Stop All</button>
+            <button class="btn btn-danger btn-sm" id="btn-client-remove" disabled
+              title="Remove Docker images for selected client images right away">🗑 Remove</button>
+          </div>
+        </div>
+        <div class="action-sep"></div>
+        <div class="docker-group">
+          <span class="docker-group-label">🔨 Build &amp; Fingerprint</span>
+          <div class="docker-group-inner">
+            <label class="act-check" id="act-client-build-wrap"><input type="checkbox" id="act-client-build" disabled> Build</label>
+            <label class="act-check fingerprint-feature" id="act-client-fingerprint-wrap"
+              title="Run the client once against the persistent fingerprint-target app and capture the real network traffic">
+              <input type="checkbox" id="act-client-fingerprint" disabled> 🫆 Fingerprint</label>
+            <div class="action-sep"></div>
+            <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox"
+                id="client-opt-no-cache"> no-cache</label>
+            <label class="opt-label" title="Skip clients that are already built"><input type="checkbox"
+                id="client-opt-skip-existing"> skip-existing</label>
+            <div class="action-sep"></div>
+            <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
+              <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Batch</label>
+              <input id="client-run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px"
+                placeholder="auto">
+              <button class="btn btn-ghost btn-sm" id="btn-client-run-gen" title="Generate batch name">↺</button>
+              <button class="btn btn-primary btn-sm" id="btn-client-start" disabled>▶ Execute</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="updates-view-toggle" style="margin:8px 14px 0">
+        <button class="btn btn-ghost btn-sm active" id="btn-client-view-images">Client images</button>
+        <button class="btn btn-ghost btn-sm" id="btn-client-view-fplog">Fingerprint log</button>
+      </div>
+
+      <div id="client-table-wrap">
+        <table id="client-table">
+          <thead>
+            <tr>
+              <th class="cb-cell"><input type="checkbox" id="client-header-cb" class="row-cb"></th>
+              <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
+              <th class="sortable" data-csort="language">Language</th>
+              <th class="sortable" data-csort="lang_version">Ver</th>
+              <th class="sortable" data-csort="http_client">HTTP client</th>
+              <th class="sortable" data-csort="http_client_version">Client ver</th>
+              <th class="sortable col-narrow" data-csort="build_success" title="Build status"></th>
+              <th title="Last fingerprint capture -- click to view the full report">Fingerprint</th>
+              <th style="width:24px"></th>
+            </tr>
+          </thead>
+          <tbody id="client-tbody">
+            <tr>
+              <td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="client-fplog-wrap" style="display:none;flex:1;overflow:auto;margin-bottom:var(--dock-h)">
+        <table id="client-fplog-table">
+          <thead>
+            <tr>
+              <th title="What we know we actually built and ran">Ground truth</th>
+              <th title="What the client itself claimed in its own JSON output">Self-reported</th>
+              <th class="col-narrow" title="Do the two agree?">Match</th>
+              <th class="col-narrow" title="HTTP status the client received">Status</th>
+              <th>Captured</th>
+              <th style="width:60px"></th>
+            </tr>
+          </thead>
+          <tbody id="client-fplog-tbody">
+            <tr>
+              <td colspan="6" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -2732,6 +2960,13 @@
     return statusCircle('fail', 'Test failed');
   }
 
+  function fingerprintBadge(captured) {
+    const cls = captured ? 'badge badge-fp-yes' : 'badge badge-fp-no';
+    const title = captured ? 'Fingerprint captured' : 'Not fingerprinted yet';
+    const glyph = _accessibilityMode ? `<span style="font-weight:700">${captured ? '✓' : '✕'}</span>` : '';
+    return `<span class="${cls}" title="${title}">🫆${glyph}</span>`;
+  }
+
   function ignoredBadge(reason) {
     const title = reason ? escHtml(reason) : 'No reason given';
     return `<span class="badge badge-ignored" title="${title}">IGNORED</span>`;
@@ -2966,6 +3201,453 @@
     if (cur < total - 2) r.push('…');
     r.push(total);
     return r;
+  }
+
+  // ── Client images (Server/Client dashboard mode) ─────────────────────────
+  const clientState = { page: 1, perPage: 50, total: 0, pages: 1, selected: new Set(), items: [] };
+
+  async function loadClientFilterOptions() {
+    try {
+      const opts = await api('/api/client-filters');
+      function repop(selId, values) {
+        const sel = document.getElementById(selId);
+        if (!sel) return;
+        const cur = sel.value;
+        while (sel.options.length > 1) sel.remove(1);
+        values.forEach(v => sel.appendChild(new Option(v, v)));
+        if (values.includes(cur)) sel.value = cur;
+      }
+      repop('cf-lang', opts.languages || []);
+      repop('cf-hc', opts.http_clients || []);
+    } catch { }
+  }
+
+  function getClientFilters() {
+    return {
+      language: document.getElementById('cf-lang').value,
+      version: document.getElementById('cf-ver').value.trim(),
+      http_client: document.getElementById('cf-hc').value,
+      http_client_version: document.getElementById('cf-hcver').value.trim(),
+    };
+  }
+
+  async function loadClientImages(page = 1) {
+    clientState.page = page;
+    const f = getClientFilters();
+    const includeIgnored = document.getElementById('cf-ignored').checked;
+    const params = filtersToParams(f, {
+      page, per_page: clientState.perPage,
+      include_ignored: includeIgnored,
+    });
+    try {
+      const r = await api(`/api/client-images?${params}`);
+      clientState.total = r.total;
+      clientState.pages = r.pages;
+      clientState.items = r.items;
+      renderClientTable(r.items);
+      renderClientPagination();
+    } catch (e) {
+      document.getElementById('client-tbody').innerHTML =
+        `<tr><td colspan="9" style="padding:20px;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+    loadClientStats();
+  }
+
+  async function loadClientStats() {
+    try {
+      const s = await api('/api/client-stats');
+      document.getElementById('cs-total').textContent = s.total.toLocaleString();
+      document.getElementById('cs-built').textContent = s.built.toLocaleString();
+      document.getElementById('cs-fingerprinted').textContent = s.fingerprinted.toLocaleString();
+    } catch { }
+  }
+
+  // ── Fingerprint log (ground truth vs what the client itself claimed) ─────
+  let _clientView = 'images'; // 'images' | 'fplog'
+
+  function switchClientView(view) {
+    _clientView = view;
+    document.getElementById('btn-client-view-images').classList.toggle('active', view === 'images');
+    document.getElementById('btn-client-view-fplog').classList.toggle('active', view === 'fplog');
+    document.getElementById('client-table-wrap').style.display = view === 'images' ? '' : 'none';
+    document.getElementById('client-fplog-wrap').style.display = view === 'fplog' ? '' : 'none';
+    document.getElementById('pagination').style.display = view === 'images' ? '' : 'none';
+    if (view === 'fplog') loadClientFingerprintLog();
+  }
+
+  function _matchIcon(match) {
+    if (match === null || match === undefined) return `<span style="color:var(--muted2)" title="No self-report to compare">–</span>`;
+    return match
+      ? `<span style="color:var(--success)" title="Matches ground truth">✓</span>`
+      : `<span style="color:var(--danger)" title="Does not match ground truth">✕</span>`;
+  }
+
+  async function loadClientFingerprintLog() {
+    const tbody = document.getElementById('client-fplog-tbody');
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    try {
+      const r = await api('/api/client-fingerprints');
+      renderClientFpLogTable(r.items);
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+  }
+
+  function renderClientFpLogTable(items) {
+    const tbody = document.getElementById('client-fplog-tbody');
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="6">
+      <div class="empty-state">
+        <div style="font-size:28px;opacity:.3">🫆</div>
+        <p>No fingerprint captures yet -- run "Fingerprint" on a client image first.</p>
+      </div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(r => {
+      const allMatch = r.client_name_match && r.client_version_match && r.language_version_match;
+      const anyReport = r.reported_client !== null;
+      const overallIcon = !anyReport
+        ? `<span style="color:var(--muted2)" title="Client never printed a self-report">–</span>`
+        : allMatch
+          ? `<span style="color:var(--success)" title="Everything matches ground truth">✓</span>`
+          : `<span style="color:var(--danger)" title="Mismatch -- see details">✕</span>`;
+      return `<tr>
+        <td>
+          <span class="update-lang-tag">${r.language}</span> ${r.language_version} —
+          <b>${r.http_client}</b> ${r.http_client_version}
+        </td>
+        <td>
+          ${anyReport
+            ? `${r.reported_client ?? '?'} ${r.reported_client_version ?? '?'}
+               <span style="color:var(--muted2)">(lang ${r.reported_language_version ?? '?'})</span>
+               ${_matchIcon(r.client_name_match)} ${_matchIcon(r.client_version_match)} ${_matchIcon(r.language_version_match)}`
+            : '<span style="color:var(--muted2)">no self-report</span>'}
+        </td>
+        <td class="col-narrow">${overallIcon}</td>
+        <td class="col-narrow">${r.status_code ?? '–'}</td>
+        <td class="mono-cell" style="font-size:11px">${r.captured_at}</td>
+        <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px" onclick="openClientFingerprintDetail(${r.id})" title="Full report">⋯</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderClientTable(items) {
+    const tbody = document.getElementById('client-tbody');
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="9">
+      <div class="empty-state">
+        <div style="font-size:28px;opacity:.3">⬜</div>
+        <p>No client images match the current filters.</p>
+      </div></td></tr>`;
+      updateClientActionBar();
+      return;
+    }
+    tbody.innerHTML = items.map(r => {
+      const sel = clientState.selected.has(r.id);
+      const fp = `<span class="fingerprint-feature">${fingerprintBadge(!!r.fp_id)}</span>`;
+      return `<tr data-id="${r.id}" class="${sel ? 'selected' : ''}" onclick="clientRowClick(event,${r.id})">
+        <td class="cb-cell">
+          <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''}
+                 onclick="event.stopPropagation();toggleClientSelect(${r.id})">
+        </td>
+        <td class="col-narrow">${dockerExistsBadge(r.docker_exists)}</td>
+        <td>${r.language}</td>
+        <td class="mono-cell">${r.lang_version}</td>
+        <td>${r.http_client}</td>
+        <td class="mono-cell">${r.http_client_version}</td>
+        <td class="col-narrow">${buildBadge(r.build_success)}</td>
+        <td>${fp}</td>
+        <td style="padding:0 6px;text-align:right">
+          <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
+                  onclick="event.stopPropagation();openClientDetail(${r.id})" title="Details">⋯</button>
+        </td>
+      </tr>`;
+    }).join('');
+    document.getElementById('client-header-cb').checked = false;
+    updateClientActionBar();
+  }
+
+  function toggleClientSelect(id) {
+    if (clientState.selected.has(id)) clientState.selected.delete(id);
+    else clientState.selected.add(id);
+    document.querySelectorAll('#client-tbody tr[data-id]').forEach(row => {
+      const rid = parseInt(row.dataset.id);
+      row.classList.toggle('selected', clientState.selected.has(rid));
+    });
+    updateClientActionBar();
+  }
+
+  function clientRowClick(event, id) {
+    if (event.target.type === 'checkbox') return;
+    toggleClientSelect(id);
+  }
+
+  function updateClientActionBar() {
+    const n = clientState.selected.size;
+    document.getElementById('client-sel-count').textContent = `${n.toLocaleString()} selected`;
+    const dis = n === 0;
+    ['act-client-build', 'act-client-fingerprint', 'btn-client-start',
+     'btn-client-launch', 'btn-client-stop', 'btn-client-remove'].forEach(id => {
+      document.getElementById(id).disabled = dis;
+    });
+  }
+
+  function generateClientRunName() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+    const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const parts = [
+      document.getElementById('cf-lang').value.trim(),
+      document.getElementById('cf-hc').value.trim(),
+    ].filter(Boolean);
+    const prefix = parts.length ? parts.join('-') : 'client-run';
+    return `${prefix}-${date}-${time}`;
+  }
+
+  function renderClientPagination() {
+    const { total, page, pages, perPage } = clientState;
+    const start = total ? (page - 1) * perPage + 1 : 0;
+    const end = Math.min(page * perPage, total);
+    document.getElementById('pg-info').textContent =
+      `${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}`;
+
+    const pg = document.getElementById('pg-buttons');
+    pg.innerHTML = '';
+    const mkBtn = (label, p, cur) => {
+      const b = document.createElement('button');
+      b.className = `pg-btn${cur ? ' current' : ''}`;
+      b.textContent = label;
+      b.disabled = cur || p < 1 || p > pages;
+      if (!b.disabled) b.onclick = () => loadClientImages(p);
+      return b;
+    };
+    pg.appendChild(mkBtn('‹', page - 1, false));
+    pageRange(page, pages).forEach(p => {
+      if (p === '…') {
+        const s = document.createElement('span');
+        s.textContent = '…';
+        s.style.cssText = 'padding:0 4px;color:var(--muted)';
+        pg.appendChild(s);
+      } else {
+        pg.appendChild(mkBtn(p, p, p === page));
+      }
+    });
+    pg.appendChild(mkBtn('›', page + 1, false));
+  }
+
+  async function runClientAction(action, ids, opts, onDone = null, run_name = '', jobMeta = null, keepLogs = false) {
+    try {
+      const res = await api('/api/client-action', {
+        method: 'POST',
+        body: JSON.stringify({ action, client_image_ids: ids, options: opts, run_name }),
+      });
+      openLog(`${action} — ${ids.length} client image(s)`, res.job_id, action, onDone, jobMeta, keepLogs);
+    } catch (e) {
+      toast(`Failed to start ${action}: ${e.message}`, 'err');
+      localStorage.removeItem('pqc-active-job');
+      if (onDone) onDone(true);
+    }
+  }
+
+  async function startClientActions() {
+    if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
+    const actions = ['build', 'fingerprint'].filter(a =>
+      document.getElementById(`act-client-${a}`).checked
+    );
+    if (!actions.length) { toast('Select at least one action (Build / Fingerprint)', 'err'); return; }
+
+    const ids = [...clientState.selected];
+    const opts = {
+      no_cache: document.getElementById('client-opt-no-cache').checked,
+      skip_existing: document.getElementById('client-opt-skip-existing').checked,
+      workers: _defaultWorkers,
+    };
+    const run_name = document.getElementById('client-run-name').value.trim() || generateClientRunName();
+
+    document.getElementById('btn-client-start').disabled = true;
+
+    function runNext(i) {
+      if (i >= actions.length) {
+        document.getElementById('btn-client-start').disabled = clientState.selected.size === 0;
+        loadClientImages(clientState.page);
+        if (actions.length > 1) toast('All actions completed', 'ok');
+        return;
+      }
+      runClientAction(actions[i], ids, opts, (err, cancelled) => {
+        if (err || cancelled) {
+          document.getElementById('btn-client-start').disabled = clientState.selected.size === 0;
+        } else {
+          runNext(i + 1);
+        }
+      }, run_name, null, i > 0);
+    }
+
+    runNext(0);
+  }
+
+  async function removeSelectedClients() {
+    if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
+    const ids = [...clientState.selected];
+    const noun = ids.length === 1 ? 'this client image' : `these ${ids.length} client images`;
+    if (!confirm(`Remove ${noun} from Docker? This deletes the built image(s) permanently and cannot be undone.`)) {
+      return;
+    }
+    document.getElementById('btn-client-remove').disabled = true;
+    runClientAction('remove', ids, {}, (err, cancelled) => {
+      document.getElementById('btn-client-remove').disabled = clientState.selected.size === 0;
+      if (!err && !cancelled) loadClientImages(clientState.page);
+    });
+  }
+
+  async function launchSelectedClients() {
+    if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
+    const ids = [...clientState.selected];
+    document.getElementById('btn-client-launch').disabled = true;
+    runClientAction('run', ids, {}, (err, cancelled) => {
+      document.getElementById('btn-client-launch').disabled = clientState.selected.size === 0;
+      if (!err && !cancelled) loadClientImages(clientState.page);
+    });
+  }
+
+  async function stopSelectedClients() {
+    if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
+    const ids = [...clientState.selected];
+    document.getElementById('btn-client-stop').disabled = true;
+    runClientAction('stop', ids, {}, (err, cancelled) => {
+      document.getElementById('btn-client-stop').disabled = clientState.selected.size === 0;
+      if (!err && !cancelled) loadClientImages(clientState.page);
+    });
+  }
+
+  // Renders the "ground truth vs. self-reported" + raw-capture block shared
+  // by both drawer entry points below -- same content, whether reached from
+  // a client image's own row or from a Fingerprint log entry.
+  function _clientFpSectionHtml(r, id) {
+    const anyReport = r.reported_client !== null && r.reported_client !== undefined;
+    const trafficId = `cfp-traffic-${id}`;
+    return `
+    <div class="detail-row" style="border-bottom:none">
+      <span class="detail-key" style="color:${r.status_code === 200 ? 'var(--muted2)' : 'var(--danger)'}">
+        🫆 Fingerprint → ${r.status_code ?? 'no response'}
+      </span>
+      ${r.error_msg ? `<div style="color:var(--danger);width:100%;margin-top:4px">Error: ${escHtml(r.error_msg)}</div>` : ''}
+      <div style="width:100%;margin-top:10px">
+        <div style="color:var(--muted2);margin-bottom:4px">Ground truth vs. self-reported</div>
+        ${anyReport ? `
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <div>Client: <b>${r.http_client}</b> vs reported <b>${r.reported_client ?? '?'}</b> ${_matchIcon(r.client_name_match)}</div>
+          <div>${r.http_client} version: <b>${r.http_client_version}</b> vs reported <b>${r.reported_client_version ?? '?'}</b> ${_matchIcon(r.client_version_match)}</div>
+          <div>${r.language} version: <b>${r.language_version}</b> vs reported <b>${r.reported_language_version ?? '?'}</b> ${_matchIcon(r.language_version_match)}</div>
+        </div>` : `<div style="color:var(--muted2)">Client never printed a self-report (or it predates self-report capture).</div>`}
+      </div>
+      <div style="width:100%;margin-top:10px">
+        <div style="color:var(--muted2);margin-bottom:4px" title="Parsed straight out of the captured packets -- not something the client's own self-report can influence">Network-observed (independent)</div>
+        ${_clientNetworkObservedHtml(r)}
+      </div>
+      <div style="width:100%;margin-top:12px">
+        ${outputPanelHtml(trafficId, r.traffic_raw || '(no packets captured)', false)}
+        <div class="detail-note">Captured ${(r.captured_at || '').replace('T', ' ').slice(0, 19)}</div>
+      </div>
+    </div>`;
+  }
+
+  function _clientNetworkObservedHtml(r) {
+    if (r.observed_user_agent) {
+      return `<div>User-Agent on the wire: <b>${escHtml(r.observed_user_agent)}</b> ${_matchIcon(r.observed_client_match)}</div>`;
+    }
+    if (r.observed_ja3_hash) {
+      if (r.ja3_is_baseline) {
+        return `
+          <div>TLS ClientHello (JA3): <b class="mono-cell">${r.observed_ja3_hash}</b> <span style="color:var(--muted2)" title="First capture of this image -- became its own reference baseline">baseline</span></div>
+          <div class="detail-note" style="margin-top:2px">No external ground truth for JA3 exists, so this first capture became the reference baseline for this exact image -- later captures are compared against it.</div>`;
+      }
+      return `
+        <div>TLS ClientHello (JA3): <b class="mono-cell">${r.observed_ja3_hash}</b> ${_matchIcon(r.ja3_match)}</div>
+        <div class="detail-note" style="margin-top:2px">Compared against this image's own first-seen JA3 (no external reference exists) -- a mismatch here doesn't necessarily mean tampering, e.g. an OpenSSL upgrade in the base image would also change it.</div>`;
+    }
+    return `<div style="color:var(--muted2)">No independent signal available for this client (no User-Agent header sent, and no TLS handshake to fingerprint).</div>`;
+  }
+
+  function _clientDetailHeaderHtml(fields) {
+    return fields.map(([k, v]) => `
+    <div class="detail-row">
+      <span class="detail-key">${k}</span>
+      <span class="detail-val">${v}</span>
+    </div>`).join('');
+  }
+
+  // Opens the shared side-panel drawer for a Client-images row -- basic
+  // fields come from the already-loaded row, the fingerprint section (if
+  // captured) is fetched on demand.
+  async function openClientDetail(id) {
+    const row = clientState.items.find(x => x.id === id);
+    if (!row) return;
+    document.getElementById('detail-tag').textContent = row.image_tag || '—';
+    const body = document.getElementById('detail-body');
+    body.innerHTML = _clientDetailHeaderHtml([
+      ['Language', row.language],
+      ['Lang version', row.lang_version],
+      ['HTTP client', row.http_client],
+      ['HTTP client version', row.http_client_version],
+      ['Build', row.build_success === 1 ? '✓ OK' : row.build_success === 0 ? '✗ FAIL' : '—'],
+    ]);
+    if (row.build_success === 0 && row.build_output) {
+      body.innerHTML += `<div class="detail-row" style="border-bottom:none">${outputPanelHtml(`cbout-${id}`, row.build_output, true)}</div>`;
+    }
+    document.getElementById('detail-drawer').classList.add('open');
+
+    if (!row.fp_id) {
+      body.innerHTML += `<div class="detail-row" style="border-bottom:none"><div class="detail-note">No fingerprint captured yet for this image.</div></div>`;
+      return;
+    }
+    body.innerHTML += `<div class="detail-row" style="border-bottom:none" id="client-fp-panel"><div class="detail-note">Loading fingerprint report…</div></div>`;
+    try {
+      const r = await api(`/api/client-fingerprints/${row.fp_id}/report`);
+      document.getElementById('client-fp-panel').outerHTML = _clientFpSectionHtml(r, row.fp_id);
+    } catch (e) {
+      document.getElementById('client-fp-panel').innerHTML = `<div class="detail-note" style="color:var(--danger)">Error: ${e.message}</div>`;
+    }
+  }
+
+  // Opens the same drawer directly from a Fingerprint-log entry -- the
+  // report endpoint already carries every header field, no row lookup needed.
+  async function openClientFingerprintDetail(fpId) {
+    document.getElementById('detail-tag').textContent = '—';
+    const body = document.getElementById('detail-body');
+    body.innerHTML = `<div class="detail-note">Loading…</div>`;
+    document.getElementById('detail-drawer').classList.add('open');
+    try {
+      const r = await api(`/api/client-fingerprints/${fpId}/report`);
+      document.getElementById('detail-tag').textContent = r.image_tag || '—';
+      body.innerHTML = _clientDetailHeaderHtml([
+        ['Language', r.language],
+        ['Lang version', r.language_version],
+        ['HTTP client', r.http_client],
+        ['HTTP client version', r.http_client_version],
+      ]) + _clientFpSectionHtml(r, fpId);
+    } catch (e) {
+      body.innerHTML = `<div class="detail-note" style="color:var(--danger)">Error: ${e.message}</div>`;
+    }
+  }
+
+  // ── Server/Client mode toggle ─────────────────────────────────────────────
+  let _dashboardMode = 'server';
+
+  function switchDashboardMode(mode) {
+    _dashboardMode = mode;
+    const isClient = mode === 'client';
+    document.documentElement.classList.toggle('client-mode', isClient);
+    document.getElementById('tabs-server').style.display = isClient ? 'none' : '';
+    document.getElementById('tabs-client').style.display = isClient ? '' : 'none';
+    document.getElementById('stats-bar').style.display = isClient ? 'none' : '';
+    document.getElementById('client-stats-bar').style.display = isClient ? '' : 'none';
+    document.getElementById('mode-badge').textContent = isClient ? 'Client mode' : 'Server mode';
+    document.getElementById('btn-mode-toggle').innerHTML =
+      isClient ? '⇄ Switch to server mode' : '⇄ Switch to client mode';
+    if (isClient && _clientView !== 'images') switchClientView('images');
+    switchTab(isClient ? 'clients' : 'images');
+    if (isClient) loadClientFilterOptions();
   }
 
   // ── Run name helpers ──────────────────────────────────────────────────────
@@ -3448,6 +4130,21 @@
     } catch { }
   }
 
+  // Badges (e.g. accessibility-mode glyphs) are baked into row HTML at
+  // render time, so flipping a setting like accessibility_mode only takes
+  // visible effect once whatever's currently on screen re-renders.
+  function refreshCurrentView() {
+    if (_dashboardMode === 'client') {
+      if (_clientView === 'fplog') loadClientFingerprintLog();
+      else loadClientImages(clientState.page || 1);
+      return;
+    }
+    if (state.currentTab === 'images') loadImages(state.page);
+    else if (state.currentTab === 'reports') loadReports(reportState.page);
+    else if (state.currentTab === 'reference') loadReference();
+    else if (state.currentTab === 'agility') loadCryptoAgility();
+  }
+
   // ── Settings panel ────────────────────────────────────────────────────────
   async function openSettingsPanel() {
     document.getElementById('settings-test-result').textContent = '';
@@ -3479,11 +4176,16 @@
       });
       toast(docker_host ? `Docker host set to ${docker_host}` : 'Using local Docker engine', 'ok');
       closeSettingsPanel();
-      // Built/tested status is scoped per host -- refresh everything that
-      // shows it so the Sources tab reflects the newly active host.
+      // Built/tested status is scoped per host, and things like accessibility
+      // mode change how rows render -- refresh whichever view is actually on
+      // screen right now (not just the server-mode Sources tab).
       await refreshHostBadge();
-      await Promise.all([loadStats(), loadFilterOptions(), loadRuns()]);
-      loadImages(state.page);
+      if (_dashboardMode === 'client') {
+        await Promise.all([loadClientStats(), loadClientFilterOptions()]);
+      } else {
+        await Promise.all([loadStats(), loadFilterOptions(), loadRuns()]);
+      }
+      refreshCurrentView();
     } catch (e) {
       toast(`Error saving settings: ${e.message}`, 'err');
     }
@@ -4453,11 +5155,16 @@
     state.currentTab = name;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
-    document.getElementById('pagination').style.display = (name === 'images' || name === 'reports') ? '' : 'none';
+    document.getElementById('pagination').style.display =
+      (name === 'images' || name === 'reports' || (name === 'clients' && _clientView === 'images')) ? '' : 'none';
     if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
     if (name === 'reports') renderReportPagination();
     if (name === 'reference' && !document.querySelector('#ref-content .ref-card')) loadReference();
     if (name === 'agility') loadCryptoAgility();
+    if (name === 'clients') {
+      if (_clientView === 'fplog') loadClientFingerprintLog();
+      else loadClientImages(clientState.page || 1);
+    }
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
@@ -4644,6 +5351,64 @@
     if (e.target.id === 'ignore-panel-overlay') closeIgnorePanel();
   });
 
+  // ── Client mode wiring ────────────────────────────────────────────────────
+  document.getElementById('btn-mode-toggle').addEventListener('click', () => {
+    switchDashboardMode(_dashboardMode === 'client' ? 'server' : 'client');
+  });
+  document.getElementById('cf-lang').addEventListener('change', () => loadClientImages(1));
+  document.getElementById('cf-hc').addEventListener('change', () => loadClientImages(1));
+  document.getElementById('cf-ver').addEventListener('input', debounce(() => loadClientImages(1), 400));
+  document.getElementById('cf-hcver').addEventListener('input', debounce(() => loadClientImages(1), 400));
+  document.getElementById('cf-ignored').addEventListener('change', () => loadClientImages(1));
+  document.getElementById('btn-clear-client-filter').addEventListener('click', () => {
+    document.getElementById('cf-lang').value = '';
+    document.getElementById('cf-hc').value = '';
+    document.getElementById('cf-ver').value = '';
+    document.getElementById('cf-hcver').value = '';
+    loadClientImages(1);
+  });
+  document.getElementById('client-header-cb').addEventListener('change', (e) => {
+    if (e.target.checked) clientState.items.forEach(r => clientState.selected.add(r.id));
+    else clientState.items.forEach(r => clientState.selected.delete(r.id));
+    renderClientTable(clientState.items);
+  });
+  document.getElementById('btn-client-sel-menu').addEventListener('click', () =>
+    document.getElementById('client-sel-menu').classList.toggle('open'));
+  document.getElementById('mnu-client-sel-page').addEventListener('click', () => {
+    clientState.items.forEach(r => clientState.selected.add(r.id));
+    renderClientTable(clientState.items);
+  });
+  document.getElementById('mnu-client-sel-all').addEventListener('click', async () => {
+    const params = filtersToParams(getClientFilters(), {
+      include_ignored: document.getElementById('cf-ignored').checked,
+    });
+    const r = await api(`/api/client-images/ids?${params}`);
+    r.ids.forEach(id => clientState.selected.add(id));
+    renderClientTable(clientState.items);
+  });
+  document.getElementById('mnu-client-desel-all').addEventListener('click', () => {
+    clientState.selected.clear();
+    renderClientTable(clientState.items);
+  });
+  document.getElementById('btn-client-run-gen').addEventListener('click', () => {
+    document.getElementById('client-run-name').value = generateClientRunName();
+  });
+  document.getElementById('btn-client-start').addEventListener('click', startClientActions);
+  document.getElementById('btn-client-remove').addEventListener('click', removeSelectedClients);
+  document.getElementById('btn-client-launch').addEventListener('click', launchSelectedClients);
+  document.getElementById('btn-client-stop').addEventListener('click', stopSelectedClients);
+  document.getElementById('btn-client-stop-all').addEventListener('click', async () => {
+    if (!confirm('Stop all running pqc-* containers?')) return;
+    try {
+      const r = await api('/api/stop-all', { method: 'POST' });
+      openLog('Stop all containers', r.job_id, 'stop-all', () => loadClientImages(clientState.page));
+    } catch (e) {
+      toast(`Error: ${e.message}`, 'err');
+    }
+  });
+  document.getElementById('btn-client-view-images').addEventListener('click', () => switchClientView('images'));
+  document.getElementById('btn-client-view-fplog').addEventListener('click', () => switchClientView('fplog'));
+
   document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
   document.getElementById('btn-host-badge').addEventListener('click', openSettingsPanel);
   document.getElementById('btn-close-settings-panel').addEventListener('click', closeSettingsPanel);
@@ -4749,7 +5514,13 @@
 
   // ── Sort header indicators ────────────────────────────────────────────────
   function renderSortHeaders() {
-    document.querySelectorAll('thead th.sortable').forEach(th => {
+    // Scoped to the images table specifically: sortable <th> elements
+    // elsewhere (e.g. the client-images table) share the same CSS class for
+    // styling but don't have a .sort-icon child, since their own sort-click
+    // wiring is separate (data-csort, not data-sort) -- a global selector
+    // here crashed on those with "Cannot set properties of null" the
+    // instant the client tab's headers existed in the DOM at all.
+    document.querySelectorAll('#img-table thead th.sortable').forEach(th => {
       const col = th.dataset.sort;
       const icon = th.querySelector('.sort-icon');
       if (col === state.sortCol) {

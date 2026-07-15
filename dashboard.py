@@ -158,6 +158,21 @@ def _entries_from_db_rows(rows: list[dict]) -> list[dict]:
     return entries
 
 
+def _entries_from_client_db_rows(rows: list[dict]) -> list[dict]:
+    """Convert client_image_details rows to manager.py client-entry dicts."""
+    entries = []
+    for r in rows:
+        entries.append({
+            "language":    r["language"],
+            "lang_ver":    r["lang_version"],
+            "http_client": r["http_client"],
+            "hc_ver":      r["http_client_version"],
+            "path":        "images_clients/" + r["context_path"].replace("\\", "/"),
+            "_id":         r["id"],
+        })
+    return entries
+
+
 # ── Static serving ────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -172,17 +187,24 @@ def init():
     """Load registry metadata and sync image contexts from disk."""
     reg_counts  = db.load_registry()
     total, ins, rem = db.sync_images()
+    ctotal, cins, crem = db.sync_client_images()
     return jsonify({
         "registry": reg_counts,
         "images": {"total": total, "inserted": ins, "removed": rem},
+        "client_images": {"total": ctotal, "inserted": cins, "removed": crem},
     })
 
 
 @app.route("/api/sync", methods=["POST"])
 def sync():
-    """Sync image contexts from the images/ directory (no registry reload)."""
+    """Sync image contexts from the images/ and images_clients/ directories
+    (no registry reload)."""
     total, ins, rem = db.sync_images()
-    return jsonify({"total": total, "inserted": ins, "removed": rem})
+    ctotal, cins, crem = db.sync_client_images()
+    return jsonify({
+        "total": total, "inserted": ins, "removed": rem,
+        "client_images": {"total": ctotal, "inserted": cins, "removed": crem},
+    })
 
 
 # ── Reference / filter data ───────────────────────────────────────────────────
@@ -335,8 +357,8 @@ def action():
         run_id     = db.get_or_create_run(run_name, host=host) if run_name else None
         stop_event = _jobs[job_id]["stop_event"]
 
-        def _save_fp(entry, success_rec, failure_rec):
-            db.save_fingerprint_results(entry["_id"], success_rec, failure_rec, run_id, host=host)
+        def _save_fp(entry, records):
+            db.save_fingerprint_results(entry["_id"], records, run_id, host=host)
 
         try:
             if action_str == "build":
@@ -411,6 +433,160 @@ def action():
                     db.save_test_result(img_id, True, True, True,
                                         "", None, "", run_id, host=host)
                     log(f"[{idx}/{total_imgs}] {img_tag} — MARKED OK")
+
+        except Exception as exc:
+            log(f"ERROR: {exc}")
+        finally:
+            if stop_event.is_set():
+                log("[CANCELLED] Run was interrupted by the user.")
+            if run_id is not None:
+                status = "interrupted" if stop_event.is_set() else "completed"
+                try:
+                    db.update_run_status(run_id, status)
+                    db.save_run_log(run_id, "\n".join(log_lines))
+                except Exception:
+                    pass
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+# ── Client images (Server/Client dashboard mode) ─────────────────────────────
+# Mirrors the server-side routes above, over the simpler client 2D matrix.
+# Client images have no "test" action -- build + fingerprint is the whole
+# lifecycle (see client_build_results/client_fingerprints table comments).
+
+@app.route("/api/client-stats")
+def get_client_stats_route():
+    return jsonify(db.get_client_stats(host=_current_host()))
+
+
+@app.route("/api/client-filters")
+def get_client_filters():
+    return jsonify(db.get_client_filter_options())
+
+
+@app.route("/api/client-images")
+def get_client_images_route():
+    filters = {k: request.args.get(k, "") for k in (
+        "language", "version", "http_client", "http_client_version",
+    )}
+    include_ignored = request.args.get("include_ignored", "true").lower() == "true"
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(200, int(request.args.get("per_page", 50))))
+    sort_by  = request.args.get("sort_by",  "")
+    sort_dir = request.args.get("sort_dir", "asc")
+    result = db.get_client_images(filters, page, per_page, include_ignored, sort_by, sort_dir,
+                                  host=_current_host())
+    _annotate_docker_exists(result["items"])
+    return jsonify(result)
+
+
+@app.route("/api/client-images/ids")
+def get_all_client_ids():
+    filters = {k: request.args.get(k, "") for k in (
+        "language", "version", "http_client", "http_client_version",
+    )}
+    include_ignored = request.args.get("include_ignored", "true").lower() == "true"
+    ids = db.get_all_client_ids_for_filter(filters, include_ignored, host=_current_host())
+    return jsonify({"ids": ids})
+
+
+@app.route("/api/client-fingerprints")
+def list_client_fingerprints():
+    client_image_id = request.args.get("client_image_id", "")
+    cid = int(client_image_id) if client_image_id.isdigit() else None
+    return jsonify({"items": db.get_client_fingerprints(cid)})
+
+
+@app.route("/api/client-fingerprints/<int:fp_id>/report")
+def client_fingerprint_report(fp_id):
+    report = db.get_client_fingerprint_report(fp_id)
+    if report is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(report)
+
+
+@app.route("/api/client-action", methods=["POST"])
+def client_action():
+    """Start a build / fingerprint / remove / run / stop job for the given
+    client-image ids.
+
+    Body: {"action": "build"|"fingerprint"|"remove"|"run"|"stop",
+           "client_image_ids": [1, 2, ...],
+           "options": {"no_cache": false, "skip_existing": false}}
+    Returns: {"job_id": "..."}
+    """
+    data       = request.json or {}
+    action_str = data.get("action", "")
+    ids        = [int(i) for i in data.get("client_image_ids", [])]
+    opts       = data.get("options", {})
+    run_name   = data.get("run_name", "")
+
+    if action_str not in ("build", "fingerprint", "remove", "run", "stop"):
+        return jsonify({"error": f"Unknown action: {action_str}"}), 400
+    if not ids:
+        return jsonify({"error": "No client image ids provided"}), 400
+    if not FINGERPRINT_ENABLED and action_str == "fingerprint":
+        return jsonify({"error": "Fingerprinting is disabled (set PQC_ENABLE_FINGERPRINT=true to enable)"}), 400
+
+    host = _current_host()
+    rows = db.get_client_images_by_ids(ids, host=host)
+    if not rows:
+        return jsonify({"error": "No matching client images found"}), 404
+
+    entries = _entries_from_client_db_rows(rows)
+    job_id, q = _new_job(action_str)
+
+    log_lines = []
+
+    def log(msg=""):
+        text = str(msg)
+        log_lines.append(text)
+        q.put(text)
+
+    def run():
+        run_id     = db.get_or_create_run(run_name, host=host) if run_name else None
+        stop_event = _jobs[job_id]["stop_event"]
+
+        try:
+            if action_str == "build":
+                def _save_build(entry, r):
+                    db.save_client_build_result(
+                        entry["_id"], r.get("success", False),
+                        r.get("output", ""),
+                        r.get("started_at"), r.get("finished_at"),
+                        run_id, host=host,
+                    )
+                manager._do_client_build(
+                    entries,
+                    no_cache=bool(opts.get("no_cache")),
+                    skip_existing=bool(opts.get("skip_existing")),
+                    workers=int(opts.get("workers", 4)),
+                    log_fn=log,
+                    save_fn=_save_build,
+                    stop_event=stop_event,
+                )
+
+            elif action_str == "fingerprint":
+                def _save_cfp(entry, record):
+                    db.save_client_fingerprint_results(entry["_id"], record, run_id, host=host)
+                manager._do_client_fingerprint(
+                    entries,
+                    log_fn=log,
+                    save_fn=_save_cfp,
+                    stop_event=stop_event,
+                )
+
+            elif action_str == "remove":
+                manager._do_client_remove(entries, log_fn=log)
+
+            elif action_str == "run":
+                manager._do_client_run(entries, log_fn=log)
+
+            elif action_str == "stop":
+                manager._do_client_stop(entries, log_fn=log)
 
         except Exception as exc:
             log(f"ERROR: {exc}")
@@ -957,16 +1133,29 @@ if __name__ == "__main__":
         print(f"Warning: no image contexts found under '{db.IMAGES_BASE}'.")
         print("Run 'python scripts/generate_images.py' first, then reload with /api/init.")
 
+    # load_registry() is cheap (pure JSON parsing, no network calls) and
+    # idempotent, so it always runs -- skipping it based on "images already
+    # has rows" is a poor proxy for "every reference table this version of
+    # the code expects is populated". Confirmed the hard way: a DB that
+    # already had images but predated the http_clients/http_client_versions
+    # tables silently resolved zero client image FKs, since this used to
+    # skip load_registry() entirely and those tables stayed empty forever.
+    print("Loading registry metadata …")
+    counts = db.load_registry()
+    print(f"  Registry: {counts}")
+
     if not (PROJECT_ROOT / "pqc_manager.db").exists() or \
        db._connect().execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0:
-        print("Loading registry metadata …")
-        counts = db.load_registry()
-        print(f"  Registry: {counts}")
         print("Syncing image contexts from disk …")
         total, ins, rem = db.sync_images()
         print(f"  Images: {total} total, {ins} new, {rem} removed")
     else:
-        print("Database already populated – skipping auto-sync (use /api/init to reload)")
+        print("Images already synced – skipping filesystem walk (use /api/init to reload)")
+
+    if db.CLIENT_IMAGES_BASE.exists() and any(db.CLIENT_IMAGES_BASE.rglob("Dockerfile")):
+        print("Syncing client image contexts from disk …")
+        ctotal, cins, crem = db.sync_client_images()
+        print(f"  Client images: {ctotal} total, {cins} new, {crem} removed")
 
     stats = db.get_stats()
     print(f"\nReady: {stats['total']:,} images  |  "

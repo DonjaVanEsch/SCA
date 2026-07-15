@@ -27,10 +27,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent
-DB_PATH      = PROJECT_ROOT / "pqc_manager.db"
-IMAGES_BASE  = PROJECT_ROOT / "images"
-SCRIPTS_DIR  = PROJECT_ROOT / "scripts"
+PROJECT_ROOT       = Path(__file__).parent
+DB_PATH            = PROJECT_ROOT / "pqc_manager.db"
+IMAGES_BASE        = PROJECT_ROOT / "images"
+CLIENT_IMAGES_BASE = PROJECT_ROOT / "images_clients"
+SCRIPTS_DIR        = PROJECT_ROOT / "scripts"
 
 # Registry JSON file names (spaces in filename as they exist on disk)
 _REGISTRY_FILES = [
@@ -125,6 +126,46 @@ CREATE TABLE IF NOT EXISTS images (
     UNIQUE(lang_version_id, fw_version_id, lib_version_id)
 );
 
+-- ── Client images (outbound-call fingerprinting clients) ────────────────────
+-- A deliberately separate set of tables, not a repurposed images/frameworks
+-- with a "kind" flag: a client program has no server-side framework, what
+-- varies is which library it uses to make its OWN outbound HTTP(S) call
+-- (stdlib http.client, requests, httpx, urllib3, or a crypto-lib-driven raw
+-- client like pyOpenSSL/M2Crypto). A crypto-lib-driven client is just
+-- another http_clients entry (e.g. "pyopenssl-raw"), not a separate cross-
+-- product dimension -- keeps this a 2D matrix (language x http_client)
+-- instead of 3D like the server side's (language x framework x lib).
+CREATE TABLE IF NOT EXISTS http_clients (
+    id           INTEGER PRIMARY KEY,
+    language_id  INTEGER NOT NULL REFERENCES languages(id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL,
+    module_path  TEXT,
+    notes        TEXT,
+    include      INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(language_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS http_client_versions (
+    id              INTEGER PRIMARY KEY,
+    http_client_id  INTEGER NOT NULL REFERENCES http_clients(id) ON DELETE CASCADE,
+    version_nr      TEXT    NOT NULL,          -- version string or "builtin"
+    release_date    TEXT,
+    compatibility   TEXT,                      -- JSON array
+    UNIQUE(http_client_id, version_nr)
+);
+
+CREATE TABLE IF NOT EXISTS client_images (
+    id                      INTEGER PRIMARY KEY,
+    lang_version_id         INTEGER NOT NULL REFERENCES lang_versions(id) ON DELETE CASCADE,
+    http_client_version_id  INTEGER NOT NULL REFERENCES http_client_versions(id) ON DELETE CASCADE,
+    image_tag               TEXT    UNIQUE NOT NULL,
+    context_path            TEXT    NOT NULL,
+    ignored                 INTEGER NOT NULL DEFAULT 0,
+    ignore_reason           TEXT,
+    synced_at               TEXT    DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(lang_version_id, http_client_version_id)
+);
+
 -- ── Run labels ────────────────────────────────────────────────────────────
 -- docker_host: the DOCKER_HOST value active when the run was created ('' = local
 -- engine). Lets the Reports tab show which remote/local target produced a run.
@@ -175,24 +216,68 @@ CREATE TABLE IF NOT EXISTS test_results (
 
 -- Real network traffic captured (via a tcpdump sidecar sniffing the target
 -- container's own network namespace) against a running container, for
--- fingerprinting. call_type distinguishes the successful probe (GET
--- /version, expected 200) from the deliberately-invalid one (GET to a
--- nonexistent path) -- exactly 2 rows per fingerprint pass. traffic_raw is
--- the genuine on-the-wire packet dump (tcpdump -XX -v text), not a
--- reconstruction from either side -- that's what a network fingerprint
--- actually keys off.
+-- fingerprinting. call_type distinguishes the four probes fired per pass:
+-- 'success' (GET /version, expected 200), 'failure' (GET to a nonexistent
+-- path, expected 404), 'method_not_allowed' (POST to a valid path, expected
+-- 405 -- many frameworks emit a distinctive default body/headers for this)
+-- and 'malformed' (a deliberately invalid request, expected 400). traffic_raw
+-- is the tcpdump -XX -v text decode (kept for quick human reading); pcap_raw
+-- is the actual binary capture (base64), the genuine on-the-wire packet
+-- bytes a real network fingerprint should key off -- text is fine to skim
+-- but is a lossy re-derivation, not a reliable parse source.
 CREATE TABLE IF NOT EXISTS fingerprints (
     id            INTEGER PRIMARY KEY,
     image_id      INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
     host          TEXT    NOT NULL DEFAULT '',
-    call_type     TEXT    NOT NULL CHECK(call_type IN ('success','failure')),
+    call_type     TEXT    NOT NULL CHECK(call_type IN ('success','failure','method_not_allowed','malformed')),
     method        TEXT    NOT NULL,
     path          TEXT    NOT NULL,
     status_code   INTEGER,
     traffic_raw   TEXT,
+    pcap_raw      TEXT,
     error_msg     TEXT,
     captured_at   TEXT DEFAULT CURRENT_TIMESTAMP,
     run_id        INTEGER REFERENCES runs(id)
+);
+
+-- Client-side fingerprint capture: one row per client-image run against the
+-- persistent fingerprint-target app (scripts/fingerprint_target/), captured
+-- by a tcpdump sidecar attached to the TARGET's network namespace (not the
+-- client's) while the one-shot client container runs -- the reverse
+-- direction of the server-side `fingerprints` table above. No call_type: a
+-- client only ever makes the one outbound call its generated program makes.
+-- client_image_id is the ground truth for the report the dashboard builds
+-- (language + http-client-library + version), since we know exactly which
+-- client image was run.
+CREATE TABLE IF NOT EXISTS client_fingerprints (
+    id               INTEGER PRIMARY KEY,
+    client_image_id  INTEGER NOT NULL REFERENCES client_images(id) ON DELETE CASCADE,
+    host             TEXT    NOT NULL DEFAULT '',
+    status_code      INTEGER,
+    traffic_raw      TEXT,
+    pcap_raw         TEXT,
+    error_msg        TEXT,
+    client_output    TEXT,
+    observed_user_agent TEXT,
+    observed_ja3_hash   TEXT,
+    observed_ja3_string TEXT,
+    captured_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    run_id           INTEGER REFERENCES runs(id)
+);
+
+-- Client images have no separate "test" concept the way server images do
+-- (there's nothing to serve/poll independently) -- build + fingerprint is
+-- the whole lifecycle. Mirrors build_results exactly.
+CREATE TABLE IF NOT EXISTS client_build_results (
+    id               INTEGER PRIMARY KEY,
+    client_image_id  INTEGER NOT NULL REFERENCES client_images(id) ON DELETE CASCADE,
+    host             TEXT    NOT NULL DEFAULT '',
+    success          INTEGER NOT NULL,
+    output           TEXT,
+    started_at       TEXT,
+    finished_at      TEXT,
+    run_id           INTEGER REFERENCES runs(id),
+    UNIQUE(client_image_id, host)
 );
 
 -- ── Crypto Agility (C.A.M. Component 2) ──────────────────────────────────────
@@ -280,6 +365,19 @@ CREATE TABLE IF NOT EXISTS crypto_agility_scores (
     computed_at    TEXT
 );
 
+-- The JA3 TLS-ClientHello fingerprint has no external "known good" value to
+-- check against (unlike the HTTP User-Agent header, where ground truth is
+-- just the client_images row) -- so the first JA3 ever observed for a given
+-- client image becomes its own reference baseline, and every later capture
+-- of that same image is compared against it. One row per client_image_id.
+CREATE TABLE IF NOT EXISTS client_ja3_reference (
+    client_image_id INTEGER PRIMARY KEY REFERENCES client_images(id) ON DELETE CASCADE,
+    ja3_hash        TEXT NOT NULL,
+    ja3_string      TEXT,
+    fingerprint_id  INTEGER REFERENCES client_fingerprints(id),
+    first_seen_at   TEXT
+);
+
 -- ── Indexes ────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_lv_lang      ON lang_versions(language_id);
 CREATE INDEX IF NOT EXISTS idx_fwv_fw       ON fw_versions(framework_id);
@@ -289,6 +387,14 @@ CREATE INDEX IF NOT EXISTS idx_img_fwv      ON images(fw_version_id);
 CREATE INDEX IF NOT EXISTS idx_img_libv     ON images(lib_version_id);
 CREATE INDEX IF NOT EXISTS idx_img_ignored  ON images(ignored);
 CREATE INDEX IF NOT EXISTS idx_img_tag      ON images(image_tag);
+CREATE INDEX IF NOT EXISTS idx_hcv_hc       ON http_client_versions(http_client_id);
+CREATE INDEX IF NOT EXISTS idx_cimg_lv      ON client_images(lang_version_id);
+CREATE INDEX IF NOT EXISTS idx_cimg_hcv     ON client_images(http_client_version_id);
+CREATE INDEX IF NOT EXISTS idx_cimg_ignored ON client_images(ignored);
+CREATE INDEX IF NOT EXISTS idx_cimg_tag     ON client_images(image_tag);
+CREATE INDEX IF NOT EXISTS idx_cfp_image    ON client_fingerprints(client_image_id);
+CREATE INDEX IF NOT EXISTS idx_cfp_time     ON client_fingerprints(captured_at);
+CREATE INDEX IF NOT EXISTS idx_cbr_image    ON client_build_results(client_image_id);
 CREATE INDEX IF NOT EXISTS idx_test_image   ON test_results(image_id);
 CREATE INDEX IF NOT EXISTS idx_test_time    ON test_results(tested_at);
 CREATE INDEX IF NOT EXISTS idx_fp_image     ON fingerprints(image_id);
@@ -392,6 +498,44 @@ JOIN lib_versions  libv ON libv.id = i.lib_version_id
 JOIN libraries     lib  ON lib.id  = libv.library_id;
 """
 
+# Same idea as image_details, over the simpler 2D client matrix (no
+# framework/library dimensions -- see the client_images schema comment).
+_CLIENT_VIEW = """
+DROP VIEW IF EXISTS client_image_details;
+CREATE VIEW client_image_details AS
+SELECT
+    ci.id,
+    ci.image_tag,
+    ci.context_path,
+    ci.ignored,
+    ci.ignore_reason,
+    ci.synced_at,
+
+    l.id           AS language_id,
+    l.name         AS language,
+    l.display_name AS language_display,
+
+    lv.id           AS lang_version_id,
+    lv.version_nr   AS lang_version,
+    lv.release_date AS lang_release_date,
+
+    hc.id          AS http_client_id,
+    hc.name        AS http_client,
+    hc.module_path AS http_client_module,
+    hc.notes       AS http_client_notes,
+
+    hcv.id            AS http_client_version_id,
+    hcv.version_nr    AS http_client_version,
+    hcv.release_date  AS http_client_release_date,
+    hcv.compatibility AS http_client_compatibility
+
+FROM client_images ci
+JOIN lang_versions lv        ON lv.id  = ci.lang_version_id
+JOIN languages l              ON l.id   = lv.language_id
+JOIN http_client_versions hcv ON hcv.id = ci.http_client_version_id
+JOIN http_clients hc          ON hc.id  = hcv.http_client_id;
+"""
+
 
 def _status_sql() -> str:
     """image_details, plus build/test/fingerprint status scoped to one Docker host.
@@ -442,6 +586,35 @@ def _status_sql() -> str:
     """
 
 
+def _client_status_sql() -> str:
+    """client_image_details, plus build/fingerprint status scoped to one
+    Docker host. Contains two '?' placeholders (build host, fingerprint
+    host) that must both be bound to the SAME host value, in that order,
+    before any other query params. No test_results equivalent -- a client
+    image has nothing to serve/poll independently of actually running it
+    against the target, so build + fingerprint is the whole lifecycle."""
+    return """
+    SELECT
+        d.*,
+        b.success     AS build_success,
+        b.finished_at AS built_at,
+        b.output      AS build_output,
+        br.name       AS build_run,
+        cf.id            AS fp_id,
+        cf.status_code   AS fp_status,
+        cf.error_msg     AS fp_error,
+        cf.captured_at   AS fp_at
+    FROM client_image_details d
+    LEFT JOIN client_build_results b ON b.client_image_id = d.id AND b.host = ?
+    LEFT JOIN runs br ON br.id = b.run_id
+    LEFT JOIN client_fingerprints cf ON cf.id = (
+        SELECT f.id FROM client_fingerprints f
+        WHERE f.client_image_id = d.id AND f.host = ?
+        ORDER BY f.captured_at DESC LIMIT 1
+    )
+    """
+
+
 def init_db() -> None:
     """Create all tables and the image_details view if they do not exist."""
     with _connect() as conn:
@@ -486,12 +659,14 @@ def init_db() -> None:
             """)
 
         # fingerprints moved from separate request_raw/response_raw text
-        # reconstructions to a single traffic_raw genuine tcpdump capture --
-        # drop and let _SCHEMA below recreate the new shape. Rows are just a
-        # capture cache re-derived by re-running the fingerprint action, so
-        # there's nothing worth migrating forward.
+        # reconstructions to a single traffic_raw genuine tcpdump capture,
+        # then again to add pcap_raw + two new call_types (method_not_allowed/
+        # malformed) -- drop and let _SCHEMA below recreate the new shape
+        # each time. Rows are just a capture cache re-derived by re-running
+        # the fingerprint action, so there's nothing worth migrating forward
+        # (and as of this pass the table has never actually been populated).
         fp_cols = {row[1] for row in conn.execute("PRAGMA table_info(fingerprints)")}
-        if fp_cols and "traffic_raw" not in fp_cols:
+        if fp_cols and ("traffic_raw" not in fp_cols or "pcap_raw" not in fp_cols):
             conn.execute("DROP TABLE fingerprints")
 
         conn.executescript(_SCHEMA)
@@ -510,6 +685,10 @@ def init_db() -> None:
             "ALTER TABLE pending_updates ADD COLUMN images_added INTEGER",
             "ALTER TABLE pending_updates ADD COLUMN tested INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE pending_updates ADD COLUMN tested_at TEXT",
+            "ALTER TABLE client_fingerprints ADD COLUMN client_output TEXT",
+            "ALTER TABLE client_fingerprints ADD COLUMN observed_user_agent TEXT",
+            "ALTER TABLE client_fingerprints ADD COLUMN observed_ja3_hash TEXT",
+            "ALTER TABLE client_fingerprints ADD COLUMN observed_ja3_string TEXT",
         ]:
             try:
                 conn.execute(ddl)
@@ -563,6 +742,7 @@ def init_db() -> None:
             conn.execute("PRAGMA foreign_keys=ON")
 
         conn.executescript(_VIEW)
+        conn.executescript(_CLIENT_VIEW)
 
 
 # ── Registry loader ───────────────────────────────────────────────────────────
@@ -605,10 +785,12 @@ def load_registry() -> dict[str, int]:
     """
     counts = {k: 0 for k in
               ("languages", "lang_versions", "frameworks",
-               "fw_versions", "libraries", "lib_versions")}
+               "fw_versions", "libraries", "lib_versions",
+               "http_clients", "http_client_versions")}
     counts.update({f"{k}_removed": 0 for k in
                    ("lang_versions", "frameworks", "fw_versions",
-                    "libraries", "lib_versions")})
+                    "libraries", "lib_versions",
+                    "http_clients", "http_client_versions")})
 
     with _connect() as conn:
         for registry_path in _REGISTRY_FILES:
@@ -777,6 +959,65 @@ def load_registry() -> dict[str, int]:
                 counts["libraries_removed"] += _prune_missing(
                     conn, "libraries", "language_id", lang_id,
                     "name", seen_libraries,
+                )
+
+                # ── HTTP clients (outbound-call fingerprinting) ────────────
+                # Same shape as the frameworks loop above, but a separate
+                # table -- see the http_clients/client_images schema comment.
+                seen_http_clients = set()
+                for hc in lang_obj.get("http_clients", []):
+                    hc_name = hc.get("name", "")
+                    module  = hc.get("module")
+                    notes   = hc.get("notes")
+                    include = int(hc.get("include", True))
+                    seen_http_clients.add(hc_name)
+
+                    conn.execute(
+                        """INSERT INTO http_clients
+                               (language_id, name, module_path, notes, include)
+                           VALUES (?,?,?,?,?)
+                           ON CONFLICT(language_id, name)
+                           DO UPDATE SET module_path=excluded.module_path,
+                                         notes=excluded.notes,
+                                         include=excluded.include""",
+                        (lang_id, hc_name, module, notes, include),
+                    )
+                    hc_id = conn.execute(
+                        "SELECT id FROM http_clients WHERE language_id=? AND name=?",
+                        (lang_id, hc_name),
+                    ).fetchone()[0]
+                    counts["http_clients"] += 1
+
+                    versions = hc.get("version", [])
+                    if isinstance(versions, str):
+                        versions = [{"nr": versions, "release_date": None,
+                                     "compatibility": []}]
+
+                    seen_hc_versions = set()
+                    for hv in versions:
+                        nr     = _norm_version(str(hv.get("nr", "")))
+                        rdate  = hv.get("release_date")
+                        compat = json.dumps(hv.get("compatibility", []))
+                        seen_hc_versions.add(nr)
+                        conn.execute(
+                            """INSERT INTO http_client_versions
+                                   (http_client_id, version_nr, release_date, compatibility)
+                               VALUES (?,?,?,?)
+                               ON CONFLICT(http_client_id, version_nr)
+                               DO UPDATE SET release_date=excluded.release_date,
+                                             compatibility=excluded.compatibility""",
+                            (hc_id, nr, rdate, compat),
+                        )
+                        counts["http_client_versions"] += 1
+
+                    counts["http_client_versions_removed"] += _prune_missing(
+                        conn, "http_client_versions", "http_client_id", hc_id,
+                        "version_nr", seen_hc_versions,
+                    )
+
+                counts["http_clients_removed"] += _prune_missing(
+                    conn, "http_clients", "language_id", lang_id,
+                    "name", seen_http_clients,
                 )
 
     _seed_crypto_agility()
@@ -1372,6 +1613,114 @@ def sync_images() -> tuple[int, int, int]:
     return total, inserted, removed
 
 
+# ── Client image sync ─────────────────────────────────────────────────────────
+# Mirrors the server-side sync_images() above, but over images_clients/ and
+# the http_clients/http_client_versions/client_images tables. Layout is a
+# flat language/lang_ver/http_client/http_client_ver (no library-depth
+# ambiguity like crypto/des -- HTTP client names here don't contain '/').
+
+def _client_image_tag_from_parts(language: str, lang_ver: str,
+                                  http_client: str, hc_ver: str) -> str:
+    hc = http_client.lower().replace("/", "_").replace("@", "").replace(" ", "").replace(".", "-")
+    return f"pqc-client-{language}-{lang_ver}-{hc}-{hc_ver}"
+
+
+def _resolve_client_image_fks(conn, language: str, lang_ver: str,
+                               http_client: str, hc_ver: str):
+    """Look up (lang_version_id, http_client_version_id) or return None."""
+    lv = conn.execute(
+        """SELECT lv.id FROM lang_versions lv
+           JOIN languages l ON l.id = lv.language_id
+           WHERE l.name=? AND lv.version_nr=?""",
+        (language, lang_ver),
+    ).fetchone()
+    if not lv:
+        return None
+
+    hcv = conn.execute(
+        """SELECT hcv.id FROM http_client_versions hcv
+           JOIN http_clients hc ON hc.id = hcv.http_client_id
+           JOIN languages    l  ON l.id  = hc.language_id
+           WHERE l.name=? AND hc.name=? AND hcv.version_nr=?""",
+        (language, http_client, hc_ver),
+    ).fetchone()
+    if not hcv:
+        return None
+
+    return lv[0], hcv[0]
+
+
+def _parse_client_dockerfile_path(base: Path, dockerfile: Path) -> dict | None:
+    """Parse a client Dockerfile path: <language>/<lang_ver>/<http_client>/<hc_ver>/Dockerfile."""
+    rel   = dockerfile.parent.relative_to(base)
+    parts = rel.parts
+    if len(parts) != 4:
+        return None
+    language, lang_ver, http_client, hc_ver = parts
+    return {
+        "language": language, "lang_ver": lang_ver,
+        "http_client": http_client, "hc_ver": hc_ver,
+        "path": str(rel),
+    }
+
+
+def sync_client_images() -> tuple[int, int, int]:
+    """Walk images_clients/ and upsert all Dockerfile contexts into the
+    client_images table. Returns (total_on_disk, newly_inserted, removed)."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _connect() as conn:
+        existing_tags = {r[0]: r[1] for r in
+                         conn.execute("SELECT image_tag, id FROM client_images")}
+
+        disk_tags: dict[str, Path] = {}
+        inserted  = 0
+        total     = 0
+
+        for dockerfile in sorted(CLIENT_IMAGES_BASE.rglob("Dockerfile")):
+            total += 1
+            cand = _parse_client_dockerfile_path(CLIENT_IMAGES_BASE, dockerfile)
+            if cand is None:
+                continue
+
+            tag = _client_image_tag_from_parts(
+                cand["language"], cand["lang_ver"], cand["http_client"], cand["hc_ver"])
+            disk_tags[tag] = dockerfile
+
+            if tag in existing_tags:
+                continue
+
+            ids = _resolve_client_image_fks(
+                conn, cand["language"], cand["lang_ver"], cand["http_client"], cand["hc_ver"])
+            if ids is None:
+                continue
+
+            lv_id, hcv_id = ids
+            conn.execute(
+                """INSERT INTO client_images
+                       (lang_version_id, http_client_version_id, image_tag, context_path, synced_at)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(lang_version_id, http_client_version_id)
+                   DO UPDATE SET image_tag=excluded.image_tag,
+                                 context_path=excluded.context_path,
+                                 synced_at=excluded.synced_at""",
+                (lv_id, hcv_id, tag, cand["path"], now),
+            )
+            inserted += 1
+            existing_tags[tag] = None
+
+        gone_tags = set(existing_tags.keys()) - set(disk_tags.keys())
+        removed   = 0
+        if gone_tags:
+            ph = ",".join("?" * len(gone_tags))
+            conn.execute(
+                f"DELETE FROM client_images WHERE image_tag IN ({ph})", list(gone_tags)
+            )
+            removed = len(gone_tags)
+
+    return total, inserted, removed
+
+
 # ── Filter helpers ────────────────────────────────────────────────────────────
 
 def _wildcard_clause(field: str, pattern: str):
@@ -1412,6 +1761,25 @@ def _build_where(filters: dict, prefix: str = "", exclude: frozenset = frozenset
             continue
         field = f"{prefix}{col}" if prefix else col
         frag, param = _wildcard_clause(field, filters.get(key, ""))
+        if frag:
+            clauses.append(frag)
+            params.append(param)
+    sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    return sql, params
+
+
+_CLIENT_DETAIL_FILTER_MAP = [
+    ("language",            "language"),
+    ("lang_version",        "version"),
+    ("http_client",         "http_client"),
+    ("http_client_version", "http_client_version"),
+]
+
+
+def _build_client_where(filters: dict) -> tuple[str, list]:
+    clauses, params = [], []
+    for col, key in _CLIENT_DETAIL_FILTER_MAP:
+        frag, param = _wildcard_clause(col, filters.get(key, ""))
         if frag:
             clauses.append(frag)
             params.append(param)
@@ -1679,6 +2047,131 @@ def get_ignored_images(host: str = "") -> list[dict]:
     return [dict(r) for r in rows]
 
 
+# ── Client images (Server/Client dashboard mode) ─────────────────────────────
+
+_CLIENT_SORTABLE_COLS = {
+    "language", "lang_version", "http_client", "http_client_version",
+    "build_success",
+}
+
+
+def get_client_images(filters: dict | None = None,
+                      page: int = 1,
+                      per_page: int = 50,
+                      include_ignored: bool = True,
+                      sort_by: str = "",
+                      sort_dir: str = "asc",
+                      host: str = "") -> dict:
+    """Same shape as get_images(), over the client 2D matrix."""
+    filters   = filters or {}
+    where_sql, params = _build_client_where(filters)
+
+    if not include_ignored:
+        connector = "AND" if where_sql else "WHERE"
+        where_sql = f"{where_sql} {connector} ignored = 0"
+
+    sort_col = sort_by if sort_by in _CLIENT_SORTABLE_COLS else ""
+    direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+    if sort_col:
+        order_sql = f"ORDER BY {sort_col} {direction} NULLS LAST, language, lang_version, http_client, http_client_version"
+    else:
+        order_sql = "ORDER BY language, lang_version, http_client, http_client_version"
+
+    status_sql = _client_status_sql()
+    with _connect() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
+            [host, host] + params,
+        ).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        rows = conn.execute(
+            f"SELECT * FROM ({status_sql}) s {where_sql} {order_sql} LIMIT ? OFFSET ?",
+            [host, host] + params + [per_page, offset],
+        ).fetchall()
+
+    return {
+        "total":    total,
+        "page":     page,
+        "per_page": per_page,
+        "pages":    max(1, (total + per_page - 1) // per_page),
+        "items":    [dict(r) for r in rows],
+    }
+
+
+def get_client_images_by_ids(client_image_ids: list, host: str = "") -> list[dict]:
+    if not client_image_ids:
+        return []
+    with _connect() as conn:
+        ph = ",".join("?" * len(client_image_ids))
+        rows = conn.execute(
+            f"SELECT * FROM ({_client_status_sql()}) s WHERE id IN ({ph})",
+            [host, host] + list(client_image_ids),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_client_ids_for_filter(filters: dict, include_ignored: bool = True,
+                                   host: str = "") -> list[int]:
+    filters = filters or {}
+    where_sql, params = _build_client_where(filters)
+    if not include_ignored:
+        connector = "AND" if where_sql else "WHERE"
+        where_sql = f"{where_sql} {connector} ignored = 0"
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT id FROM ({_client_status_sql()}) s {where_sql}",
+            [host, host] + params,
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def get_client_filter_options() -> dict:
+    with _connect() as conn:
+        def vals(col):
+            return [r[0] for r in conn.execute(
+                f"SELECT DISTINCT {col} FROM client_image_details ORDER BY {col}"
+            )]
+        return {
+            "languages":            vals("language"),
+            "lang_versions":        vals("lang_version"),
+            "http_clients":         vals("http_client"),
+            "http_client_versions": vals("http_client_version"),
+        }
+
+
+def save_client_build_result(client_image_id: int, success: bool,
+                             output: str,
+                             started_at: str, finished_at: str,
+                             run_id: int | None = None,
+                             host: str = "") -> None:
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO client_build_results
+                   (client_image_id, host, success, output, started_at, finished_at, run_id)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(client_image_id, host)
+               DO UPDATE SET success=excluded.success,
+                             output=excluded.output,
+                             started_at=excluded.started_at,
+                             finished_at=excluded.finished_at,
+                             run_id=excluded.run_id""",
+            (client_image_id, host, int(success), output, started_at, finished_at, run_id),
+        )
+
+
+def get_client_stats(host: str = "") -> dict:
+    with _connect() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM client_images").fetchone()[0]
+        built = conn.execute(
+            "SELECT COUNT(*) FROM client_build_results WHERE host=? AND success=1", (host,)
+        ).fetchone()[0]
+        fingerprinted = conn.execute(
+            "SELECT COUNT(DISTINCT client_image_id) FROM client_fingerprints WHERE host=?", (host,)
+        ).fetchone()[0]
+    return {"total": total, "built": built, "fingerprinted": fingerprinted}
+
+
 _STATUS_CLAUSES = {
     "not_built":    "build_success IS NULL",
     "build_failed": "build_success = 0",
@@ -1803,28 +2296,206 @@ def save_test_result(image_id: int, success: bool,
 
 
 def save_fingerprint_results(image_id: int,
-                             success_rec: dict | None,
-                             failure_rec: dict | None,
+                             records: dict | None,
                              run_id: int | None = None,
                              host: str = "") -> None:
-    """Store the 2-record network-traffic capture (1 successful call + 1
-    failed call) taken against a running container for one fingerprint pass.
-    Either record may be None if the container never came up far enough to
-    probe (still writes whichever one succeeded)."""
+    """Store the 4-record network-traffic capture (success/failure/
+    method_not_allowed/malformed, see manager._capture_fingerprint) taken
+    against a running container for one fingerprint pass. `records` is None
+    if the container never came up far enough to probe at all; individual
+    call_type entries within it are never None once present."""
+    if records is None:
+        return
     captured_at = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
-        for call_type, rec in (("success", success_rec), ("failure", failure_rec)):
+        for call_type, rec in records.items():
             if rec is None:
                 continue
             conn.execute(
                 """INSERT INTO fingerprints
                        (image_id, host, call_type, method, path, status_code,
-                        traffic_raw, error_msg, captured_at, run_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        traffic_raw, pcap_raw, error_msg, captured_at, run_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (image_id, host, call_type, rec.get("method", ""), rec.get("path", ""),
-                 rec.get("status_code"), rec.get("traffic_raw", ""), rec.get("error", ""),
-                 captured_at, run_id),
+                 rec.get("status_code"), rec.get("traffic_raw", ""), rec.get("pcap_raw", ""),
+                 rec.get("error", ""), captured_at, run_id),
             )
+
+
+def save_client_fingerprint_results(client_image_id: int,
+                                     record: dict | None,
+                                     run_id: int | None = None,
+                                     host: str = "") -> None:
+    """Store one client-fingerprint capture (see manager._capture_client_fingerprint)
+    -- `record` is None if the client container never ran at all. client_output
+    is the client's own self-reported JSON summary (client/client_version/
+    language_version) -- kept verbatim so it can be compared against the
+    ground truth (what we know we actually built) later."""
+    if record is None:
+        return
+    captured_at = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO client_fingerprints
+                   (client_image_id, host, status_code, traffic_raw, pcap_raw,
+                    error_msg, client_output, observed_user_agent,
+                    observed_ja3_hash, observed_ja3_string, captured_at, run_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (client_image_id, host, record.get("status_code"),
+             record.get("traffic_raw", ""), record.get("pcap_raw", ""),
+             record.get("error", ""), record.get("client_output", ""),
+             record.get("observed_user_agent"), record.get("observed_ja3_hash"),
+             record.get("observed_ja3_string"),
+             captured_at, run_id),
+        )
+        ja3_hash = record.get("observed_ja3_hash")
+        if ja3_hash:
+            # First JA3 ever seen for this exact image becomes its reference
+            # baseline -- there's no external "expected" value to check
+            # against, so later captures compare against whatever this one
+            # observed.
+            conn.execute(
+                """INSERT INTO client_ja3_reference
+                       (client_image_id, ja3_hash, ja3_string, fingerprint_id, first_seen_at)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(client_image_id) DO NOTHING""",
+                (client_image_id, ja3_hash, record.get("observed_ja3_string"),
+                 cur.lastrowid, captured_at),
+            )
+
+
+def _parse_client_reported(client_output: str | None) -> dict:
+    """Parse a client's own self-reported JSON summary into structured
+    fields, tolerating a missing/malformed value (a client that errored
+    before printing anything, or an unexpected format) rather than breaking
+    the whole row."""
+    if client_output:
+        try:
+            data = json.loads(client_output)
+            return {
+                "reported_client":           data.get("client"),
+                "reported_client_version":   data.get("client_version"),
+                "reported_language_version": data.get("language_version"),
+            }
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+    return {"reported_client": None, "reported_client_version": None, "reported_language_version": None}
+
+
+def _version_matches(ground_truth: str | None, reported: str | None) -> bool | None:
+    """None = nothing to compare (client never self-reported a version).
+    Otherwise: does the client's own self-reported version match what we
+    know we actually built, accounting for our own bucket-vs-exact-patch
+    resolution (e.g. ground truth "0.48" should match a self-reported
+    "0.48.0", and "built-in" should match "builtin")."""
+    if reported is None or ground_truth is None:
+        return None
+    gt  = ground_truth.strip().lower().replace("-", "")
+    rep = reported.strip().lower().replace("-", "")
+    return rep == gt or rep.startswith(gt + ".")
+
+
+def _user_agent_matches(http_client: str, http_client_version: str, observed_ua: str | None) -> bool | None:
+    """None = nothing to compare -- http.client sets no User-Agent header at
+    all, and the raw-TLS clients never reach the HTTP layer unencrypted, so
+    no User-Agent is ever observed for either. Otherwise: does the
+    User-Agent actually seen on the wire (parsed from the captured packets,
+    not from anything the client claims about itself) contain the
+    ground-truth library name and version?"""
+    if not observed_ua:
+        return None
+    ua = observed_ua.strip().lower()
+    name_ok = http_client.strip().lower() in ua
+    ver_ok = bool(http_client_version) and http_client_version.strip().lower() in ua
+    return name_ok and ver_ok
+
+
+def _with_client_comparison(row: dict) -> dict:
+    """Add reported_* fields (the client's own self-reported claim) plus
+    match booleans against ground truth -- and, separately,
+    observed_client_match against observed_user_agent, which is parsed
+    straight out of the captured packets and isn't something the client's
+    self-report can influence."""
+    reported = _parse_client_reported(row.pop("client_output", None))
+    row.update(reported)
+    row["client_name_match"] = (
+        None if reported["reported_client"] is None
+        else reported["reported_client"].strip().lower() == row["http_client"].strip().lower()
+    )
+    row["client_version_match"] = _version_matches(row["http_client_version"], reported["reported_client_version"])
+    row["language_version_match"] = _version_matches(row["language_version"], reported["reported_language_version"])
+    row["observed_client_match"] = _user_agent_matches(
+        row["http_client"], row["http_client_version"], row.get("observed_user_agent"))
+
+    # JA3 has no external ground truth -- the first capture of a given image
+    # became its own reference baseline (see save_client_fingerprint_results),
+    # so later captures compare against that instead.
+    ref_hash = row.pop("reference_ja3_hash", None)
+    ref_fp_id = row.pop("reference_fingerprint_id", None)
+    row["ja3_is_baseline"] = False
+    row["ja3_match"] = None
+    if row.get("observed_ja3_hash"):
+        if ref_fp_id == row.get("id"):
+            row["ja3_is_baseline"] = True
+        elif ref_hash:
+            row["ja3_match"] = row["observed_ja3_hash"] == ref_hash
+    return row
+
+
+def get_client_fingerprint_report(client_fingerprint_id: int) -> dict | None:
+    """One captured client call, joined with its ground truth (language +
+    http-client-library + version) -- what the dashboard shows as the
+    'report' for a client fingerprint: what we can prove was actually
+    running, since we're the ones who triggered the call, compared against
+    what the client itself self-reported in its own JSON output."""
+    with _connect() as conn:
+        row = conn.execute("""
+            SELECT
+                cf.id, cf.host, cf.status_code, cf.traffic_raw, cf.pcap_raw,
+                cf.error_msg, cf.client_output, cf.observed_user_agent,
+                cf.observed_ja3_hash, cf.observed_ja3_string, cf.captured_at,
+                l.name  AS language, lv.version_nr AS language_version,
+                hc.name AS http_client, hcv.version_nr AS http_client_version,
+                ci.image_tag,
+                ref.ja3_hash AS reference_ja3_hash, ref.fingerprint_id AS reference_fingerprint_id
+            FROM client_fingerprints cf
+            JOIN client_images ci          ON ci.id = cf.client_image_id
+            JOIN lang_versions lv           ON lv.id = ci.lang_version_id
+            JOIN languages l                ON l.id = lv.language_id
+            JOIN http_client_versions hcv   ON hcv.id = ci.http_client_version_id
+            JOIN http_clients hc            ON hc.id = hcv.http_client_id
+            LEFT JOIN client_ja3_reference ref ON ref.client_image_id = cf.client_image_id
+            WHERE cf.id = ?
+        """, (client_fingerprint_id,)).fetchone()
+    return _with_client_comparison(dict(row)) if row else None
+
+
+def get_client_fingerprints(client_image_id: int | None = None) -> list:
+    """List client-fingerprint captures, newest first, each joined with its
+    ground truth and compared against the client's own self-reported
+    version -- optionally scoped to one client image."""
+    where = "WHERE ci.id = ?" if client_image_id is not None else ""
+    params = (client_image_id,) if client_image_id is not None else ()
+    with _connect() as conn:
+        rows = conn.execute(f"""
+            SELECT
+                cf.id, cf.host, cf.status_code, cf.client_output,
+                cf.observed_user_agent, cf.observed_ja3_hash, cf.captured_at,
+                l.name  AS language, lv.version_nr AS language_version,
+                hc.name AS http_client, hcv.version_nr AS http_client_version,
+                ci.image_tag,
+                ref.ja3_hash AS reference_ja3_hash, ref.fingerprint_id AS reference_fingerprint_id
+            FROM client_fingerprints cf
+            JOIN client_images ci          ON ci.id = cf.client_image_id
+            JOIN lang_versions lv           ON lv.id = ci.lang_version_id
+            JOIN languages l                ON l.id = lv.language_id
+            JOIN http_client_versions hcv   ON hcv.id = ci.http_client_version_id
+            JOIN http_clients hc            ON hc.id = hcv.http_client_id
+            LEFT JOIN client_ja3_reference ref ON ref.client_image_id = cf.client_image_id
+            {where}
+            ORDER BY cf.captured_at DESC
+        """, params).fetchall()
+    return [_with_client_comparison(dict(r)) for r in rows]
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────

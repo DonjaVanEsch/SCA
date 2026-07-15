@@ -51,10 +51,12 @@ Version wildcard:
 """
 
 import argparse
+import base64
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -64,8 +66,11 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent
-IMAGES_BASE  = PROJECT_ROOT / "images"
+import net_signal
+
+PROJECT_ROOT       = Path(__file__).parent
+IMAGES_BASE        = PROJECT_ROOT / "images"
+CLIENT_IMAGES_BASE = PROJECT_ROOT / "images_clients"
 
 # Ask for confirmation when the matched set exceeds this count.
 _CONFIRM_AT = 5
@@ -883,10 +888,40 @@ def _send_probe(target_host, port, method, path, timeout=5):
         return None, str(exc)
 
 
+def _send_raw_malformed(target_host, port, timeout=5):
+    """Fire a deliberately malformed request line (bogus HTTP version token)
+    over a raw socket instead of urllib, which would refuse to build one.
+    Almost every HTTP server rejects this at the request-line parser with
+    400 Bad Request, but the exact response (status line wording, headers,
+    body, or even just closing the connection) is often distinctively
+    different per framework/server implementation -- that's the signal."""
+    try:
+        with socket.create_connection((target_host, port), timeout=timeout) as sock:
+            sock.sendall(b"GET / HTTP/9.9\r\nHost: x\r\n\r\n")
+            sock.settimeout(timeout)
+            data = b""
+            try:
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+            except socket.timeout:
+                pass
+        if not data:
+            return None, "connection closed with no response"
+        first_line = data.split(b"\r\n", 1)[0].decode("latin-1", errors="replace")
+        parts = first_line.split(" ", 2)
+        status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
+        return status, ""
+    except Exception as exc:
+        return None, str(exc)
+
+
 def _capture_traffic(container, action_fn, capture_filter="tcp", timeout=8):
     """Run action_fn() while a tcpdump sidecar sniffs the exact packets
     hitting *container*'s network namespace. Returns (action_fn's return
-    value, traffic_text, sniffer_error).
+    value, traffic_text, pcap_b64, sniffer_error).
     """
     cap_name = f"{container}-fpcap"
     subprocess.run(["docker", "rm", "-f", cap_name], capture_output=True)
@@ -899,7 +934,7 @@ def _capture_traffic(container, action_fn, capture_filter="tcp", timeout=8):
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if proc.returncode != 0:
-        return action_fn(), "", f"sniffer container failed to start: {proc.stderr.strip()[-300:]}"
+        return action_fn(), "", "", f"sniffer container failed to start: {proc.stderr.strip()[-300:]}"
 
     # Wait for tcpdump to actually be listening before generating traffic.
     attached = False
@@ -915,47 +950,449 @@ def _capture_traffic(container, action_fn, capture_filter="tcp", timeout=8):
         result = action_fn()
     finally:
         time.sleep(0.3)  # let the response finish and flush to the pcap file
+        pcap_b64 = ""
         if attached:
             dump = subprocess.run(
                 ["docker", "exec", cap_name, "tcpdump", "-r", "/tmp/cap.pcap", "-nn", "-XX", "-v"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
+            # The genuine binary capture, for reliable structured parsing
+            # later -- the text dump above is a lossy, human-readable
+            # derivation of this, not a substitute for it. `docker cp` works
+            # the same over a remote DOCKER_HOST too, since it goes through
+            # the Docker API rather than local filesystem access.
+            raw = subprocess.run(
+                ["docker", "cp", f"{cap_name}:/tmp/cap.pcap", "-"],
+                capture_output=True,
+            )
+            if raw.returncode == 0:
+                pcap_b64 = base64.b64encode(raw.stdout).decode("ascii")
         subprocess.run(["docker", "rm", "-f", cap_name], capture_output=True)
 
     if not attached:
-        return result, "", "sniffer never reported 'listening on' -- capture skipped"
+        return result, "", "", "sniffer never reported 'listening on' -- capture skipped"
     traffic = dump.stdout.strip()
     error   = "" if dump.returncode == 0 else dump.stderr.strip()[-300:]
-    return result, traffic, error
+    return result, traffic, pcap_b64, error
 
 
 def _capture_fingerprint(container, target_host, port):
-    """Capture real network traffic for one successful and one unsuccessful
-    call against a running container. Returns (success_record, failure_record)."""
-    (status, err), traffic, cap_err = _capture_traffic(
-        container, lambda: _send_probe(target_host, port, "GET", "/version"))
-    success = {
-        "method": "GET", "path": "/version", "status_code": status,
-        "success": status == 200, "traffic_raw": traffic, "error": err or cap_err,
-    }
+    """Capture real network traffic for four probes against a running
+    container: a valid call ('success'), a call to a nonexistent path
+    ('failure', expected 404), an unsupported method on a valid path
+    ('method_not_allowed', expected 405), and a deliberately malformed
+    request line ('malformed', expected 400). Each framework's default
+    handling of these differs -- that's the actual fingerprinting signal,
+    not just the happy-path response. Returns a dict keyed by call_type."""
+    records = {}
 
-    (status, err), traffic, cap_err = _capture_traffic(
-        container, lambda: _send_probe(target_host, port, "GET", _FP_MISSING_PATH))
-    failure = {
-        "method": "GET", "path": _FP_MISSING_PATH, "status_code": status,
-        "success": status is not None and status != 200, "traffic_raw": traffic,
+    (status, err), traffic, pcap_b64, cap_err = _capture_traffic(
+        container, lambda: _send_probe(target_host, port, "GET", "/version"))
+    records["success"] = {
+        "method": "GET", "path": "/version", "status_code": status,
+        "success": status == 200, "traffic_raw": traffic, "pcap_raw": pcap_b64,
         "error": err or cap_err,
     }
 
-    return success, failure
+    (status, err), traffic, pcap_b64, cap_err = _capture_traffic(
+        container, lambda: _send_probe(target_host, port, "GET", _FP_MISSING_PATH))
+    records["failure"] = {
+        "method": "GET", "path": _FP_MISSING_PATH, "status_code": status,
+        "success": status is not None and status != 200, "traffic_raw": traffic,
+        "pcap_raw": pcap_b64, "error": err or cap_err,
+    }
+
+    (status, err), traffic, pcap_b64, cap_err = _capture_traffic(
+        container, lambda: _send_probe(target_host, port, "POST", "/version"))
+    records["method_not_allowed"] = {
+        "method": "POST", "path": "/version", "status_code": status,
+        "success": status is not None, "traffic_raw": traffic,
+        "pcap_raw": pcap_b64, "error": err or cap_err,
+    }
+
+    (status, err), traffic, pcap_b64, cap_err = _capture_traffic(
+        container, lambda: _send_raw_malformed(target_host, port))
+    records["malformed"] = {
+        "method": "GET", "path": "(malformed request line)", "status_code": status,
+        "success": status is not None, "traffic_raw": traffic,
+        "pcap_raw": pcap_b64, "error": err or cap_err,
+    }
+
+    return records
+
+
+# ── Client fingerprinting (the reverse direction) ─────────────────────────────
+# A client image makes ONE outbound call to a persistent "fingerprint target"
+# app (scripts/fingerprint_target/) instead of a server image answering
+# probes. The tcpdump sidecar attaches to the TARGET's network namespace
+# (not the client's) while the one-shot client container runs and exits --
+# _capture_traffic() itself is unchanged, just pointed the other way.
+
+_FP_TARGET_IMAGE     = "pqc-fingerprint-target"
+_FP_TARGET_CONTAINER = "pqc-fingerprint-target"
+_FP_TARGET_NETWORK   = "pqc-fingerprint-net"
+_FP_TARGET_HTTP_PORT  = 9000
+_FP_TARGET_HTTPS_PORT = 9443
+_FP_TARGET_DOCKERFILE_DIR = PROJECT_ROOT / "scripts" / "fingerprint_target"
+
+# Clients that drive their own raw TLS handshake (pyopenssl-raw/m2crypto-raw)
+# need the target's HTTPS port, not the plain one every other client uses --
+# confirmed the hard way: pointing pyopenssl-raw at the plain HTTP port
+# raised "wrong version number" (a TLS ClientHello arriving at a non-TLS
+# listener). Kept as an explicit set here rather than inferred from the tag
+# string, since new raw-TLS clients might not all share the "-raw" suffix.
+_TLS_RAW_CLIENTS = {"pyopenssl-raw", "m2crypto-raw"}
+
+
+def _client_image_tag(e):
+    hc = e["http_client"].lower().replace("/", "_").replace("@", "").replace(" ", "").replace(".", "-")
+    return f"pqc-client-{e['language']}-{e['lang_ver']}-{hc}-{e['hc_ver']}"
+
+
+def _do_client_build(entries, no_cache=False, skip_existing=False, log_fn=print,
+                     save_fn=None, stop_event=None, workers=4):
+    """Build a Docker image for every client-image entry. Same shape as
+    _do_build(), just using _client_image_tag() instead of _image_tag().
+
+    save_fn(entry, result_dict) is called immediately after each image completes.
+    Returns {tag: {"success": bool, "output": str, "elapsed": float, "skipped": bool}}.
+    """
+    n = len(entries)
+    pad = len(str(n))
+    note = "  (--no-cache)" if no_cache else ""
+    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    log_fn(f"\nBuilding {n:,} client image(s){note}{parallel_note} ...\n")
+
+    results: dict = {}
+    _lock = threading.Lock()
+
+    def _build_one(i, e):
+        if stop_event is not None and stop_event.is_set():
+            return
+
+        tag     = _client_image_tag(e)
+        context = str(PROJECT_ROOT / e["path"])
+
+        if skip_existing and _image_exists(tag):
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
+            log_fn(f"         SKIPPED  (image already exists)")
+            result = {"success": True, "output": "", "elapsed": 0.0, "skipped": True}
+            with _lock:
+                results[tag] = result
+                if save_fn is not None:
+                    save_fn(e, result)
+            return
+
+        cmd = ["docker", "build", "-t", tag]
+        if no_cache:
+            cmd.append("--no-cache")
+        cmd.append(context)
+
+        t0      = time.monotonic()
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        elapsed  = time.monotonic() - t0
+        finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        output   = "\n".join(s for s in (proc.stderr, proc.stdout) if s).strip()
+
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
+        if proc.returncode == 0:
+            log_fn(f"         OK  ({elapsed:.1f}s)")
+            result = {"success": True, "output": output, "elapsed": elapsed,
+                      "skipped": False, "started_at": started, "finished_at": finished}
+        else:
+            log_fn(f"         FAILED  ({elapsed:.1f}s)")
+            for line in output.splitlines()[-15:]:
+                log_fn(f"         | {line}")
+            result = {"success": False, "output": output, "elapsed": elapsed,
+                      "skipped": False, "started_at": started, "finished_at": finished}
+
+        with _lock:
+            results[tag] = result
+            if save_fn is not None:
+                save_fn(e, result)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_build_one, i, e): (i, e)
+                for i, e in enumerate(entries, 1)}
+        for fut in as_completed(futs):
+            try:
+                fut.result()
+            except Exception as exc:
+                i, _ = futs[fut]
+                log_fn(f"[{i:{pad}}/{n}] ERROR: {exc}")
+
+    ok        = sum(1 for v in results.values() if v["success"])
+    failed    = sum(1 for v in results.values() if not v["success"])
+    cancelled = n - len(results)
+    parts     = [f"{ok} succeeded", f"{failed} failed"]
+    if cancelled:
+        parts.append(f"{cancelled} cancelled")
+    log_fn(f"\nBuild complete: {', '.join(parts)}.")
+    return results
+
+
+def _do_client_remove(entries, log_fn=print):
+    """Remove stopped containers and the Docker image for every client entry."""
+    n   = len(entries)
+    pad = len(str(n))
+    log_fn(f"\nRemoving {n:,} client image(s) ...\n")
+
+    removed = 0
+    for i, e in enumerate(entries, 1):
+        tag = _client_image_tag(e)
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
+
+        if not _image_exists(tag):
+            log_fn(f"         NOT FOUND")
+            continue
+
+        n_containers = _remove_stopped_containers(tag)
+        if n_containers:
+            log_fn(f"         CONTAINERS  ({n_containers} stopped container(s) removed)")
+
+        proc = subprocess.run(
+            ["docker", "rmi", tag],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if proc.returncode == 0:
+            log_fn(f"         REMOVED")
+            removed += 1
+        else:
+            log_fn(f"         FAILED")
+            for line in proc.stderr.strip().splitlines()[-3:]:
+                log_fn(f"         | {line}")
+
+    log_fn(f"\nDone: {removed}/{n} removed.")
+
+
+def _do_client_run(entries, log_fn=print):
+    """Start a detached container for every client entry, pointed at the
+    persistent fingerprint-target app (ensuring it's up first). Unlike a
+    server image, a client container has no listening port of its own -- it
+    fires its one outbound call and exits almost immediately, so this is
+    closer to "run once and inspect the logs" than a persistent service
+    with a URL to open."""
+    log_fn(f"\nEnsuring fingerprint-target app is up ...")
+    target_container, target_err = _ensure_fingerprint_target()
+    if target_container is None:
+        log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
+        return
+
+    n   = len(entries)
+    pad = len(str(n))
+    target_url = f"http://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTP_PORT}/probe"
+    log_fn(f"\nStarting {n:,} client container(s) against {target_container} ...\n")
+
+    started, failed = [], []
+    for i, e in enumerate(entries, 1):
+        tag  = _client_image_tag(e)
+        name = tag
+        log_fn(f"[{i:{pad}}/{n}] {name}")
+
+        if not _image_exists(tag):
+            log_fn(f"         NOT FOUND  (build first)")
+            failed.append(name)
+            continue
+
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        proc = subprocess.run(
+            ["docker", "run", "-d", "--name", name, "--network", _FP_TARGET_NETWORK,
+             "-e", f"PQC_TARGET_URL={target_url}", tag],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if proc.returncode != 0:
+            log_fn(f"         FAILED")
+            for line in proc.stderr.strip().splitlines()[-5:]:
+                log_fn(f"         | {line}")
+            failed.append(name)
+            continue
+
+        log_fn(f"         STARTED  (targeting {target_url} -- "
+               f"exits after its one call, check with 'docker logs {name}')")
+        started.append(name)
+
+    if started:
+        log_fn(f"\nStarted ({len(started)}): {', '.join(started)}")
+    if failed:
+        log_fn(f"\nFailed to start ({len(failed)}): {', '.join(failed)}")
+
+
+def _do_client_stop(entries, log_fn=print):
+    """Stop and remove the container for every client entry."""
+    n   = len(entries)
+    pad = len(str(n))
+    log_fn(f"\nStopping {n:,} client container(s) ...\n")
+
+    stopped, not_running, failed = [], [], []
+    for i, e in enumerate(entries, 1):
+        name = _client_image_tag(e)
+        log_fn(f"[{i:{pad}}/{n}] {name}")
+
+        proc = subprocess.run(
+            ["docker", "rm", "-f", name],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if proc.returncode == 0:
+            log_fn(f"         STOPPED")
+            stopped.append(name)
+        else:
+            err = proc.stderr.strip()
+            if "No such container" in err:
+                log_fn(f"         NOT RUNNING")
+                not_running.append(name)
+            else:
+                log_fn(f"         FAILED")
+                for line in err.splitlines()[-3:]:
+                    log_fn(f"         | {line}")
+                failed.append(name)
+
+    parts = []
+    if stopped:
+        parts.append(f"{len(stopped)} stopped")
+    if not_running:
+        parts.append(f"{len(not_running)} not running")
+    if failed:
+        parts.append(f"{len(failed)} failed")
+    log_fn(f"\nDone: {', '.join(parts) if parts else 'nothing to do'}.")
+
+
+def _ensure_fingerprint_target() -> tuple[str | None, str]:
+    """Build (if needed) and start the persistent fingerprint-target
+    container on its own dedicated network. Returns (container_name, error)
+    -- container_name is None if the build or start genuinely failed, so
+    callers don't silently proceed into a capture pass with nothing actually
+    listening. Idempotent -- safe to call before every client-fingerprint pass."""
+    subprocess.run(["docker", "network", "create", _FP_TARGET_NETWORK],
+                   capture_output=True)
+
+    if not _image_exists(_FP_TARGET_IMAGE):
+        proc = subprocess.run(
+            ["docker", "build", "-t", _FP_TARGET_IMAGE, str(_FP_TARGET_DOCKERFILE_DIR)],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            return None, f"failed to build {_FP_TARGET_IMAGE}: {proc.stderr.strip()[-500:]}"
+
+    state = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.Running}}", _FP_TARGET_CONTAINER],
+        capture_output=True, text=True,
+    )
+    if state.returncode != 0 or state.stdout.strip() != "true":
+        subprocess.run(["docker", "rm", "-f", _FP_TARGET_CONTAINER], capture_output=True)
+        proc = subprocess.run(
+            ["docker", "run", "-d", "--name", _FP_TARGET_CONTAINER,
+             "--network", _FP_TARGET_NETWORK, _FP_TARGET_IMAGE],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            return None, f"failed to start {_FP_TARGET_CONTAINER}: {proc.stderr.strip()[-500:]}"
+    return _FP_TARGET_CONTAINER, ""
+
+
+def _run_client_container(client_tag: str, container_name: str, network: str, target_url: str, timeout=15):
+    """Run a one-shot client container to completion, return its parsed
+    stdout (the client's own JSON summary) plus its exit code."""
+    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+    proc = subprocess.run(
+        ["docker", "run", "--rm", "--name", container_name, "--network", network,
+         "-e", f"PQC_TARGET_URL={target_url}", client_tag],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    )
+    return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
+
+
+def _capture_client_fingerprint(client_tag: str, target_container: str, network: str,
+                                 http_client_name: str = ""):
+    """Capture real network traffic seen by the target app for one client
+    image's single outbound call. Returns a result dict."""
+    client_container = f"{client_tag}-fpclient"
+    if http_client_name in _TLS_RAW_CLIENTS:
+        target_url = f"https://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTPS_PORT}/probe"
+    else:
+        target_url = f"http://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTP_PORT}/probe"
+
+    (rc, out, err), traffic, pcap_b64, cap_err = _capture_traffic(
+        target_container,
+        lambda: _run_client_container(client_tag, client_container, network, target_url),
+    )
+    subprocess.run(["docker", "rm", "-f", client_container], capture_output=True)
+
+    status_code = None
+    try:
+        status_code = json.loads(out).get("status_code")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    # Genuinely on-the-wire signals -- independent of anything the client
+    # itself claims in client_output, since these are parsed straight out of
+    # the captured packets: the HTTP User-Agent header for plain-HTTP
+    # clients, or the TLS ClientHello JA3 fingerprint for the raw-TLS ones.
+    signals = net_signal.extract_network_signals(pcap_b64, _FP_TARGET_HTTPS_PORT, _FP_TARGET_HTTP_PORT)
+
+    return {
+        "status_code": status_code, "traffic_raw": traffic, "pcap_raw": pcap_b64,
+        "error": (err or cap_err) if rc != 0 else cap_err,
+        "client_output": out,
+        "observed_user_agent": signals["user_agent"],
+        "observed_ja3_hash": signals["ja3_hash"],
+        "observed_ja3_string": signals["ja3_string"],
+    }
+
+
+def _do_client_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
+    """Fingerprint each client image: run it once against the persistent
+    target app, capture the traffic the target observed, then move on.
+
+    save_fn(entry, record) is called immediately after each image completes
+    -- record is None if the client image isn't built. Skips images that
+    aren't built.
+    """
+    n   = len(entries)
+    pad = len(str(n))
+    log_fn(f"\nEnsuring fingerprint-target app is up ...")
+    target_container, target_err = _ensure_fingerprint_target()
+    if target_container is None:
+        log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
+        if save_fn is not None:
+            for e in entries:
+                save_fn(e, None)
+        return
+    log_fn(f"Fingerprinting {n:,} client image(s) against {target_container} ...\n")
+    captured = 0
+
+    for i, e in enumerate(entries, 1):
+        if stop_event is not None and stop_event.is_set():
+            log_fn(f"\n[CANCELLED] Fingerprint stopped after {i - 1} of {n} image(s).")
+            break
+
+        tag = _client_image_tag(e)
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
+
+        if not _image_exists(tag):
+            log_fn(f"         SKIP  (not built)")
+            if save_fn is not None:
+                save_fn(e, None)
+            continue
+
+        record = _capture_client_fingerprint(tag, target_container, _FP_TARGET_NETWORK,
+                                              http_client_name=e.get("http_client", ""))
+        log_fn(f"         CAPTURED  status={record['status_code']}  "
+               f"client_output={record['client_output'][:120]}")
+        captured += 1
+        if save_fn is not None:
+            save_fn(e, record)
+
+    log_fn(f"\nFingerprint complete: {captured}/{n} captured.")
 
 
 def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
-    """Start each container, capture network traffic for one successful and
-    one unsuccessful call to the running service, then stop it.
+    """Start each container, capture network traffic for four probes against
+    the running service (see _capture_fingerprint), then stop it.
 
-    save_fn(entry, success_record, failure_record) is called immediately
-    after each image completes (both None when the container never came up).
+    save_fn(entry, records) is called immediately after each image completes
+    -- records is None when the container never came up, otherwise a dict
+    keyed by call_type ('success'/'failure'/'method_not_allowed'/'malformed').
     Skips images that aren't built.
     """
     n   = len(entries)
@@ -975,7 +1412,7 @@ def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
         if not _image_exists(tag):
             log_fn(f"         SKIP  (not built)")
             if save_fn is not None:
-                save_fn(e, None, None)
+                save_fn(e, None)
             continue
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
@@ -987,7 +1424,7 @@ def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
             log_fn(f"         FAIL  (container did not start)")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
             if save_fn is not None:
-                save_fn(e, None, None)
+                save_fn(e, None)
             continue
 
         port = _get_host_port(name)
@@ -995,16 +1432,19 @@ def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
             log_fn(f"         FAIL  (port not assigned)")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
             if save_fn is not None:
-                save_fn(e, None, None)
+                save_fn(e, None)
             continue
 
-        success, failure = _capture_fingerprint(name, _docker_target_host(), port)
+        records = _capture_fingerprint(name, _docker_target_host(), port)
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
-        log_fn(f"         CAPTURED  success={success['status_code']}  failure={failure['status_code']}")
+        log_fn(f"         CAPTURED  success={records['success']['status_code']}  "
+               f"failure={records['failure']['status_code']}  "
+               f"405={records['method_not_allowed']['status_code']}  "
+               f"malformed={records['malformed']['status_code']}")
         captured += 1
         if save_fn is not None:
-            save_fn(e, success, failure)
+            save_fn(e, records)
 
     log_fn(f"\nFingerprint complete: {captured}/{n} captured.")
 
@@ -1017,10 +1457,10 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
 
     save_fn(entry, result_dict) is called immediately after each image completes.
     stop_event (threading.Event) can be set externally to cancel the loop early.
-    When fingerprint=True, also captures network traffic for one successful
-    and one unsuccessful call against the same running container -- before it
-    gets stopped -- instead of starting it a second time; save_fingerprint_fn
-    (entry, success_record, failure_record) is called right after.
+    When fingerprint=True, also captures network traffic for four probes
+    (see _capture_fingerprint) against the same running container -- before
+    it gets stopped -- instead of starting it a second time; save_fingerprint_fn
+    (entry, records) is called right after, records keyed by call_type.
     workers controls how many containers are tested in parallel -- each entry
     runs under its own uniquely-tagged container/port, so this is safe the
     same way _do_build's parallel docker build processes are.
@@ -1150,10 +1590,13 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                 log_fn(f"         ⚠ {cache_hint}")
 
         if fingerprint:
-            fp_success, fp_failure = _capture_fingerprint(name, _docker_target_host(), port)
-            log_fn(f"         FINGERPRINT  success={fp_success['status_code']}  failure={fp_failure['status_code']}")
+            fp_records = _capture_fingerprint(name, _docker_target_host(), port)
+            log_fn(f"         FINGERPRINT  success={fp_records['success']['status_code']}  "
+                   f"failure={fp_records['failure']['status_code']}  "
+                   f"405={fp_records['method_not_allowed']['status_code']}  "
+                   f"malformed={fp_records['malformed']['status_code']}")
             if save_fingerprint_fn is not None:
-                save_fingerprint_fn(e, fp_success, fp_failure)
+                save_fingerprint_fn(e, fp_records)
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 

@@ -206,13 +206,18 @@ if __name__ == "__main__":
 def django_app(lib_name: str) -> str:
     m = LIB_META[lib_name]
     return f"""\
+import os
 import sys
 import django
 from django.conf import settings
 
+# Defaults to production-like (DEBUG=False, matching every other framework
+# in this project) -- set PQC_DEBUG=true at container run time to switch to
+# Django's own verbose debug error pages, e.g. to compare how that changes
+# the observable fingerprint against a production deployment.
 if not settings.configured:
     settings.configure(
-        DEBUG=True,
+        DEBUG=os.environ.get("PQC_DEBUG", "false").strip().lower() in ("1", "true", "yes"),
         SECRET_KEY="dev-secret-key-not-for-production",
         ALLOWED_HOSTS=["*"],
         ROOT_URLCONF=__name__,
