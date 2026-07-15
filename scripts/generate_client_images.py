@@ -77,7 +77,10 @@ def generate(lang_id: str) -> None:
 
             for hv in hc_ver_list:
                 hc_ver = hv.get("nr", "")
-                if not _included(lang_ver, hv.get("compatibility")):
+                # `available: false` marks a version as a historical
+                # reference row (known real ceiling/impossibility) -- never
+                # actually generated, same convention as generate_images.py.
+                if not hv.get("available", True) or not _included(lang_ver, hv.get("compatibility")):
                     out = (CLIENT_IMAGES_BASE / lang_id / lang_ver / hc_name / hc_ver)
                     if out.exists():
                         shutil.rmtree(out)

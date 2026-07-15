@@ -163,6 +163,18 @@
     background: #2b8fe8;
   }
 
+  /* Feature-gated elements (fingerprinting, host-scoping) are re-created on
+     every table re-render (tbody.innerHTML replacement), so a one-time JS
+     pass toggling inline `style.display` on existing elements doesn't
+     survive a page/filter change -- a persistent class on <html>, applied
+     once at settings-load time, does. */
+  html.fingerprint-disabled .fingerprint-feature {
+    display: none !important;
+  }
+  html.host-scope-disabled .host-scope-feature {
+    display: none !important;
+  }
+
   #header h1 {
     font-size: 15px;
     font-weight: 600;
@@ -895,14 +907,16 @@
     border: 1px solid var(--border2);
   }
 
-  #img-table th.col-narrow {
+  #img-table th.col-narrow,
+  #client-table th.col-narrow {
     width: 24px;
     padding-left: 1px;
     padding-right: 1px;
     text-align: center;
   }
 
-  #img-table td.col-narrow {
+  #img-table td.col-narrow,
+  #client-table td.col-narrow {
     text-align: center;
     padding-left: 1px;
     padding-right: 1px;
@@ -1947,7 +1961,9 @@
     <span class="stat-sep">·</span>
     <span class="stat"><b id="cs-built" style="color:var(--success)">–</b> built</span>
     <span class="stat-sep">·</span>
-    <span class="stat"><b id="cs-fingerprinted" style="color:var(--accent)">–</b> fingerprinted</span>
+    <span class="stat"><b id="cs-tested" style="color:var(--success)">–</b> tested</span>
+    <span class="stat-sep fingerprint-feature">·</span>
+    <span class="stat fingerprint-feature"><b id="cs-fingerprinted" style="color:var(--accent)">–</b> fingerprinted</span>
   </div>
   <nav class="tabs" id="tabs-server">
     <button class="tab-btn active" data-tab="images">Sources</button>
@@ -2167,13 +2183,13 @@
             <input class="filter-input" id="cf-ver" placeholder="e.g. 3.13 or 3.1x">
           </div>
           <div class="filter-row">
-            <label>HTTP client</label>
+            <label>Library</label>
             <select class="filter-select" id="cf-hc">
               <option value="">All</option>
             </select>
           </div>
           <div class="filter-row">
-            <label>Client version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <label>Lib version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
             <input class="filter-input" id="cf-hcver" placeholder="e.g. 2.34.2 or 2.x">
           </div>
         </div>
@@ -2198,11 +2214,15 @@
               <button class="btn btn-ghost btn-sm" id="btn-client-sel-menu">Select ▾</button>
               <div class="sel-menu" id="client-sel-menu">
                 <div class="sel-menu-item" id="mnu-client-sel-page">Current page</div>
-                <div class="sel-menu-item" id="mnu-client-sel-all">All filtered</div>
+                <div class="sel-menu-item" id="mnu-client-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
                 <div class="sel-menu-sep"></div>
-                <div class="sel-menu-item" id="mnu-client-desel-all">Deselect all</div>
+                <div class="sel-menu-item" id="mnu-client-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
               </div>
             </div>
+            <div class="action-sep"></div>
+            <label class="opt-label" title="Deselect all client images automatically when a run finishes">
+              <input type="checkbox" id="client-opt-deselect-after" checked> deselect after batch
+            </label>
           </div>
         </div>
         <div class="action-sep"></div>
@@ -2220,9 +2240,12 @@
         </div>
         <div class="action-sep"></div>
         <div class="docker-group">
-          <span class="docker-group-label">🔨 Build &amp; Fingerprint</span>
+          <span class="docker-group-label">🔨 Build &amp; Test</span>
           <div class="docker-group-inner">
             <label class="act-check" id="act-client-build-wrap"><input type="checkbox" id="act-client-build" disabled> Build</label>
+            <label class="act-check" id="act-client-test-wrap"
+              title="Run the client once, for real, from the built image against the persistent fingerprint-target app -- passes if the call succeeds (status 200)">
+              <input type="checkbox" id="act-client-test" disabled> Test</label>
             <label class="act-check fingerprint-feature" id="act-client-fingerprint-wrap"
               title="Run the client once against the persistent fingerprint-target app and capture the real network traffic">
               <input type="checkbox" id="act-client-fingerprint" disabled> 🫆 Fingerprint</label>
@@ -2243,7 +2266,7 @@
         </div>
       </div>
 
-      <div class="updates-view-toggle" style="margin:8px 14px 0">
+      <div class="updates-view-toggle fingerprint-feature" style="margin:8px 14px 0">
         <button class="btn btn-ghost btn-sm active" id="btn-client-view-images">Client images</button>
         <button class="btn btn-ghost btn-sm" id="btn-client-view-fplog">Fingerprint log</button>
       </div>
@@ -2252,20 +2275,21 @@
         <table id="client-table">
           <thead>
             <tr>
-              <th class="cb-cell"><input type="checkbox" id="client-header-cb" class="row-cb"></th>
+              <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="client-header-cb" class="row-cb"></th>
               <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
               <th class="sortable" data-csort="language">Language</th>
               <th class="sortable" data-csort="lang_version">Ver</th>
-              <th class="sortable" data-csort="http_client">HTTP client</th>
-              <th class="sortable" data-csort="http_client_version">Client ver</th>
+              <th class="sortable" data-csort="http_client">Library</th>
+              <th class="sortable" data-csort="http_client_version">Lib Ver</th>
               <th class="sortable col-narrow" data-csort="build_success" title="Build status"></th>
-              <th title="Last fingerprint capture -- click to view the full report">Fingerprint</th>
+              <th class="sortable col-narrow" data-csort="test_success" title="Test status"></th>
+              <th class="fingerprint-feature" title="Last fingerprint capture -- click to view the full report">Fingerprint</th>
               <th style="width:24px"></th>
             </tr>
           </thead>
           <tbody id="client-tbody">
             <tr>
-              <td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
+              <td colspan="10" style="padding:32px;text-align:center;color:var(--muted)">Loading…</td>
             </tr>
           </tbody>
         </table>
@@ -3204,7 +3228,7 @@
   }
 
   // ── Client images (Server/Client dashboard mode) ─────────────────────────
-  const clientState = { page: 1, perPage: 50, total: 0, pages: 1, selected: new Set(), items: [] };
+  const clientState = { page: 1, perPage: 50, total: 0, pages: 1, selected: new Set(), items: [], selectAnchor: null };
 
   async function loadClientFilterOptions() {
     try {
@@ -3258,6 +3282,7 @@
       const s = await api('/api/client-stats');
       document.getElementById('cs-total').textContent = s.total.toLocaleString();
       document.getElementById('cs-built').textContent = s.built.toLocaleString();
+      document.getElementById('cs-tested').textContent = s.tested.toLocaleString();
       document.getElementById('cs-fingerprinted').textContent = s.fingerprinted.toLocaleString();
     } catch { }
   }
@@ -3334,7 +3359,7 @@
   function renderClientTable(items) {
     const tbody = document.getElementById('client-tbody');
     if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="9">
+      tbody.innerHTML = `<tr><td colspan="10">
       <div class="empty-state">
         <div style="font-size:28px;opacity:.3">⬜</div>
         <p>No client images match the current filters.</p>
@@ -3344,11 +3369,11 @@
     }
     tbody.innerHTML = items.map(r => {
       const sel = clientState.selected.has(r.id);
-      const fp = `<span class="fingerprint-feature">${fingerprintBadge(!!r.fp_id)}</span>`;
+      const fp = fingerprintBadge(!!r.fp_id);
       return `<tr data-id="${r.id}" class="${sel ? 'selected' : ''}" onclick="clientRowClick(event,${r.id})">
         <td class="cb-cell">
           <input type="checkbox" class="row-cb" ${sel ? 'checked' : ''}
-                 onclick="event.stopPropagation();toggleClientSelect(${r.id})">
+                 onclick="event.stopPropagation();toggleClientSelect(${r.id},event)">
         </td>
         <td class="col-narrow">${dockerExistsBadge(r.docker_exists)}</td>
         <td>${r.language}</td>
@@ -3356,7 +3381,8 @@
         <td>${r.http_client}</td>
         <td class="mono-cell">${r.http_client_version}</td>
         <td class="col-narrow">${buildBadge(r.build_success)}</td>
-        <td>${fp}</td>
+        <td class="col-narrow">${testBadge(r.test_success)}</td>
+        <td class="fingerprint-feature">${fp}</td>
         <td style="padding:0 6px;text-align:right">
           <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
                   onclick="event.stopPropagation();openClientDetail(${r.id})" title="Details">⋯</button>
@@ -3367,29 +3393,71 @@
     updateClientActionBar();
   }
 
-  function toggleClientSelect(id) {
-    if (clientState.selected.has(id)) clientState.selected.delete(id);
-    else clientState.selected.add(id);
-    document.querySelectorAll('#client-tbody tr[data-id]').forEach(row => {
-      const rid = parseInt(row.dataset.id);
-      row.classList.toggle('selected', clientState.selected.has(rid));
-    });
+  function selectRangeClients(fromId, toId) {
+    const rows = [...document.querySelectorAll('#client-tbody tr[data-id]')];
+    const ids = rows.map(row => parseInt(row.dataset.id));
+    const i1 = ids.indexOf(fromId), i2 = ids.indexOf(toId);
+    if (i1 === -1 || i2 === -1) return;
+    const [lo, hi] = i1 < i2 ? [i1, i2] : [i2, i1];
+    for (let i = lo; i <= hi; i++) {
+      clientState.selected.add(ids[i]);
+      rows[i].classList.add('selected');
+      const cb = rows[i].querySelector('.row-cb');
+      if (cb) cb.checked = true;
+    }
+  }
+
+  function toggleClientSelect(id, e) {
+    if (e && e.shiftKey && clientState.selectAnchor !== null && clientState.selectAnchor !== id) {
+      selectRangeClients(clientState.selectAnchor, id);
+    } else {
+      if (clientState.selected.has(id)) clientState.selected.delete(id);
+      else clientState.selected.add(id);
+      const row = document.querySelector(`#client-tbody tr[data-id="${id}"]`);
+      if (row) row.classList.toggle('selected', clientState.selected.has(id));
+    }
+    clientState.selectAnchor = id;
     updateClientActionBar();
   }
 
   function clientRowClick(event, id) {
-    if (event.target.type === 'checkbox') return;
-    toggleClientSelect(id);
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'BUTTON') return;
+    toggleClientSelect(id, event);
+    const row = event.currentTarget;
+    if (row) {
+      const cb = row.querySelector('.row-cb');
+      if (cb) cb.checked = clientState.selected.has(id);
+    }
   }
 
   function updateClientActionBar() {
     const n = clientState.selected.size;
     document.getElementById('client-sel-count').textContent = `${n.toLocaleString()} selected`;
     const dis = n === 0;
-    ['act-client-build', 'act-client-fingerprint', 'btn-client-start',
+    ['act-client-build', 'act-client-test', 'act-client-fingerprint', 'btn-client-start',
      'btn-client-launch', 'btn-client-stop', 'btn-client-remove'].forEach(id => {
       document.getElementById(id).disabled = dis;
     });
+  }
+
+  async function selectAllFilteredClients() {
+    const params = filtersToParams(getClientFilters(), {
+      include_ignored: document.getElementById('cf-ignored').checked,
+    });
+    try {
+      const r = await api(`/api/client-images/ids?${params}`);
+      r.ids.forEach(id => clientState.selected.add(id));
+      renderClientTable(clientState.items);
+      toast(`${r.ids.length.toLocaleString()} client images selected`, 'ok');
+    } catch (e) {
+      toast(`Error selecting all: ${e.message}`, 'err');
+    }
+  }
+
+  function deselectAllClients() {
+    clientState.selected.clear();
+    clientState.selectAnchor = null;
+    renderClientTable(clientState.items);
   }
 
   function generateClientRunName() {
@@ -3452,10 +3520,10 @@
 
   async function startClientActions() {
     if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
-    const actions = ['build', 'fingerprint'].filter(a =>
+    const actions = ['build', 'test', 'fingerprint'].filter(a =>
       document.getElementById(`act-client-${a}`).checked
     );
-    if (!actions.length) { toast('Select at least one action (Build / Fingerprint)', 'err'); return; }
+    if (!actions.length) { toast('Select at least one action (Build / Test / Fingerprint)', 'err'); return; }
 
     const ids = [...clientState.selected];
     const opts = {
@@ -3469,8 +3537,10 @@
 
     function runNext(i) {
       if (i >= actions.length) {
+        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
         document.getElementById('btn-client-start').disabled = clientState.selected.size === 0;
         loadClientImages(clientState.page);
+        loadClientStats();
         if (actions.length > 1) toast('All actions completed', 'ok');
         return;
       }
@@ -3591,14 +3661,21 @@
     body.innerHTML = _clientDetailHeaderHtml([
       ['Language', row.language],
       ['Lang version', row.lang_version],
-      ['HTTP client', row.http_client],
-      ['HTTP client version', row.http_client_version],
+      ['Library', row.http_client],
+      ['Lib version', row.http_client_version],
       ['Build', row.build_success === 1 ? '✓ OK' : row.build_success === 0 ? '✗ FAIL' : '—'],
+      ['Test', row.test_success === 1 ? '✓ PASS' : row.test_success === 0 ? '✗ FAIL' : '—'],
     ]);
     if (row.build_success === 0 && row.build_output) {
       body.innerHTML += `<div class="detail-row" style="border-bottom:none">${outputPanelHtml(`cbout-${id}`, row.build_output, true)}</div>`;
     }
+    if (row.test_success === 0 && (row.test_output || row.test_error)) {
+      const testText = row.test_output || `(no output captured)\n\nReason: ${row.test_error}`;
+      body.innerHTML += `<div class="detail-row" style="border-bottom:none">${outputPanelHtml(`ctout-${id}`, testText, true)}</div>`;
+    }
     document.getElementById('detail-drawer').classList.add('open');
+
+    if (!_fingerprintEnabled) return;
 
     if (!row.fp_id) {
       body.innerHTML += `<div class="detail-row" style="border-bottom:none"><div class="detail-note">No fingerprint captured yet for this image.</div></div>`;
@@ -3626,8 +3703,8 @@
       body.innerHTML = _clientDetailHeaderHtml([
         ['Language', r.language],
         ['Lang version', r.language_version],
-        ['HTTP client', r.http_client],
-        ['HTTP client version', r.http_client_version],
+        ['Library', r.http_client],
+        ['Lib version', r.http_client_version],
       ]) + _clientFpSectionHtml(r, fpId);
     } catch (e) {
       body.innerHTML = `<div class="detail-note" style="color:var(--danger)">Error: ${e.message}</div>`;
@@ -3639,6 +3716,7 @@
 
   function switchDashboardMode(mode) {
     _dashboardMode = mode;
+    localStorage.setItem('pqc-dashboard-mode', mode);
     const isClient = mode === 'client';
     document.documentElement.classList.toggle('client-mode', isClient);
     document.getElementById('tabs-server').style.display = isClient ? 'none' : '';
@@ -4113,12 +4191,11 @@
   let _accessibilityMode = false;
 
   function applyFeatureVisibility() {
-    document.querySelectorAll('.fingerprint-feature').forEach(el => {
-      el.style.display = _fingerprintEnabled ? '' : 'none';
-    });
-    document.querySelectorAll('.host-scope-feature').forEach(el => {
-      el.style.display = _hostScopeEnabled ? '' : 'none';
-    });
+    // Class-based, not per-element -- survives table re-renders (tbody
+    // innerHTML replacement destroys and recreates .fingerprint-feature
+    // elements constantly; a class on <html> doesn't need to be re-applied).
+    document.documentElement.classList.toggle('fingerprint-disabled', !_fingerprintEnabled);
+    document.documentElement.classList.toggle('host-scope-disabled', !_hostScopeEnabled);
   }
 
   async function refreshHostBadge() {
@@ -5199,6 +5276,12 @@
     loadRuns();
     loadUpdatesBadge();
     await tryReconnect();
+
+    // Restore the last-used dashboard mode (server/client) -- otherwise
+    // Client mode silently resets to Server mode on every page reload.
+    if (localStorage.getItem('pqc-dashboard-mode') === 'client') {
+      switchDashboardMode('client');
+    }
   }
 
   // ── Event wiring ──────────────────────────────────────────────────────────
@@ -5381,18 +5464,8 @@
     clientState.items.forEach(r => clientState.selected.add(r.id));
     renderClientTable(clientState.items);
   });
-  document.getElementById('mnu-client-sel-all').addEventListener('click', async () => {
-    const params = filtersToParams(getClientFilters(), {
-      include_ignored: document.getElementById('cf-ignored').checked,
-    });
-    const r = await api(`/api/client-images/ids?${params}`);
-    r.ids.forEach(id => clientState.selected.add(id));
-    renderClientTable(clientState.items);
-  });
-  document.getElementById('mnu-client-desel-all').addEventListener('click', () => {
-    clientState.selected.clear();
-    renderClientTable(clientState.items);
-  });
+  document.getElementById('mnu-client-sel-all').addEventListener('click', selectAllFilteredClients);
+  document.getElementById('mnu-client-desel-all').addEventListener('click', deselectAllClients);
   document.getElementById('btn-client-run-gen').addEventListener('click', () => {
     document.getElementById('client-run-name').value = generateClientRunName();
   });
@@ -5584,6 +5657,17 @@
     if (e.ctrlKey && e.key === 'd' && state.currentTab === 'images') {
       e.preventDefault();
       deselectAll();
+      return;
+    }
+    // Same two shortcuts, scoped to the Clients tab instead.
+    if (e.ctrlKey && e.key === 'a' && state.currentTab === 'clients') {
+      e.preventDefault();
+      selectAllFilteredClients();
+      return;
+    }
+    if (e.ctrlKey && e.key === 'd' && state.currentTab === 'clients') {
+      e.preventDefault();
+      deselectAllClients();
       return;
     }
   });

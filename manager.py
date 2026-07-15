@@ -1302,15 +1302,21 @@ def _run_client_container(client_tag: str, container_name: str, network: str, ta
     return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
 
 
+def _client_target_url(http_client_name: str) -> str:
+    """Same TLS-vs-plain routing used by both Test and Fingerprint -- the
+    two raw-TLS clients need the target's HTTPS port, everything else the
+    plain HTTP one."""
+    if http_client_name in _TLS_RAW_CLIENTS:
+        return f"https://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTPS_PORT}/probe"
+    return f"http://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTP_PORT}/probe"
+
+
 def _capture_client_fingerprint(client_tag: str, target_container: str, network: str,
                                  http_client_name: str = ""):
     """Capture real network traffic seen by the target app for one client
     image's single outbound call. Returns a result dict."""
     client_container = f"{client_tag}-fpclient"
-    if http_client_name in _TLS_RAW_CLIENTS:
-        target_url = f"https://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTPS_PORT}/probe"
-    else:
-        target_url = f"http://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTP_PORT}/probe"
+    target_url = _client_target_url(http_client_name)
 
     (rc, out, err), traffic, pcap_b64, cap_err = _capture_traffic(
         target_container,
@@ -1338,6 +1344,97 @@ def _capture_client_fingerprint(client_tag: str, target_container: str, network:
         "observed_ja3_hash": signals["ja3_hash"],
         "observed_ja3_string": signals["ja3_string"],
     }
+
+
+def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, workers=4):
+    """Test each client image: run it once, for real, from the actual built
+    image against the persistent target app -- same one-shot container
+    Fingerprint uses, just without the tcpdump capture. Success is just "did
+    the call succeed" (the client exited cleanly and reported status 200),
+    not a traffic capture.
+
+    save_fn(entry, result_dict) is called immediately after each image
+    completes -- result_dict is None if the client image isn't built.
+    Returns {tag: {"success": bool, "output": str, "error": str}}.
+    """
+    n   = len(entries)
+    pad = len(str(n))
+    log_fn(f"\nEnsuring fingerprint-target app is up ...")
+    target_container, target_err = _ensure_fingerprint_target()
+    if target_container is None:
+        log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
+        if save_fn is not None:
+            for e in entries:
+                save_fn(e, None)
+        return {}
+
+    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    log_fn(f"Testing {n:,} client image(s) against {target_container}{parallel_note} ...\n")
+
+    results: dict = {}
+    skipped = 0
+    _lock = threading.Lock()
+
+    def _test_one(i, e):
+        nonlocal skipped
+        if stop_event is not None and stop_event.is_set():
+            return
+
+        tag = _client_image_tag(e)
+
+        if not _image_exists(tag):
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
+            log_fn(f"         SKIP  (not built)")
+            with _lock:
+                skipped += 1
+            if save_fn is not None:
+                save_fn(e, None)
+            return
+
+        client_container = f"{tag}-test"
+        target_url = _client_target_url(e.get("http_client", ""))
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        rc, out, err = _run_client_container(tag, client_container, _FP_TARGET_NETWORK, target_url)
+        finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        subprocess.run(["docker", "rm", "-f", client_container], capture_output=True)
+
+        status_code = None
+        try:
+            status_code = json.loads(out).get("status_code")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        success = rc == 0 and status_code == 200
+        result = {"success": success, "output": out, "error": err if rc != 0 else "",
+                  "started_at": started, "finished_at": finished}
+
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
+        log_fn(f"         {'PASS' if success else 'FAIL'}  status={status_code}")
+
+        with _lock:
+            results[tag] = result
+            if save_fn is not None:
+                save_fn(e, result)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_test_one, i, e): (i, e)
+                for i, e in enumerate(entries, 1)}
+        for fut in as_completed(futs):
+            try:
+                fut.result()
+            except Exception as exc:
+                i, _ = futs[fut]
+                log_fn(f"[{i:{pad}}/{n}] ERROR: {exc}")
+
+    passed    = sum(1 for v in results.values() if v["success"])
+    failed    = sum(1 for v in results.values() if not v["success"])
+    cancelled = n - len(results) - skipped
+    parts     = [f"{passed} passed", f"{failed} failed"]
+    if skipped:
+        parts.append(f"{skipped} skipped (not built)")
+    if cancelled:
+        parts.append(f"{cancelled} cancelled")
+    log_fn(f"\nTest complete: {', '.join(parts)}.")
+    return results
 
 
 def _do_client_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):

@@ -1139,43 +1139,16 @@
           "notes": "OAuth/OIDC/JOSE (JWT/JWS/JWE/JWK) implementation. Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 1, `import authlib`). No ML-DSA/PQC JOSE support as of this writing (same gap already noted for Java's Nimbus JOSE+JWT in this project). '1.7.2's compatibility floor was originally (wrongly) recorded as '3.6+' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own classifier data: 1.7.0/1.7.1/1.7.2 all declare `Requires-Python >=3.10` (a jump made partway through the 1.x line, not from 1.0.0). Corrected to '3.10+'; Python 3.6-3.9 fall back to only the 0.15.6 bucket for this library, same as pre-1.7 Authlib users would see in real life."
         }
       ],
-      "_comment_http_clients": "New axis for the client-fingerprinting experiment (branch client-fingerprinting-python) -- outbound HTTP(S) call generators, not servers. Deliberately a flat list (no separate framework/library dimensions): a crypto-lib-driven client (pyopenssl-raw/m2crypto-raw) is just another entry here, not a cross product. pyopenssl-raw/m2crypto-raw don't use a normal HTTP-client library at all -- they open a raw socket and drive the TLS handshake themselves via that specific crypto library's own SSL API (against the fingerprint-target app's HTTPS port, 9443, self-signed cert), so the crypto library itself is what's visible in the TLS fingerprint, not the language's default ssl module. Second wave (2026-07-15): one client per this project's own server-side cryptography_libs, each using `requests` for the actual transport (they have no TLS/socket API of their own) but signing/HMACing the request body with that specific library and attaching the result as a header -- the point being blind discovery: a later, separate detection pass should be able to tell libraries apart from the shape of that header alone (signature length/encoding/algorithm identifier), without the client ever declaring which library it used in its self-report body. Version/compatibility figures copied from this same registry's cryptography_libs entries, already validated there.",
+      "_comment_http_clients": "New axis for the client-fingerprinting experiment (branch client-fingerprinting-python) -- outbound HTTP(S) call generators, not servers. Scope is deliberately narrow: crypto-library discovery only (which crypto lib + version was used), not HTTP-client-library discovery -- the original plain-HTTP entries (http.client/requests/httpx/urllib3, no crypto lib of their own) were removed for that reason. Deliberately a flat list (no separate framework/library dimensions): a crypto-lib-driven client is just another entry here, not a cross product. pyopenssl-raw/m2crypto-raw open a raw socket and drive the TLS handshake themselves via that specific crypto library's own SSL API (against the fingerprint-target app's HTTPS port, 9443, self-signed cert), so the crypto library itself is what's visible in the TLS fingerprint. The rest have no TLS/socket API of their own, so they use `requests` for transport but sign/HMAC the request body with that specific library and attach the result as a header -- the point being blind discovery: a later, separate detection pass should be able to tell libraries apart from the shape of that header alone (signature length/encoding/algorithm identifier), without the client ever declaring which library it used in its self-report body. Version/compatibility figures copied from this same registry's cryptography_libs entries, already validated there.",
       "http_clients": [
-        {
-          "name": "http.client",
-          "module": null,
-          "version": "built-in",
-          "notes": "Python's own stdlib HTTP client, no dependencies -- the lowest-level baseline for comparison against higher-level clients."
-        },
-        {
-          "name": "requests",
-          "module": "requests",
-          "version": [
-            { "nr": "2.34.2", "release_date": null, "compatibility": [ "3.8+" ] }
-          ],
-          "notes": "The de-facto standard high-level Python HTTP client, built on urllib3."
-        },
-        {
-          "name": "httpx",
-          "module": "httpx",
-          "version": [
-            { "nr": "0.28.1", "release_date": null, "compatibility": [ "3.8+" ] }
-          ],
-          "notes": "Modern HTTP client with sync/async support, HTTP/2 capable."
-        },
-        {
-          "name": "urllib3",
-          "module": "urllib3",
-          "version": [
-            { "nr": "2.7.0", "release_date": null, "compatibility": [ "3.9+" ] }
-          ],
-          "notes": "Low-level connection-pooling HTTP client -- requests itself is built on top of this."
-        },
         {
           "name": "pyopenssl-raw",
           "module": "pyOpenSSL",
           "version": [
-            { "nr": "26.3.0", "release_date": null, "compatibility": [ "3.7+" ] }
+            { "nr": "0.15.1", "release_date": "2015-04-14", "available": false, "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "17.5.0", "release_date": "2017-04-20", "compatibility": [ "2.7+", "3.4+" ] },
+            { "nr": "22.1.0", "release_date": "2022-01-29", "compatibility": [ "3.6+" ] },
+            { "nr": "26.3.0", "release_date": "2026-03-15", "compatibility": [ "3.7+" ] }
           ],
           "notes": "Not a general-purpose HTTP client -- a raw socket wrapped by pyOpenSSL's own SSL.Connection, driving the outbound TLS handshake itself."
         },
@@ -1183,7 +1156,42 @@
           "name": "m2crypto-raw",
           "module": "M2Crypto",
           "version": [
-            { "nr": "0.48", "release_date": null, "compatibility": [ "3.6+" ] }
+            { "nr": "0.11", "release_date": "", "available": false, "compatibility": [ "2.x+", "3.6+" ] },
+            { "nr": "0.13", "release_date": "", "available": false, "compatibility": [ "2.x+", "3.6+" ] },
+            { "nr": "0.15", "release_date": "2006-04-06", "compatibility": [ "2.x+" ] },
+            { "nr": "0.16", "release_date": "2006-07-05", "compatibility": [ "2.x+" ] },
+            { "nr": "0.17", "release_date": "2006-12-21", "compatibility": [ "2.x+" ] },
+            { "nr": "0.18", "release_date": "2007-07-26", "compatibility": [ "2.x+" ] },
+            { "nr": "0.19", "release_date": "2008-10-06", "compatibility": [ "2.x+" ] },
+            { "nr": "0.20", "release_date": "2009-08-11", "compatibility": [ "2.x+" ] },
+            { "nr": "0.21", "release_date": "2011-01-13", "compatibility": [ "2.x+" ] },
+            { "nr": "0.22.3", "release_date": "2014-01-22", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.23", "release_date": "2016-01-29", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.24", "release_date": "2016-03-21", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.25", "release_date": "2016-07-22", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.26", "release_date": "2017-03-25", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.27", "release_date": "2017-10-05", "compatibility": [ "2.x+" ] },
+            { "nr": "0.28", "release_date": "2018-02-08", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.29", "release_date": "2018-02-23", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.30", "release_date": "2018-04-25", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.31", "release_date": "2018-11-09", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.32", "release_date": "2019-03-04", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.33", "release_date": "2019-04-26", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.34", "release_date": "2019-05-30", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.35", "release_date": "2019-06-08", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.36", "release_date": "2020-07-13", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.37", "release_date": "2020-12-08", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.38", "release_date": "2021-06-14", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.39", "release_date": "2023-07-04", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.40", "release_date": "2023-10-24", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.41", "release_date": "2024-02-13", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.42", "release_date": "2024-08-10", "compatibility": [ "2.x+", "3.6-3.13" ] },
+            { "nr": "0.43", "release_date": "2024-10-30", "compatibility": [ "2.x+", "3.6-3.13" ] },
+            { "nr": "0.44", "release_date": "2025-02-17", "compatibility": [ "2.x+", "3.6-3.13" ] },
+            { "nr": "0.45", "release_date": "2025-04-17", "compatibility": [ "2.x+", "3.6+" ] },
+            { "nr": "0.46", "release_date": "2025-10-01", "compatibility": [ "3.6+" ] },
+            { "nr": "0.47", "release_date": "2026-02-08", "compatibility": [ "3.6+" ] },
+            { "nr": "0.48", "release_date": "2026-05-23", "compatibility": [ "3.6+" ] }
           ],
           "notes": "Same rationale as pyopenssl-raw -- a raw socket wrapped by M2Crypto's own SSL.Connection, driving the outbound TLS handshake itself. Needs build-essential/swig/libssl-dev at build time (SWIG-generated C extension)."
         },
@@ -1197,7 +1205,7 @@
           "name": "ecdsa-sign",
           "module": null,
           "version": [
-            { "nr": "0.19.2", "release_date": null, "compatibility": [ "3.3+" ] }
+            { "nr": "0.19.2", "release_date": "2010-10-16", "compatibility": [ "2.6+", "3.3+" ] }
           ],
           "notes": "Signs the body with a freshly generated NIST P-256 (SECP256r1) keypair, DER-encoded signature in the header. Pure-Python, no C extension."
         },
@@ -1205,7 +1213,15 @@
           "name": "pynacl-sign",
           "module": null,
           "version": [
-            { "nr": "1.6.2", "release_date": null, "compatibility": [ "3.8+" ] }
+            { "nr": "0.3", "release_date": "2015-03-04", "compatibility": [ "2.6", "2.7", "3.2" ] },
+            { "nr": "1.0.1", "release_date": "2016-01-24", "compatibility": [ "2.6", "2.7", "3.3-3.5" ] },
+            { "nr": "1.1.0", "release_date": "2017-03-14", "compatibility": [ "2.7", "3.3-3.6" ] },
+            { "nr": "1.2.0", "release_date": "2017-11-01", "compatibility": [ "2.7", "3.4-3.6" ] },
+            { "nr": "1.3.0", "release_date": "2018-09-26", "compatibility": [ "2.7", "3.4-3.7" ] },
+            { "nr": "1.4.0", "release_date": "2020-05-15", "compatibility": [ "2.7", "3.5-3.9" ] },
+            { "nr": "1.5.0", "release_date": "2022-01-22", "compatibility": [ "3.6+" ] },
+            { "nr": "1.6.0", "release_date": "2025-09-11", "compatibility": [ "3.8+" ] },
+            { "nr": "1.6.2", "release_date": "2026-01-01", "compatibility": [ "3.8+" ] }
           ],
           "notes": "Ed25519 via nacl.signing -- always exactly 64 raw signature bytes, the most structurally distinctive/fixed-size of the classical signatures here. Needs libsodium-dev at build time, libsodium23 at runtime (same as this project's server-side PyNaCl images)."
         },
@@ -1213,6 +1229,24 @@
           "name": "cryptography-sign",
           "module": null,
           "version": [
+            { "nr": "1.0", "release_date": "2015-08-12", "compatibility": [ "2.6" ] },
+            { "nr": "2.0", "release_date": "2017-06-17", "compatibility": [ "2.7", "3.4-3.11" ] },
+            { "nr": "3.3", "release_date": "2020-12-02", "compatibility": [ "2.7", "3.5-3.13" ] },
+            { "nr": "3.4", "release_date": "2021-02-07", "compatibility": [ "2.7", "3.6-3.13" ] },
+            { "nr": "35.0", "release_date": "2021-09-29", "compatibility": [ "3.6-3.13" ] },
+            { "nr": "36.0", "release_date": "2021-11-21", "compatibility": [ "3.6+" ] },
+            { "nr": "37.0", "release_date": "2022-04-26", "compatibility": [ "3.6+" ] },
+            { "nr": "38.0", "release_date": "2022-09-06", "compatibility": [ "3.7+" ] },
+            { "nr": "39.0", "release_date": "2023-01-01", "compatibility": [ "3.7+" ] },
+            { "nr": "40.0", "release_date": "2023-03-24", "compatibility": [ "3.7+" ] },
+            { "nr": "41.0", "release_date": "2023-05-30", "compatibility": [ "3.7+" ] },
+            { "nr": "42.0", "release_date": "2024-01-23", "compatibility": [ "3.7+" ] },
+            { "nr": "43.0", "release_date": "2024-07-20", "compatibility": [ "3.7+" ] },
+            { "nr": "44.0", "release_date": "2024-11-27", "compatibility": [ "3.7+" ] },
+            { "nr": "45.0.1", "release_date": "2025-05-17", "compatibility": [ "3.8+" ] },
+            { "nr": "46.0", "release_date": "2025-09-16", "compatibility": [ "3.8+" ] },
+            { "nr": "47.0", "release_date": "2026-04-24", "compatibility": [ "3.8+" ] },
+            { "nr": "48.0", "release_date": "2026-05-04", "compatibility": [ "3.9+" ] },
             { "nr": "49.0", "release_date": null, "compatibility": [ "3.9+" ] }
           ],
           "notes": "RSA-2048 PSS/SHA-256 via cryptography.hazmat -- deliberately a different algorithm family from pynacl-sign/ecdsa-sign for discovery diversity; RSA signatures are ~256 bytes vs. Ed25519's fixed 64 or ECDSA's ~70-72 DER-encoded."
@@ -1221,6 +1255,29 @@
           "name": "pycryptodome-sign",
           "module": null,
           "version": [
+            { "nr": "3.0", "release_date": "2014-06-24", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.1", "release_date": "2015-03-16", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.2", "release_date": "2015-09-05", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.3", "release_date": "2015-10-28", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.4", "release_date": "2016-02-07", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.5", "release_date": "2018-03-07", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.6", "release_date": "2018-04-08", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.7", "release_date": "2018-10-28", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.8", "release_date": "2019-03-23", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.9", "release_date": "2019-08-28", "compatibility": [ "2.7+", "3.5+" ] },
+            { "nr": "3.10", "release_date": "2021-02-09", "compatibility": [ "2.7+", "3.5+" ] },
+            { "nr": "3.11", "release_date": "2021-10-08", "compatibility": [ "2.7+", "3.5+" ] },
+            { "nr": "3.12", "release_date": "2021-12-04", "compatibility": [ "2.7+", "3.6+" ] },
+            { "nr": "3.13", "release_date": "2022-01-23", "compatibility": [ "2.7+", "3.6+" ] },
+            { "nr": "3.14", "release_date": "2022-01-30", "compatibility": [ "2.7+", "3.6+" ] },
+            { "nr": "3.15", "release_date": "2022-06-22", "compatibility": [ "2.7+", "3.6+" ] },
+            { "nr": "3.16", "release_date": "2022-11-26", "compatibility": [ "2.7+", "3.7+" ] },
+            { "nr": "3.17", "release_date": "2023-01-28", "compatibility": [ "2.7+", "3.7+" ] },
+            { "nr": "3.18", "release_date": "2023-05-19", "compatibility": [ "2.7+", "3.7+" ] },
+            { "nr": "3.19", "release_date": "2023-09-16", "compatibility": [ "2.7+", "3.7+" ] },
+            { "nr": "3.20", "release_date": "2024-01-10", "compatibility": [ "3.5+" ] },
+            { "nr": "3.21", "release_date": "2024-10-02", "compatibility": [ "3.6+" ] },
+            { "nr": "3.22", "release_date": "2025-03-15", "compatibility": [ "3.7+" ] },
             { "nr": "3.23", "release_date": "2025-05-17", "compatibility": [ "3.7+" ] }
           ],
           "notes": "RSA-2048 PSS/SHA-256 via Crypto.Signature.pss + Crypto.PublicKey.RSA -- same algorithm choice as cryptography-sign on purpose, to see whether two independent RSA-PSS implementations are distinguishable at all from the header alone (they should look byte-identical in size/encoding -- a useful negative control)."
@@ -1229,7 +1286,13 @@
           "name": "pycrypto-sign",
           "module": null,
           "version": [
-            { "nr": "2.6", "release_date": null, "compatibility": [ "3.0-3.3" ] }
+            { "nr": "2.0", "release_date": "2013-08-11", "compatibility": [ "2.0+" ] },
+            { "nr": "2.1", "release_date": "2013-08-11", "compatibility": [ "2.1+", "3.0-3.3" ] },
+            { "nr": "2.2", "release_date": "2013-08-11", "compatibility": [ "2.1+", "3.0-3.3" ] },
+            { "nr": "2.3", "release_date": "2010-12-17", "compatibility": [ "2.1+", "3.0-3.3" ] },
+            { "nr": "2.4", "release_date": "2011-10-22", "compatibility": [ "2.1+", "3.0-3.3" ] },
+            { "nr": "2.5", "release_date": "2012-01-13", "compatibility": [ "2.1+", "3.0-3.3" ] },
+            { "nr": "2.6", "release_date": "2012-05-24", "compatibility": [ "2.1+", "3.0-3.3" ] }
           ],
           "notes": "Legacy PyCrypto (unmaintained since ~2013, superseded by PyCryptodome, which forked it and kept the same `Crypto` top-level import name -- never installed in the same environment as PyCryptodome, but no conflict here since every client image is its own isolated container). Registered for completeness, but its real compatibility ceiling (3.0-3.3) is below every lang_version this project tests (3.9+), so this entry is expected to produce zero buildable client images -- a genuine historical-impossibility reference row, not a bug."
         },
@@ -1237,6 +1300,7 @@
           "name": "liboqs-sign",
           "module": null,
           "version": [
+            { "nr": "0.14", "release_date": "2025-02-25", "compatibility": [ "3.9+" ] },
             { "nr": "0.15", "release_date": "2026-05-06", "compatibility": [ "3.10+" ] }
           ],
           "notes": "ML-DSA-65 (Dilithium3) signature via oqs.Signature -- the star of the discovery story: a post-quantum signature is on the order of ~3.3KB, dwarfing every classical signature here (64-256 bytes), so it should be the easiest of all these to tell apart purely by header size. Needs the same liboqs C-library build stage as this project's other liboqs bindings (git clone + cmake/ninja, LD_LIBRARY_PATH)."
@@ -1245,7 +1309,8 @@
           "name": "authlib-jwt",
           "module": null,
           "version": [
-            { "nr": "1.7.2", "release_date": null, "compatibility": [ "3.10+" ] }
+            { "nr": "0.15.6", "release_date": "2017-11-18", "compatibility": [ "2.7+", "3.4+" ] },
+            { "nr": "1.7.2", "release_date": "2022-03-15", "compatibility": [ "3.10+" ] }
           ],
           "notes": "Signs the body as a compact JWS (HS256, shared secret) via authlib.jose, sent as `Authorization: Bearer <jwt>` -- unlike the other signing clients, the algorithm identifier is right there in cleartext in the JWT's own base64 header segment (`{\"alg\":\"HS256\",\"typ\":\"JWT\"}`), making this the one client that all but announces itself structurally without an explicit self-report."
         },
@@ -1253,7 +1318,42 @@
           "name": "m2crypto-sign",
           "module": "M2Crypto",
           "version": [
-            { "nr": "0.48", "release_date": null, "compatibility": [ "3.6+" ] }
+            { "nr": "0.11", "release_date": "", "available": false, "compatibility": [ "2.x+", "3.6+" ] },
+            { "nr": "0.13", "release_date": "", "available": false, "compatibility": [ "2.x+", "3.6+" ] },
+            { "nr": "0.15", "release_date": "2006-04-06", "compatibility": [ "2.x+" ] },
+            { "nr": "0.16", "release_date": "2006-07-05", "compatibility": [ "2.x+" ] },
+            { "nr": "0.17", "release_date": "2006-12-21", "compatibility": [ "2.x+" ] },
+            { "nr": "0.18", "release_date": "2007-07-26", "compatibility": [ "2.x+" ] },
+            { "nr": "0.19", "release_date": "2008-10-06", "compatibility": [ "2.x+" ] },
+            { "nr": "0.20", "release_date": "2009-08-11", "compatibility": [ "2.x+" ] },
+            { "nr": "0.21", "release_date": "2011-01-13", "compatibility": [ "2.x+" ] },
+            { "nr": "0.22.3", "release_date": "2014-01-22", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.23", "release_date": "2016-01-29", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.24", "release_date": "2016-03-21", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.25", "release_date": "2016-07-22", "compatibility": [ "2.x+", "3.6-3.7" ] },
+            { "nr": "0.26", "release_date": "2017-03-25", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.27", "release_date": "2017-10-05", "compatibility": [ "2.x+" ] },
+            { "nr": "0.28", "release_date": "2018-02-08", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.29", "release_date": "2018-02-23", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.30", "release_date": "2018-04-25", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.31", "release_date": "2018-11-09", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.32", "release_date": "2019-03-04", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.33", "release_date": "2019-04-26", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.34", "release_date": "2019-05-30", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.35", "release_date": "2019-06-08", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.36", "release_date": "2020-07-13", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.37", "release_date": "2020-12-08", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.38", "release_date": "2021-06-14", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.39", "release_date": "2023-07-04", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.40", "release_date": "2023-10-24", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.41", "release_date": "2024-02-13", "compatibility": [ "2.x+", "3.6-3.11" ] },
+            { "nr": "0.42", "release_date": "2024-08-10", "compatibility": [ "2.x+", "3.6-3.13" ] },
+            { "nr": "0.43", "release_date": "2024-10-30", "compatibility": [ "2.x+", "3.6-3.13" ] },
+            { "nr": "0.44", "release_date": "2025-02-17", "compatibility": [ "2.x+", "3.6-3.13" ] },
+            { "nr": "0.45", "release_date": "2025-04-17", "compatibility": [ "2.x+", "3.6+" ] },
+            { "nr": "0.46", "release_date": "2025-10-01", "compatibility": [ "3.6+" ] },
+            { "nr": "0.47", "release_date": "2026-02-08", "compatibility": [ "3.6+" ] },
+            { "nr": "0.48", "release_date": "2026-05-23", "compatibility": [ "3.6+" ] }
           ],
           "notes": "Companion to m2crypto-raw, but over plain `requests` transport instead of a raw TLS socket -- signs the body with M2Crypto's own RSA/EVP API (PKCS#1 v1.5, RSA-2048) instead of driving the handshake itself. Lets the same crypto library be tested both ways: TLS-layer (m2crypto-raw) and application-layer (this one)."
         },
@@ -1261,7 +1361,10 @@
           "name": "pyopenssl-sign",
           "module": "pyOpenSSL",
           "version": [
-            { "nr": "26.3.0", "release_date": null, "compatibility": [ "3.7+" ] }
+            { "nr": "0.15.1", "release_date": "2015-04-14", "available": false, "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "17.5.0", "release_date": "2017-04-20", "compatibility": [ "2.7+", "3.4+" ] },
+            { "nr": "22.1.0", "release_date": "2022-01-29", "compatibility": [ "3.6+" ] },
+            { "nr": "26.3.0", "release_date": "2026-03-15", "compatibility": [ "3.7+" ] }
           ],
           "notes": "Companion to pyopenssl-raw, same rationale as m2crypto-sign -- signs the body via OpenSSL.crypto.sign() (RSA-2048/SHA-256) over plain `requests` transport, instead of driving the TLS handshake itself."
         }

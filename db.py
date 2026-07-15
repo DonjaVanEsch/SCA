@@ -265,15 +265,33 @@ CREATE TABLE IF NOT EXISTS client_fingerprints (
     run_id           INTEGER REFERENCES runs(id)
 );
 
--- Client images have no separate "test" concept the way server images do
--- (there's nothing to serve/poll independently) -- build + fingerprint is
--- the whole lifecycle. Mirrors build_results exactly.
+-- Mirrors build_results exactly.
 CREATE TABLE IF NOT EXISTS client_build_results (
     id               INTEGER PRIMARY KEY,
     client_image_id  INTEGER NOT NULL REFERENCES client_images(id) ON DELETE CASCADE,
     host             TEXT    NOT NULL DEFAULT '',
     success          INTEGER NOT NULL,
     output           TEXT,
+    started_at       TEXT,
+    finished_at      TEXT,
+    run_id           INTEGER REFERENCES runs(id),
+    UNIQUE(client_image_id, host)
+);
+
+-- A client image's "test" is a single real outbound call against the
+-- persistent fingerprint-target app, run from the actual built image (same
+-- one-shot container Fingerprint uses) -- no tcpdump capture, just pass/fail
+-- on whether the call succeeded. Mirrors client_build_results' upsert shape
+-- (one row per client image + host, not one row per run like server-side
+-- test_results, since there's no root/version_ok breakdown to keep history
+-- of here -- just a single success flag).
+CREATE TABLE IF NOT EXISTS client_test_results (
+    id               INTEGER PRIMARY KEY,
+    client_image_id  INTEGER NOT NULL REFERENCES client_images(id) ON DELETE CASCADE,
+    host             TEXT    NOT NULL DEFAULT '',
+    success          INTEGER NOT NULL,
+    output           TEXT,
+    error_msg        TEXT,
     started_at       TEXT,
     finished_at      TEXT,
     run_id           INTEGER REFERENCES runs(id),
@@ -395,6 +413,7 @@ CREATE INDEX IF NOT EXISTS idx_cimg_tag     ON client_images(image_tag);
 CREATE INDEX IF NOT EXISTS idx_cfp_image    ON client_fingerprints(client_image_id);
 CREATE INDEX IF NOT EXISTS idx_cfp_time     ON client_fingerprints(captured_at);
 CREATE INDEX IF NOT EXISTS idx_cbr_image    ON client_build_results(client_image_id);
+CREATE INDEX IF NOT EXISTS idx_ctr_image    ON client_test_results(client_image_id);
 CREATE INDEX IF NOT EXISTS idx_test_image   ON test_results(image_id);
 CREATE INDEX IF NOT EXISTS idx_test_time    ON test_results(tested_at);
 CREATE INDEX IF NOT EXISTS idx_fp_image     ON fingerprints(image_id);
@@ -587,12 +606,10 @@ def _status_sql() -> str:
 
 
 def _client_status_sql() -> str:
-    """client_image_details, plus build/fingerprint status scoped to one
-    Docker host. Contains two '?' placeholders (build host, fingerprint
-    host) that must both be bound to the SAME host value, in that order,
-    before any other query params. No test_results equivalent -- a client
-    image has nothing to serve/poll independently of actually running it
-    against the target, so build + fingerprint is the whole lifecycle."""
+    """client_image_details, plus build/test/fingerprint status scoped to
+    one Docker host. Contains three '?' placeholders (build host, test
+    host, fingerprint host) that must all be bound to the SAME host value,
+    in that order, before any other query params."""
     return """
     SELECT
         d.*,
@@ -600,6 +617,10 @@ def _client_status_sql() -> str:
         b.finished_at AS built_at,
         b.output      AS build_output,
         br.name       AS build_run,
+        t.success     AS test_success,
+        t.finished_at AS tested_at,
+        t.output      AS test_output,
+        t.error_msg   AS test_error,
         cf.id            AS fp_id,
         cf.status_code   AS fp_status,
         cf.error_msg     AS fp_error,
@@ -607,6 +628,7 @@ def _client_status_sql() -> str:
     FROM client_image_details d
     LEFT JOIN client_build_results b ON b.client_image_id = d.id AND b.host = ?
     LEFT JOIN runs br ON br.id = b.run_id
+    LEFT JOIN client_test_results t ON t.client_image_id = d.id AND t.host = ?
     LEFT JOIN client_fingerprints cf ON cf.id = (
         SELECT f.id FROM client_fingerprints f
         WHERE f.client_image_id = d.id AND f.host = ?
@@ -2051,7 +2073,7 @@ def get_ignored_images(host: str = "") -> list[dict]:
 
 _CLIENT_SORTABLE_COLS = {
     "language", "lang_version", "http_client", "http_client_version",
-    "build_success",
+    "build_success", "test_success",
 }
 
 
@@ -2081,13 +2103,13 @@ def get_client_images(filters: dict | None = None,
     with _connect() as conn:
         total = conn.execute(
             f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
-            [host, host] + params,
+            [host, host, host] + params,
         ).fetchone()[0]
 
         offset = (page - 1) * per_page
         rows = conn.execute(
             f"SELECT * FROM ({status_sql}) s {where_sql} {order_sql} LIMIT ? OFFSET ?",
-            [host, host] + params + [per_page, offset],
+            [host, host, host] + params + [per_page, offset],
         ).fetchall()
 
     return {
@@ -2106,7 +2128,7 @@ def get_client_images_by_ids(client_image_ids: list, host: str = "") -> list[dic
         ph = ",".join("?" * len(client_image_ids))
         rows = conn.execute(
             f"SELECT * FROM ({_client_status_sql()}) s WHERE id IN ({ph})",
-            [host, host] + list(client_image_ids),
+            [host, host, host] + list(client_image_ids),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -2121,7 +2143,7 @@ def get_all_client_ids_for_filter(filters: dict, include_ignored: bool = True,
     with _connect() as conn:
         rows = conn.execute(
             f"SELECT id FROM ({_client_status_sql()}) s {where_sql}",
-            [host, host] + params,
+            [host, host, host] + params,
         ).fetchall()
     return [r[0] for r in rows]
 
@@ -2160,16 +2182,43 @@ def save_client_build_result(client_image_id: int, success: bool,
         )
 
 
+def save_client_test_result(client_image_id: int, success: bool,
+                            output: str, error_msg: str,
+                            started_at: str, finished_at: str,
+                            run_id: int | None = None,
+                            host: str = "") -> None:
+    """A client image's test is a single real outbound call against the
+    fingerprint-target app, run from the actual built image -- success is
+    just "did that call succeed", not a root/version_ok breakdown."""
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO client_test_results
+                   (client_image_id, host, success, output, error_msg, started_at, finished_at, run_id)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(client_image_id, host)
+               DO UPDATE SET success=excluded.success,
+                             output=excluded.output,
+                             error_msg=excluded.error_msg,
+                             started_at=excluded.started_at,
+                             finished_at=excluded.finished_at,
+                             run_id=excluded.run_id""",
+            (client_image_id, host, int(success), output, error_msg, started_at, finished_at, run_id),
+        )
+
+
 def get_client_stats(host: str = "") -> dict:
     with _connect() as conn:
         total = conn.execute("SELECT COUNT(*) FROM client_images").fetchone()[0]
         built = conn.execute(
             "SELECT COUNT(*) FROM client_build_results WHERE host=? AND success=1", (host,)
         ).fetchone()[0]
+        tested = conn.execute(
+            "SELECT COUNT(*) FROM client_test_results WHERE host=? AND success=1", (host,)
+        ).fetchone()[0]
         fingerprinted = conn.execute(
             "SELECT COUNT(DISTINCT client_image_id) FROM client_fingerprints WHERE host=?", (host,)
         ).fetchone()[0]
-    return {"total": total, "built": built, "fingerprinted": fingerprinted}
+    return {"total": total, "built": built, "tested": tested, "fingerprinted": fingerprinted}
 
 
 _STATUS_CLAUSES = {

@@ -6,16 +6,24 @@ Mirrors lang_python.py's write_context()/make_dockerfile() shape, but for a
 genuinely different kind of image: instead of a long-running server exposing
 GET / and GET /version, each generated image is a one-shot client program
 that fires a single outbound HTTP(S) call at a target URL (PQC_TARGET_URL
-env var) using one specific HTTP-client library, prints a small JSON summary
-of what happened, and exits. What varies here is the HTTP-client-library
-axis, not a web framework -- a client program has no server-side framework.
+env var), prints a small JSON self-report of what happened, and exits. What
+varies here is the crypto-library axis, not a web framework -- a client
+program has no server-side framework. Scope is deliberately narrow: which
+crypto library + version was used, not which HTTP-client library (an earlier
+http.client/requests/httpx/urllib3 axis was removed once that turned out not
+to be the actual question this experiment needed to answer).
 
-Two entries (pyopenssl-raw/m2crypto-raw) don't use a normal HTTP-client
-library at all -- they open a raw socket and drive the TLS handshake
-themselves via that specific crypto library's own SSL API, so the crypto
-library itself (not the language's default ssl module) is what's actually
-visible in the connection's TLS fingerprint. They need PQC_TARGET_URL to
-point at the target's HTTPS port (9443), not the plain HTTP one (9000).
+pyopenssl-raw/m2crypto-raw don't use a normal HTTP-client library at all --
+they open a raw socket and drive the TLS handshake themselves via that
+specific crypto library's own SSL API, so the crypto library itself (not the
+language's default ssl module) is what's actually visible in the TLS
+fingerprint. They need PQC_TARGET_URL to point at the target's HTTPS port
+(9443), not the plain HTTP one (9000). Every other entry has no TLS/socket
+API of its own, so it uses `requests` for transport but signs/HMACs the
+request body with that specific library, attaching the result as a header --
+a later, separate detection pass should be able to tell libraries apart from
+the shape of that header alone, without the client declaring which library
+it used in its own self-report.
 
 PyPI version resolution is reused directly from lang_python.py (same
 _resolve()/_fetch_releases() logic, same PyPI JSON API) rather than
@@ -25,103 +33,34 @@ duplicated -- it's the same resolution problem for the same package index.
 import shutil
 from pathlib import Path
 
-from lang_python import _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE  # noqa: F401 (re-exported for callers)
+from lang_python import (  # noqa: F401 (re-exported for callers)
+    _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE, _needs_legacy_openssl,
+)
 
 SCRIPT_DIR = Path(__file__).parent
 CLIENT_OUT_BASE = SCRIPT_DIR.parent / "images_clients"
 
+# Which server-side cryptography_libs entry each client shares its version
+# history (and therefore its OpenSSL/glibc-era quirks) with -- lets
+# make_client_dockerfile() reuse lang_python.py's own _needs_legacy_openssl()
+# threshold instead of re-discovering the same SWIG/glibc break independently.
+_CLIENT_LEGACY_OPENSSL_LIB = {
+    "m2crypto-raw":  "M2Crypto",
+    "m2crypto-sign": "M2Crypto",
+    "cryptography-sign": "cryptography",
+}
+
+# Every client that pip-installs something gets this base toolchain
+# unconditionally (matching lang_python.py's own server-side base set) --
+# older releases of any of these libraries may need a source build (no
+# manylinux wheel for a given Python version), and there's no reliable way
+# to predict that in advance from the registry data alone. Confirmed via a
+# real build failure: PyCryptodome 3.0-3.9 have no wheel for Python 3.13 and
+# fail with "command 'gcc' failed: No such file or directory" without this.
+_BASE_BUILD_SYS_DEPS = ("build-essential", "gcc", "libffi-dev", "libssl-dev")
+
 
 # ── Per-client-library app templates ──────────────────────────────────────────
-
-def _http_client_app() -> str:
-    return """\
-import json
-import os
-import sys
-import http.client
-from urllib.parse import urlparse
-
-target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
-u = urlparse(target)
-conn = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=10) \\
-    if u.scheme == "https" else \\
-    http.client.HTTPConnection(u.hostname, u.port or 80, timeout=10)
-try:
-    conn.request("GET", u.path or "/")
-    resp = conn.getresponse()
-    body = resp.read().decode("utf-8", errors="replace")
-    print(json.dumps({
-        "client": "http.client", "client_version": "built-in",
-        "language_version": sys.version.split()[0],
-        "status_code": resp.status, "body": body[:500],
-    }))
-except Exception as exc:
-    print(json.dumps({"client": "http.client", "error": str(exc)}))
-finally:
-    conn.close()
-"""
-
-
-def _requests_app() -> str:
-    return """\
-import json
-import os
-import sys
-import requests
-
-target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
-try:
-    r = requests.get(target, timeout=10)
-    print(json.dumps({
-        "client": "requests", "client_version": requests.__version__,
-        "language_version": sys.version.split()[0],
-        "status_code": r.status_code, "body": r.text[:500],
-    }))
-except Exception as exc:
-    print(json.dumps({"client": "requests", "error": str(exc)}))
-"""
-
-
-def _httpx_app() -> str:
-    return """\
-import json
-import os
-import sys
-import httpx
-
-target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
-try:
-    r = httpx.get(target, timeout=10, verify=False)
-    print(json.dumps({
-        "client": "httpx", "client_version": httpx.__version__,
-        "language_version": sys.version.split()[0],
-        "status_code": r.status_code, "body": r.text[:500],
-    }))
-except Exception as exc:
-    print(json.dumps({"client": "httpx", "error": str(exc)}))
-"""
-
-
-def _urllib3_app() -> str:
-    return """\
-import json
-import os
-import sys
-import urllib3
-
-target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
-try:
-    http = urllib3.PoolManager(cert_reqs="CERT_NONE")
-    r = http.request("GET", target, timeout=10.0)
-    print(json.dumps({
-        "client": "urllib3", "client_version": urllib3.__version__,
-        "language_version": sys.version.split()[0],
-        "status_code": r.status, "body": r.data.decode("utf-8", errors="replace")[:500],
-    }))
-except Exception as exc:
-    print(json.dumps({"client": "urllib3", "error": str(exc)}))
-"""
-
 
 def _pyopenssl_raw_app() -> str:
     return """\
@@ -578,10 +517,6 @@ except Exception as exc:
 # "sys_deps": apt packages needed at build time (C-extension clients only).
 # "app": generator function producing client.py's source.
 _CLIENT_META = {
-    "http.client":    {"pip": None,          "sys_deps": [], "app": _http_client_app},
-    "requests":       {"pip": "requests",    "sys_deps": [], "app": _requests_app},
-    "httpx":          {"pip": "httpx",       "sys_deps": [], "app": _httpx_app},
-    "urllib3":        {"pip": "urllib3",     "sys_deps": [], "app": _urllib3_app},
     "pyopenssl-raw":  {"pip": "pyOpenSSL",   "sys_deps": [], "app": _pyopenssl_raw_app},
     "m2crypto-raw":   {"pip": "M2Crypto",    "sys_deps": ["build-essential", "swig", "libssl-dev"],
                         "app": _m2crypto_raw_app},
@@ -631,16 +566,24 @@ def make_requirements(hc_name: str, hc_ver: str) -> str | None:
     return ("\n".join(lines) + "\n") if lines else ""
 
 
-def make_client_dockerfile(python_ver: str, hc_name: str) -> str:
+def make_client_dockerfile(python_ver: str, hc_name: str, hc_ver: str = "") -> str:
     meta = _CLIENT_META[hc_name]
     if hc_name == "liboqs-sign":
         return _make_liboqs_client_dockerfile(python_ver)
 
     has_deps = meta["pip"] is not None or bool(meta.get("extra_pip"))
 
+    lib_name = _CLIENT_LEGACY_OPENSSL_LIB.get(hc_name)
+    base_image = (
+        f"python:{python_ver}-slim-bullseye"
+        if lib_name and _needs_legacy_openssl(lib_name, hc_ver)
+        else f"python:{python_ver}-slim"
+    )
+
     sys_deps_block = ""
-    if meta["sys_deps"]:
-        deps_line = " \\\n    ".join(sorted(meta["sys_deps"]))
+    if has_deps:
+        deps = sorted(set(_BASE_BUILD_SYS_DEPS) | set(meta["sys_deps"]))
+        deps_line = " \\\n    ".join(deps)
         sys_deps_block = (
             "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
             f"    {deps_line} \\\n"
@@ -653,7 +596,7 @@ def make_client_dockerfile(python_ver: str, hc_name: str) -> str:
         if has_deps else ""
     )
     return f"""\
-FROM python:{python_ver}-slim
+FROM {base_image}
 
 WORKDIR /app
 {sys_deps_block}{install_block}COPY client.py .
@@ -717,7 +660,7 @@ def write_client_context(python_ver: str, hc_name: str, hc_ver: str, out_base: P
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    (out / "Dockerfile").write_text(make_client_dockerfile(python_ver, hc_name), encoding="utf-8", newline="\n")
+    (out / "Dockerfile").write_text(make_client_dockerfile(python_ver, hc_name, hc_ver), encoding="utf-8", newline="\n")
     (out / "client.py").write_text(meta["app"](), encoding="utf-8", newline="\n")
     if reqs:
         (out / "requirements.txt").write_text(reqs, encoding="utf-8", newline="\n")

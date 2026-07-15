@@ -510,10 +510,10 @@ def client_fingerprint_report(fp_id):
 
 @app.route("/api/client-action", methods=["POST"])
 def client_action():
-    """Start a build / fingerprint / remove / run / stop job for the given
-    client-image ids.
+    """Start a build / test / fingerprint / remove / run / stop job for the
+    given client-image ids.
 
-    Body: {"action": "build"|"fingerprint"|"remove"|"run"|"stop",
+    Body: {"action": "build"|"test"|"fingerprint"|"remove"|"run"|"stop",
            "client_image_ids": [1, 2, ...],
            "options": {"no_cache": false, "skip_existing": false}}
     Returns: {"job_id": "..."}
@@ -524,7 +524,7 @@ def client_action():
     opts       = data.get("options", {})
     run_name   = data.get("run_name", "")
 
-    if action_str not in ("build", "fingerprint", "remove", "run", "stop"):
+    if action_str not in ("build", "test", "fingerprint", "remove", "run", "stop"):
         return jsonify({"error": f"Unknown action: {action_str}"}), 400
     if not ids:
         return jsonify({"error": "No client image ids provided"}), 400
@@ -566,6 +566,24 @@ def client_action():
                     workers=int(opts.get("workers", 4)),
                     log_fn=log,
                     save_fn=_save_build,
+                    stop_event=stop_event,
+                )
+
+            elif action_str == "test":
+                def _save_ctest(entry, r):
+                    if r is None:  # not built -- skipped, nothing to record
+                        return
+                    db.save_client_test_result(
+                        entry["_id"], r.get("success", False),
+                        r.get("output", ""), r.get("error", ""),
+                        r.get("started_at"), r.get("finished_at"),
+                        run_id, host=host,
+                    )
+                manager._do_client_test(
+                    entries,
+                    workers=int(opts.get("workers", 4)),
+                    log_fn=log,
+                    save_fn=_save_ctest,
                     stop_event=stop_event,
                 )
 
