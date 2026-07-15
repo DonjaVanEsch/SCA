@@ -25,7 +25,7 @@ duplicated -- it's the same resolution problem for the same package index.
 import shutil
 from pathlib import Path
 
-from lang_python import _resolve, _fetch_releases  # noqa: F401 (re-exported for callers)
+from lang_python import _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE  # noqa: F401 (re-exported for callers)
 
 SCRIPT_DIR = Path(__file__).parent
 CLIENT_OUT_BASE = SCRIPT_DIR.parent / "images_clients"
@@ -242,6 +242,338 @@ except Exception as exc:
 """
 
 
+# ── Second wave: signing clients ──────────────────────────────────────────────
+# Unlike pyopenssl-raw/m2crypto-raw, none of these libraries have a TLS/socket
+# API of their own -- they use `requests` (or, for hashlib, plain stdlib
+# urllib.request) for the actual network call, and instead sign/HMAC a fixed
+# probe message with that specific library, attaching the result as a header.
+# The point is blind discovery, not self-report: a later, separate detection
+# pass should be able to tell libraries apart from the shape of that header
+# (signature length/encoding/algorithm identifier) alone. All of them sign the
+# same fixed message ("pqc-sca-fingerprint-probe"), so the header's shape is
+# the only thing that varies between them.
+
+
+def _hashlib_hmac_app() -> str:
+    return """\
+import hashlib
+import hmac
+import json
+import os
+import sys
+import urllib.request
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+_SHARED_SECRET = b"pqc-sca-shared-secret"
+
+try:
+    digest = hmac.new(_SHARED_SECRET, MESSAGE, hashlib.sha256).hexdigest()
+    req = urllib.request.Request(target, headers={"X-Signature": f"hmac-sha256={digest}"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+        print(json.dumps({
+            "client": "hashlib-hmac", "client_version": "built-in",
+            "language_version": sys.version.split()[0],
+            "status_code": resp.status, "body": body[:500],
+        }))
+except Exception as exc:
+    print(json.dumps({"client": "hashlib-hmac", "error": str(exc)}))
+"""
+
+
+def _ecdsa_sign_app() -> str:
+    return """\
+import base64
+import hashlib
+import json
+import os
+import sys
+import requests
+import ecdsa
+from ecdsa.util import sigencode_der
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    sk = ecdsa.SigningKey.generate(curve=ecdsa.NIST256p)
+    signature = sk.sign(MESSAGE, hashfunc=hashlib.sha256, sigencode=sigencode_der)
+    headers = {"X-Signature": f"ecdsa-p256-sha256-der={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "ecdsa-sign", "client_version": ecdsa.__version__,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "ecdsa-sign", "error": str(exc)}))
+"""
+
+
+def _pynacl_sign_app() -> str:
+    return """\
+import base64
+import json
+import os
+import sys
+import requests
+import nacl
+import nacl.signing
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    sk = nacl.signing.SigningKey.generate()
+    signature = sk.sign(MESSAGE).signature  # raw, always exactly 64 bytes
+    headers = {"X-Signature": f"ed25519={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "pynacl-sign", "client_version": nacl.__version__,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "pynacl-sign", "error": str(exc)}))
+"""
+
+
+def _cryptography_sign_app() -> str:
+    return """\
+import base64
+import json
+import os
+import sys
+import requests
+import cryptography
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    signature = private_key.sign(
+        MESSAGE,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    headers = {"X-Signature": f"rsa2048-pss-sha256={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "cryptography-sign", "client_version": cryptography.__version__,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "cryptography-sign", "error": str(exc)}))
+"""
+
+
+def _pycryptodome_sign_app() -> str:
+    return """\
+import base64
+import json
+import os
+import sys
+import requests
+import Crypto
+from Crypto.PublicKey import RSA
+from Crypto.Signature import pss
+from Crypto.Hash import SHA256
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    key = RSA.generate(2048)
+    signature = pss.new(key).sign(SHA256.new(MESSAGE))
+    headers = {"X-Signature": f"rsa2048-pss-sha256={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    version = getattr(Crypto, "__version__", None) \\
+        or __import__("importlib.metadata", fromlist=["version"]).version("pycryptodome")
+    print(json.dumps({
+        "client": "pycryptodome-sign", "client_version": version,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "pycryptodome-sign", "error": str(exc)}))
+"""
+
+
+def _pycrypto_sign_app() -> str:
+    # Legacy PyCrypto's API predates PyCryptodome's `Signature.pss` module --
+    # PKCS#1 v1.5 is what it actually had. Kept for completeness even though
+    # this entry's registry compatibility (3.0-3.3) excludes it from every
+    # lang_version this project builds -- see pycrypto-sign's registry notes.
+    return """\
+import base64
+import json
+import os
+import sys
+import requests
+import Crypto
+from Crypto.PublicKey import RSA
+from Crypto.Signature import PKCS1_v1_5
+from Crypto.Hash import SHA256
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    key = RSA.generate(2048)
+    signature = PKCS1_v1_5.new(key).sign(SHA256.new(MESSAGE))
+    headers = {"X-Signature": f"rsa2048-pkcs1v15-sha256={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "pycrypto-sign", "client_version": Crypto.__version__,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "pycrypto-sign", "error": str(exc)}))
+"""
+
+
+def _liboqs_sign_app() -> str:
+    # oqs prints "liboqs-python faulthandler is disabled" to STDOUT on
+    # import (confirmed via a real run) -- that line lands before our own
+    # JSON self-report and breaks manager.py's json.loads(client_output),
+    # the same way it would for any client. Silenced by redirecting stdout
+    # for just the import, not something we can control from oqs's own side.
+    return """\
+import base64
+import contextlib
+import io
+import json
+import os
+import sys
+import requests
+with contextlib.redirect_stdout(io.StringIO()):
+    import oqs
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    with oqs.Signature("ML-DSA-65") as signer:
+        signer.generate_keypair()
+        signature = signer.sign(MESSAGE)
+    headers = {"X-Signature": f"ml-dsa-65={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    version = __import__("importlib.metadata", fromlist=["version"]).version("liboqs-python")
+    print(json.dumps({
+        "client": "liboqs-sign", "client_version": version,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "liboqs-sign", "error": str(exc)}))
+"""
+
+
+def _authlib_jwt_app() -> str:
+    return """\
+import json
+import os
+import sys
+import requests
+import authlib
+from authlib.jose import jwt
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+_SHARED_SECRET = "pqc-sca-shared-secret"
+
+try:
+    token = jwt.encode({"alg": "HS256"}, {"probe": "pqc-sca-fingerprint-probe"}, _SHARED_SECRET).decode("ascii")
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "authlib-jwt", "client_version": authlib.__version__,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "authlib-jwt", "error": str(exc)}))
+"""
+
+
+def _m2crypto_sign_app() -> str:
+    return """\
+import base64
+import hashlib
+import json
+import os
+import sys
+import requests
+import M2Crypto
+from M2Crypto import RSA
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    rsa = RSA.gen_key(2048, 65537, lambda *a: None)
+    digest = hashlib.sha256(MESSAGE).digest()
+    signature = rsa.sign(digest, "sha256")
+    headers = {"X-Signature": f"rsa2048-pkcs1v15-sha256={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "m2crypto-sign", "client_version": M2Crypto.version,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "m2crypto-sign", "error": str(exc)}))
+"""
+
+
+def _pyopenssl_sign_app() -> str:
+    # OpenSSL.crypto.sign()/verify() -- the module-level convenience
+    # functions this originally used -- no longer exist in current pyOpenSSL
+    # (confirmed via a real run: AttributeError, "module 'OpenSSL.crypto'
+    # has no attribute 'sign'"). pyOpenSSL still generates the keypair via
+    # its own PKey API, then hands off to `cryptography` (which pyOpenSSL
+    # already depends on and wraps for all its own X.509/key operations) via
+    # the documented to_cryptography_key() interop method to actually sign.
+    return """\
+import base64
+import json
+import os
+import sys
+import requests
+import OpenSSL
+from OpenSSL import crypto
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+
+target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
+MESSAGE = b"pqc-sca-fingerprint-probe"
+
+try:
+    pkey = crypto.PKey()
+    pkey.generate_key(crypto.TYPE_RSA, 2048)
+    private_key = pkey.to_cryptography_key()
+    signature = private_key.sign(
+        MESSAGE,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    headers = {"X-Signature": f"rsa2048-pss-sha256={base64.b64encode(signature).decode()}"}
+    r = requests.get(target, headers=headers, timeout=10)
+    print(json.dumps({
+        "client": "pyopenssl-sign", "client_version": OpenSSL.__version__,
+        "language_version": sys.version.split()[0],
+        "status_code": r.status_code, "body": r.text[:500],
+    }))
+except Exception as exc:
+    print(json.dumps({"client": "pyopenssl-sign", "error": str(exc)}))
+"""
+
+
 # "pip": PyPI package to install (None for stdlib-only clients).
 # "sys_deps": apt packages needed at build time (C-extension clients only).
 # "app": generator function producing client.py's source.
@@ -253,6 +585,34 @@ _CLIENT_META = {
     "pyopenssl-raw":  {"pip": "pyOpenSSL",   "sys_deps": [], "app": _pyopenssl_raw_app},
     "m2crypto-raw":   {"pip": "M2Crypto",    "sys_deps": ["build-essential", "swig", "libssl-dev"],
                         "app": _m2crypto_raw_app},
+
+    # Second wave: signing clients (see registry's _comment_http_clients).
+    # "extra_pip": unpinned packages needed alongside the version-tracked one
+    # (almost always just `requests`, since that's the transport for all of
+    # these -- we're not testing requests itself here, so its own version
+    # isn't tracked).
+    "hashlib-hmac":      {"pip": None,           "sys_deps": [], "app": _hashlib_hmac_app},
+    "ecdsa-sign":        {"pip": "ecdsa",         "sys_deps": [], "extra_pip": ["requests"],
+                           "app": _ecdsa_sign_app},
+    "pynacl-sign":       {"pip": "PyNaCl",        "sys_deps": ["libsodium-dev", "libsodium23"],
+                           "extra_pip": ["requests"], "app": _pynacl_sign_app},
+    "cryptography-sign": {"pip": "cryptography",  "sys_deps": [], "extra_pip": ["requests"],
+                           "app": _cryptography_sign_app},
+    "pycryptodome-sign": {"pip": "pycryptodome",  "sys_deps": [], "extra_pip": ["requests"],
+                           "app": _pycryptodome_sign_app},
+    "pycrypto-sign":     {"pip": "pycrypto",      "sys_deps": [], "extra_pip": ["requests"],
+                           "app": _pycrypto_sign_app},
+    # sys_deps unused here -- make_client_dockerfile() special-cases
+    # liboqs-sign entirely (its own multi-stage builder needs a different
+    # apt-get set than the single-stage template below applies).
+    "liboqs-sign":       {"pip": "liboqs-python", "sys_deps": [],
+                           "extra_pip": ["requests"], "app": _liboqs_sign_app},
+    "authlib-jwt":       {"pip": "Authlib",       "sys_deps": [], "extra_pip": ["requests"],
+                           "app": _authlib_jwt_app},
+    "m2crypto-sign":     {"pip": "M2Crypto",      "sys_deps": ["build-essential", "swig", "libssl-dev"],
+                           "extra_pip": ["requests"], "app": _m2crypto_sign_app},
+    "pyopenssl-sign":    {"pip": "pyOpenSSL",     "sys_deps": [], "extra_pip": ["requests"],
+                           "app": _pyopenssl_sign_app},
 }
 
 
@@ -261,17 +621,22 @@ def make_requirements(hc_name: str, hc_ver: str) -> str | None:
     with nothing to install, or None if hc_ver (a raw registry bucket like
     "0.48") can't be resolved to an exact installable PyPI version."""
     meta = _CLIENT_META[hc_name]
-    if meta["pip"] is None:
-        return ""
-    exact = _resolve(meta["pip"], hc_ver)
-    if exact is None:
-        return None
-    return f"{meta['pip']}=={exact}\n"
+    lines = []
+    if meta["pip"] is not None:
+        exact = _resolve(meta["pip"], hc_ver)
+        if exact is None:
+            return None
+        lines.append(f"{meta['pip']}=={exact}")
+    lines += meta.get("extra_pip", [])
+    return ("\n".join(lines) + "\n") if lines else ""
 
 
 def make_client_dockerfile(python_ver: str, hc_name: str) -> str:
     meta = _CLIENT_META[hc_name]
-    has_deps = meta["pip"] is not None
+    if hc_name == "liboqs-sign":
+        return _make_liboqs_client_dockerfile(python_ver)
+
+    has_deps = meta["pip"] is not None or bool(meta.get("extra_pip"))
 
     sys_deps_block = ""
     if meta["sys_deps"]:
@@ -292,6 +657,41 @@ FROM python:{python_ver}-slim
 
 WORKDIR /app
 {sys_deps_block}{install_block}COPY client.py .
+
+CMD ["python", "client.py"]
+"""
+
+
+def _make_liboqs_client_dockerfile(python_ver: str) -> str:
+    """liboqs-sign needs the liboqs C library compiled from source (same
+    recipe as lang_python.py's server-side liboqs-python images) -- kept in
+    its own builder stage so the heavy cmake/ninja/git toolchain, and the
+    compiled liboqs source tree, don't end up in the final one-shot client
+    image. Python's own `site` module auto-adds
+    ~/.local/lib/python{{X.Y}}/site-packages for the SAME interpreter version,
+    so `pip install --user` in the builder + a plain COPY of ~/.local is
+    enough -- no PYTHONPATH wiring needed (same reasoning as lang_python.py's
+    own multi-stage Dockerfiles)."""
+    return f"""\
+FROM python:{python_ver}-slim AS builder
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential cmake gcc git libffi-dev libssl-dev ninja-build pkg-config \\
+    && rm -rf /var/lib/apt/lists/*
+
+{_LIBOQS_PYTHON_STAGE}
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+FROM python:{python_ver}-slim
+
+WORKDIR /app
+COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/
+RUN ldconfig
+ENV LD_LIBRARY_PATH=/usr/local/lib
+COPY --from=builder /root/.local /root/.local
+COPY client.py .
 
 CMD ["python", "client.py"]
 """

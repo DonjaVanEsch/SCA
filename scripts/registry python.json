@@ -1139,7 +1139,7 @@
           "notes": "OAuth/OIDC/JOSE (JWT/JWS/JWE/JWK) implementation. Confirmed working end-to-end via a real docker build+run on Python 3.12 (major 1, `import authlib`). No ML-DSA/PQC JOSE support as of this writing (same gap already noted for Java's Nimbus JOSE+JWT in this project). '1.7.2's compatibility floor was originally (wrongly) recorded as '3.6+' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own classifier data: 1.7.0/1.7.1/1.7.2 all declare `Requires-Python >=3.10` (a jump made partway through the 1.x line, not from 1.0.0). Corrected to '3.10+'; Python 3.6-3.9 fall back to only the 0.15.6 bucket for this library, same as pre-1.7 Authlib users would see in real life."
         }
       ],
-      "_comment_http_clients": "New axis for the client-fingerprinting experiment (branch client-fingerprinting-python) -- outbound HTTP(S) call generators, not servers. Deliberately a flat list (no separate framework/library dimensions): a crypto-lib-driven client (pyopenssl-raw/m2crypto-raw) is just another entry here, not a cross product. pyopenssl-raw/m2crypto-raw don't use a normal HTTP-client library at all -- they open a raw socket and drive the TLS handshake themselves via that specific crypto library's own SSL API (against the fingerprint-target app's HTTPS port, 9443, self-signed cert), so the crypto library itself is what's visible in the TLS fingerprint, not the language's default ssl module.",
+      "_comment_http_clients": "New axis for the client-fingerprinting experiment (branch client-fingerprinting-python) -- outbound HTTP(S) call generators, not servers. Deliberately a flat list (no separate framework/library dimensions): a crypto-lib-driven client (pyopenssl-raw/m2crypto-raw) is just another entry here, not a cross product. pyopenssl-raw/m2crypto-raw don't use a normal HTTP-client library at all -- they open a raw socket and drive the TLS handshake themselves via that specific crypto library's own SSL API (against the fingerprint-target app's HTTPS port, 9443, self-signed cert), so the crypto library itself is what's visible in the TLS fingerprint, not the language's default ssl module. Second wave (2026-07-15): one client per this project's own server-side cryptography_libs, each using `requests` for the actual transport (they have no TLS/socket API of their own) but signing/HMACing the request body with that specific library and attaching the result as a header -- the point being blind discovery: a later, separate detection pass should be able to tell libraries apart from the shape of that header alone (signature length/encoding/algorithm identifier), without the client ever declaring which library it used in its self-report body. Version/compatibility figures copied from this same registry's cryptography_libs entries, already validated there.",
       "http_clients": [
         {
           "name": "http.client",
@@ -1186,6 +1186,84 @@
             { "nr": "0.48", "release_date": null, "compatibility": [ "3.6+" ] }
           ],
           "notes": "Same rationale as pyopenssl-raw -- a raw socket wrapped by M2Crypto's own SSL.Connection, driving the outbound TLS handshake itself. Needs build-essential/swig/libssl-dev at build time (SWIG-generated C extension)."
+        },
+        {
+          "name": "hashlib-hmac",
+          "module": null,
+          "version": "built-in",
+          "notes": "stdlib hashlib/hmac -- no signing API, so HMAC-SHA256 over the body with a fixed shared secret is the closest natural equivalent. Smallest, simplest possible header artifact (32-byte digest) -- a useful low bar for the discovery problem."
+        },
+        {
+          "name": "ecdsa-sign",
+          "module": null,
+          "version": [
+            { "nr": "0.19.2", "release_date": null, "compatibility": [ "3.3+" ] }
+          ],
+          "notes": "Signs the body with a freshly generated NIST P-256 (SECP256r1) keypair, DER-encoded signature in the header. Pure-Python, no C extension."
+        },
+        {
+          "name": "pynacl-sign",
+          "module": null,
+          "version": [
+            { "nr": "1.6.2", "release_date": null, "compatibility": [ "3.8+" ] }
+          ],
+          "notes": "Ed25519 via nacl.signing -- always exactly 64 raw signature bytes, the most structurally distinctive/fixed-size of the classical signatures here. Needs libsodium-dev at build time, libsodium23 at runtime (same as this project's server-side PyNaCl images)."
+        },
+        {
+          "name": "cryptography-sign",
+          "module": null,
+          "version": [
+            { "nr": "49.0", "release_date": null, "compatibility": [ "3.9+" ] }
+          ],
+          "notes": "RSA-2048 PSS/SHA-256 via cryptography.hazmat -- deliberately a different algorithm family from pynacl-sign/ecdsa-sign for discovery diversity; RSA signatures are ~256 bytes vs. Ed25519's fixed 64 or ECDSA's ~70-72 DER-encoded."
+        },
+        {
+          "name": "pycryptodome-sign",
+          "module": null,
+          "version": [
+            { "nr": "3.23", "release_date": "2025-05-17", "compatibility": [ "3.7+" ] }
+          ],
+          "notes": "RSA-2048 PSS/SHA-256 via Crypto.Signature.pss + Crypto.PublicKey.RSA -- same algorithm choice as cryptography-sign on purpose, to see whether two independent RSA-PSS implementations are distinguishable at all from the header alone (they should look byte-identical in size/encoding -- a useful negative control)."
+        },
+        {
+          "name": "pycrypto-sign",
+          "module": null,
+          "version": [
+            { "nr": "2.6", "release_date": null, "compatibility": [ "3.0-3.3" ] }
+          ],
+          "notes": "Legacy PyCrypto (unmaintained since ~2013, superseded by PyCryptodome, which forked it and kept the same `Crypto` top-level import name -- never installed in the same environment as PyCryptodome, but no conflict here since every client image is its own isolated container). Registered for completeness, but its real compatibility ceiling (3.0-3.3) is below every lang_version this project tests (3.9+), so this entry is expected to produce zero buildable client images -- a genuine historical-impossibility reference row, not a bug."
+        },
+        {
+          "name": "liboqs-sign",
+          "module": null,
+          "version": [
+            { "nr": "0.15", "release_date": "2026-05-06", "compatibility": [ "3.10+" ] }
+          ],
+          "notes": "ML-DSA-65 (Dilithium3) signature via oqs.Signature -- the star of the discovery story: a post-quantum signature is on the order of ~3.3KB, dwarfing every classical signature here (64-256 bytes), so it should be the easiest of all these to tell apart purely by header size. Needs the same liboqs C-library build stage as this project's other liboqs bindings (git clone + cmake/ninja, LD_LIBRARY_PATH)."
+        },
+        {
+          "name": "authlib-jwt",
+          "module": null,
+          "version": [
+            { "nr": "1.7.2", "release_date": null, "compatibility": [ "3.10+" ] }
+          ],
+          "notes": "Signs the body as a compact JWS (HS256, shared secret) via authlib.jose, sent as `Authorization: Bearer <jwt>` -- unlike the other signing clients, the algorithm identifier is right there in cleartext in the JWT's own base64 header segment (`{\"alg\":\"HS256\",\"typ\":\"JWT\"}`), making this the one client that all but announces itself structurally without an explicit self-report."
+        },
+        {
+          "name": "m2crypto-sign",
+          "module": "M2Crypto",
+          "version": [
+            { "nr": "0.48", "release_date": null, "compatibility": [ "3.6+" ] }
+          ],
+          "notes": "Companion to m2crypto-raw, but over plain `requests` transport instead of a raw TLS socket -- signs the body with M2Crypto's own RSA/EVP API (PKCS#1 v1.5, RSA-2048) instead of driving the handshake itself. Lets the same crypto library be tested both ways: TLS-layer (m2crypto-raw) and application-layer (this one)."
+        },
+        {
+          "name": "pyopenssl-sign",
+          "module": "pyOpenSSL",
+          "version": [
+            { "nr": "26.3.0", "release_date": null, "compatibility": [ "3.7+" ] }
+          ],
+          "notes": "Companion to pyopenssl-raw, same rationale as m2crypto-sign -- signs the body via OpenSSL.crypto.sign() (RSA-2048/SHA-256) over plain `requests` transport, instead of driving the TLS handshake itself."
         }
       ]
     }

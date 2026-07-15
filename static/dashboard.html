@@ -3562,9 +3562,12 @@
           <div>TLS ClientHello (JA3): <b class="mono-cell">${r.observed_ja3_hash}</b> <span style="color:var(--muted2)" title="First capture of this image -- became its own reference baseline">baseline</span></div>
           <div class="detail-note" style="margin-top:2px">No external ground truth for JA3 exists, so this first capture became the reference baseline for this exact image -- later captures are compared against it.</div>`;
       }
+      const mismatchNote = r.ja3_match === false
+        ? `<div class="detail-note" style="margin-top:2px">Compared against this image's own first-seen JA3 (no external reference exists) -- a mismatch here doesn't necessarily mean tampering, e.g. an OpenSSL upgrade in the base image would also change it.</div>`
+        : '';
       return `
         <div>TLS ClientHello (JA3): <b class="mono-cell">${r.observed_ja3_hash}</b> ${_matchIcon(r.ja3_match)}</div>
-        <div class="detail-note" style="margin-top:2px">Compared against this image's own first-seen JA3 (no external reference exists) -- a mismatch here doesn't necessarily mean tampering, e.g. an OpenSSL upgrade in the base image would also change it.</div>`;
+        ${mismatchNote}`;
     }
     return `<div style="color:var(--muted2)">No independent signal available for this client (no User-Agent header sent, and no TLS handshake to fingerprint).</div>`;
   }
