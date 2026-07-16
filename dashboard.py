@@ -367,6 +367,45 @@ def get_registry_editor_data(language: str):
     })
 
 
+@app.route("/api/registry/<language>/set-compatibility", methods=["POST"])
+def set_bucket_compatibility(language: str):
+    """Update an EXISTING bucket's compatibility array directly in the
+    registry JSON, then regenerate images for this language. For flipping a
+    prerelease-placeholder bucket (available:false, compatibility left
+    empty) to a real one once it ships -- available:true alone isn't enough
+    for these, since an empty compatibility array means generate_images.py
+    has no language version to build against (found via Tink 1.23: flipped
+    available but produced zero images until this filled in the range).
+    Body: {"kind": "framework"|"library", "name": str, "nr": str,
+    "compatibility": ["11", "17", ...]}."""
+    data = request.json or {}
+    kind = data.get("kind", "")
+    name = data.get("name", "")
+    nr = data.get("nr", "")
+    compatibility = data.get("compatibility") or []
+    if kind not in _KIND_TO_SECTION or not name or not nr:
+        return jsonify({"error": "kind (framework|library), name, and nr are required"}), 400
+
+    job_id, q = _new_job(f"set-compatibility-{language}-{name}-{nr}")
+
+    def run():
+        try:
+            registry_path = registry_writer.registry_path_for(language)
+            registry_writer.update_bucket_compatibility(
+                registry_path, _KIND_TO_SECTION[kind], name, nr, compatibility)
+            q.put(f"Set {language}/{kind}/{name} {nr} compatibility={compatibility}")
+            _regenerate_and_sync({language}, client_mirrored=False, log_fn=lambda msg="": q.put(str(msg)))
+        except registry_writer.RegistryWriteError as exc:
+            q.put(f"ERROR: {exc}")
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
 @app.route("/api/registry/<language>/apply", methods=["POST"])
 def apply_registry_overrides(language: str):
     """Apply manual include/exclude overrides staged in the Registry editor

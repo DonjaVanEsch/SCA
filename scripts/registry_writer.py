@@ -168,6 +168,65 @@ def add_bucket(registry_path: Path, section_key: str, name: str,
     registry_path.write_text(new_text, encoding="utf-8")
 
 
+def update_bucket_compatibility(registry_path: Path, section_key: str, name: str,
+                                nr: str, compatibility: list) -> None:
+    """Replace an EXISTING bucket's compatibility array in place -- for
+    flipping a version from available:false (a still-prerelease placeholder,
+    compatibility left empty) to available:true once it actually ships.
+    Flipping `available` alone is NOT enough for these: an empty
+    compatibility array means generate_images.py has no language version to
+    build it against, so it silently produces zero images even though the
+    bucket now reads as "included" (found the hard way with Tink 1.23).
+
+    Raises RegistryWriteError if the entry/bucket isn't found or the result
+    wouldn't be valid JSON. Nothing is written to disk in that case."""
+    text = registry_path.read_text(encoding="utf-8")
+    open_pos, close_pos = _find_version_array(text, section_key, name)
+
+    nr_pat = f'"nr": {_fmt(nr)}'
+    try:
+        nr_pos = text.index(nr_pat, open_pos, close_pos)
+    except ValueError:
+        raise RegistryWriteError(
+            f'"{name}" has no existing bucket for nr={nr!r} to update')
+
+    # The bucket's own enclosing { ... }, bracket-depth aware.
+    bucket_open = text.rindex("{", open_pos, nr_pos)
+    bucket_close = _find_bracket_span(text, bucket_open)
+    bucket_text = text[bucket_open:bucket_close + 1]
+
+    compat_key_pos = bucket_text.index('"compatibility"')
+    array_open = bucket_text.index("[", compat_key_pos)
+    array_close = _find_bracket_span(bucket_text, array_open)
+    multiline = "\n" in bucket_text[array_open:array_close]
+
+    if multiline:
+        line_start = text.rfind("\n", 0, bucket_open) + 1
+        base_indent = text[line_start:bucket_open]
+        pad2, pad3 = base_indent + "  ", base_indent + "    "
+        if compatibility:
+            inner = "[\n" + "".join(
+                f"{pad3}{_fmt(c)}{',' if i < len(compatibility) - 1 else ''}\n"
+                for i, c in enumerate(compatibility)
+            ) + pad2 + "]"
+        else:
+            inner = "[]"
+    else:
+        inner = ("[ " + ", ".join(_fmt(c) for c in compatibility) + " ]") if compatibility else "[]"
+
+    new_bucket_text = bucket_text[:compat_key_pos] + f'"compatibility": {inner}' + bucket_text[array_close + 1:]
+    new_text = text[:bucket_open] + new_bucket_text + text[bucket_close + 1:]
+
+    try:
+        json.loads(new_text)
+    except json.JSONDecodeError as exc:
+        raise RegistryWriteError(
+            f"compatibility update for {name!r} nr={nr!r} produced invalid JSON: {exc}"
+        ) from exc
+
+    registry_path.write_text(new_text, encoding="utf-8")
+
+
 def registry_path_for(language: str) -> Path:
     return SCRIPT_DIR / f"registry {language}.json"
 
