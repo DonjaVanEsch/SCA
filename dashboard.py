@@ -450,6 +450,9 @@ def _regenerate_and_sync(languages: set, client_mirrored: bool, log_fn=print) ->
         if proc.returncode != 0:
             log_fn(f"  [WARN] generate_images.py exited {proc.returncode}: {proc.stderr[-500:]}")
 
+    log_fn("Reloading registry metadata ...")
+    db.load_registry()
+
     log_fn("Syncing image database ...")
     _total, inserted, removed = db.sync_images()
     log_fn(f"  {inserted} new, {removed} removed")
