@@ -2763,7 +2763,7 @@
     </div>
     <div class="review-body settings-body settings-body-tabbed">
       <nav class="settings-nav">
-        <button class="settings-nav-item active" data-settings-tab="home">🏠 Home</button>
+        <button class="settings-nav-item active" data-settings-tab="home">🏠 General</button>
         <button class="settings-nav-item" data-settings-tab="maintenance">🧹 Maintenance</button>
         <button class="settings-nav-item" data-settings-tab="registry">📝 Registry</button>
         <button class="settings-nav-item" data-settings-tab="accessibility">♿ Accessibility</button>
@@ -6418,13 +6418,26 @@
   // collapsed/expanded) but #detail-drawer is a separate fixed-position panel
   // that doesn't sit in the same flex column, so it needs the current dock
   // height mirrored into a CSS var to know how much to leave clear at its own
-  // bottom edge.
+  // bottom edge. The Settings page (#tab-settings) gets an explicit pixel
+  // max-height on top of that -- it's a normal-flow flex item (not fixed
+  // like the drawer), and margin-bottom alone left it overlapping an
+  // expanded log console, so this pins a hard, unambiguous ceiling instead
+  // of relying on margin/flex-basis interaction to shrink it correctly.
   (function () {
     const dock = document.getElementById('bottom-dock');
+    const body = document.getElementById('body');
+    const settingsPage = document.getElementById('tab-settings');
     if (!dock) return;
-    const setDockH = () => document.documentElement.style.setProperty('--dock-h', `${dock.offsetHeight}px`);
+    const setDockH = () => {
+      const h = dock.offsetHeight;
+      document.documentElement.style.setProperty('--dock-h', `${h}px`);
+      if (settingsPage && body) {
+        settingsPage.style.maxHeight = `${body.clientHeight - h}px`;
+      }
+    };
     setDockH();
     new ResizeObserver(setDockH).observe(dock);
+    new ResizeObserver(setDockH).observe(body);
   })();
 
   // Start
