@@ -17,6 +17,7 @@ import shutil
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.error import URLError
 
@@ -178,6 +179,30 @@ def _fetch_maven_versions(group: str, artifact: str) -> list:
 
     _MAVEN_VERSIONS[cache_key] = versions
     return versions
+
+
+def _release_date(group: str, artifact: str, version: str) -> str | None:
+    """release_date for one already-known version, e.g. for a newly detected
+    major. maven-metadata.xml (used above) carries no per-version dates at
+    all, unlike PyPI/npm/Packagist -- deliberately NOT falling back to
+    search.maven.org for this either (see the module note above on why that
+    index is avoided for version discovery); a plain HEAD request for the
+    version's own POM and its Last-Modified header is a single small,
+    authoritative request, only ever made for the one version a newly
+    detected major actually resolved to, not for the whole history."""
+    group_path = group.replace(".", "/")
+    safe_artifact = urllib.parse.quote(artifact, safe="")
+    url = (f"https://repo1.maven.org/maven2/{group_path}/{safe_artifact}/{version}/"
+           f"{safe_artifact}-{version}.pom")
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "curl/8.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            last_modified = resp.headers.get("Last-Modified")
+        if not last_modified:
+            return None
+        return parsedate_to_datetime(last_modified).date().isoformat()
+    except (URLError, OSError, ValueError, TypeError):
+        return None
 
 
 def _resolve(group: str, artifact: str, registry_ver: str) -> str | None:

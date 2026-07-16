@@ -11,6 +11,7 @@ Required exports:
                   lib_name, lib_ver, images_base)               -> bool
 """
 
+import gzip
 import json
 import re
 import shutil
@@ -69,6 +70,38 @@ def _fetch_nuget_versions(package_id: str) -> list:
 
     _NUGET_VERSIONS[cache_key] = versions
     return versions
+
+
+def _release_date(package_id: str, version: str) -> str | None:
+    """release_date for one already-known version, e.g. for a newly detected
+    major. The flatcontainer index used above (_fetch_nuget_versions) has no
+    per-version dates -- the Registration API is the one that carries a
+    `published` timestamp per catalogEntry, only ever fetched here for the
+    one version a newly detected major actually resolved to, not the whole
+    history."""
+    cache_key = package_id.lower()
+    url = f"https://api.nuget.org/v3/registration5-gz-semver2/{cache_key}/index.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+        try:
+            raw = gzip.decompress(raw)
+        except OSError:
+            pass  # server didn't actually gzip it -- raw JSON as-is
+        data = json.loads(raw)
+        for page in data.get("items", []):
+            items = page.get("items")
+            if items is None:
+                continue  # paginated sub-page -- skip rather than fetch further
+            for entry in items:
+                catalog = entry.get("catalogEntry", {})
+                if catalog.get("version") == version:
+                    published = catalog.get("published")
+                    return published[:10] if published else None
+    except (URLError, OSError, ValueError, KeyError):
+        pass
+    return None
 
 
 def _resolve(package_id: str, registry_ver: str) -> str | None:

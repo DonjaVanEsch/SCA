@@ -1302,21 +1302,26 @@ def _run_client_container(client_tag: str, container_name: str, network: str, ta
     return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
 
 
-def _client_target_url(http_client_name: str) -> str:
+def _client_target_url(http_client_name: str, target_override: str = "") -> str:
     """Same TLS-vs-plain routing used by both Test and Fingerprint -- the
     two raw-TLS clients need the target's HTTPS port, everything else the
-    plain HTTP one."""
+    plain HTTP one. target_override, when set (the dashboard's
+    fingerprint_target setting), replaces the built-in
+    pqc-fingerprint-target container name -- e.g. to point at an external
+    target host. Ports stay fixed, since that's what the target app itself
+    listens on."""
+    host = target_override.strip() or _FP_TARGET_CONTAINER
     if http_client_name in _TLS_RAW_CLIENTS:
-        return f"https://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTPS_PORT}/probe"
-    return f"http://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTP_PORT}/probe"
+        return f"https://{host}:{_FP_TARGET_HTTPS_PORT}/probe"
+    return f"http://{host}:{_FP_TARGET_HTTP_PORT}/probe"
 
 
 def _capture_client_fingerprint(client_tag: str, target_container: str, network: str,
-                                 http_client_name: str = ""):
+                                 http_client_name: str = "", target_override: str = ""):
     """Capture real network traffic seen by the target app for one client
     image's single outbound call. Returns a result dict."""
     client_container = f"{client_tag}-fpclient"
-    target_url = _client_target_url(http_client_name)
+    target_url = _client_target_url(http_client_name, target_override)
 
     (rc, out, err), traffic, pcap_b64, cap_err = _capture_traffic(
         target_container,
@@ -1346,12 +1351,18 @@ def _capture_client_fingerprint(client_tag: str, target_container: str, network:
     }
 
 
-def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, workers=4):
+def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, workers=4,
+                     target_override=""):
     """Test each client image: run it once, for real, from the actual built
     image against the persistent target app -- same one-shot container
     Fingerprint uses, just without the tcpdump capture. Success is just "did
     the call succeed" (the client exited cleanly and reported status 200),
     not a traffic capture.
+
+    target_override, when set (the dashboard's fingerprint_target setting),
+    points every client at that host instead of the built-in
+    pqc-fingerprint-target container -- since it's presumably an externally
+    managed target in that case, its own build/start is skipped.
 
     save_fn(entry, result_dict) is called immediately after each image
     completes -- result_dict is None if the client image isn't built.
@@ -1359,14 +1370,18 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
     """
     n   = len(entries)
     pad = len(str(n))
-    log_fn(f"\nEnsuring fingerprint-target app is up ...")
-    target_container, target_err = _ensure_fingerprint_target()
-    if target_container is None:
-        log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
-        if save_fn is not None:
-            for e in entries:
-                save_fn(e, None)
-        return {}
+    if target_override:
+        target_container = target_override
+        log_fn(f"\nUsing custom fingerprint target: {target_container}")
+    else:
+        log_fn(f"\nEnsuring fingerprint-target app is up ...")
+        target_container, target_err = _ensure_fingerprint_target()
+        if target_container is None:
+            log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
+            if save_fn is not None:
+                for e in entries:
+                    save_fn(e, None)
+            return {}
 
     parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
     log_fn(f"Testing {n:,} client image(s) against {target_container}{parallel_note} ...\n")
@@ -1392,7 +1407,7 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
             return
 
         client_container = f"{tag}-test"
-        target_url = _client_target_url(e.get("http_client", ""))
+        target_url = _client_target_url(e.get("http_client", ""), target_override)
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         rc, out, err = _run_client_container(tag, client_container, _FP_TARGET_NETWORK, target_url)
         finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1437,9 +1452,15 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
     return results
 
 
-def _do_client_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
+def _do_client_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None,
+                            target_override=""):
     """Fingerprint each client image: run it once against the persistent
     target app, capture the traffic the target observed, then move on.
+
+    target_override, when set (the dashboard's fingerprint_target setting),
+    points every client at that host instead of the built-in
+    pqc-fingerprint-target container -- its own build/start is skipped in
+    that case, since it's presumably an externally managed target.
 
     save_fn(entry, record) is called immediately after each image completes
     -- record is None if the client image isn't built. Skips images that
@@ -1447,14 +1468,18 @@ def _do_client_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None)
     """
     n   = len(entries)
     pad = len(str(n))
-    log_fn(f"\nEnsuring fingerprint-target app is up ...")
-    target_container, target_err = _ensure_fingerprint_target()
-    if target_container is None:
-        log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
-        if save_fn is not None:
-            for e in entries:
-                save_fn(e, None)
-        return
+    if target_override:
+        target_container = target_override
+        log_fn(f"\nUsing custom fingerprint target: {target_container}")
+    else:
+        log_fn(f"\nEnsuring fingerprint-target app is up ...")
+        target_container, target_err = _ensure_fingerprint_target()
+        if target_container is None:
+            log_fn(f"[ABORT] fingerprint-target unavailable: {target_err}")
+            if save_fn is not None:
+                for e in entries:
+                    save_fn(e, None)
+            return
     log_fn(f"Fingerprinting {n:,} client image(s) against {target_container} ...\n")
     captured = 0
 
@@ -1473,7 +1498,8 @@ def _do_client_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None)
             continue
 
         record = _capture_client_fingerprint(tag, target_container, _FP_TARGET_NETWORK,
-                                              http_client_name=e.get("http_client", ""))
+                                              http_client_name=e.get("http_client", ""),
+                                              target_override=target_override)
         log_fn(f"         CAPTURED  status={record['status_code']}  "
                f"client_output={record['client_output'][:120]}")
         captured += 1

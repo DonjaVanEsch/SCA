@@ -1,5 +1,5 @@
 <!doctype html>
-<title>SCA Source Manager</title>
+<title>SCA Dashboard</title>
 <meta name="description" content="Side-Channel / Software Crypto Analysis image build, test, and management dashboard">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -17,6 +17,7 @@
     --muted2: #8b949e;
     --accent: #1e7bd9;
     --accent-h: #2b8fe8;
+    --btn-text: #051220;
     --success: #3fb950;
     --danger: #f85149;
     --warning: #e3b341;
@@ -29,7 +30,8 @@
     --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     --sans: -apple-system, 'Segoe UI', system-ui, sans-serif;
     --log-h: 240px;
-    --dock-h: 44px; /* live-updated by a ResizeObserver on #bottom-dock */
+    --dock-h: 44px;
+    /* live-updated by a ResizeObserver on #bottom-dock */
   }
 
   /* Client-fingerprinting mode: a distinct color scheme, not just a text
@@ -144,6 +146,7 @@
     color: var(--muted2);
     background: var(--surface2);
   }
+
   html.client-mode .mode-badge {
     color: var(--accent);
     border-color: var(--accent);
@@ -159,6 +162,7 @@
     background: #1e7bd9;
     border-color: #1e7bd9;
   }
+
   html.client-mode #btn-client-start:hover {
     background: #2b8fe8;
   }
@@ -171,6 +175,7 @@
   html.fingerprint-disabled .fingerprint-feature {
     display: none !important;
   }
+
   html.host-scope-disabled .host-scope-feature {
     display: none !important;
   }
@@ -393,18 +398,22 @@
     padding: 6px 12px;
     border-radius: var(--radius);
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     border: 1px solid transparent;
-    transition: background .15s, border-color .15s;
+    transition: background .15s, border-color .15s, transform .05s;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 5px;
   }
 
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
   .btn-primary {
     background: var(--accent);
-    color: #fff;
+    color: var(--btn-text);
     border-color: var(--accent)
   }
 
@@ -413,14 +422,32 @@
   }
 
   .btn-ghost {
-    background: transparent;
-    color: var(--muted2);
-    border-color: var(--border)
+    background: var(--accent);
+    color: var(--btn-text);
+    border-color: var(--accent)
   }
 
   .btn-ghost:hover {
+    background: var(--accent-h);
+    border-color: var(--accent-h);
+    color: var(--btn-text)
+  }
+
+  /* Review, Select, Stop All, Generate-batch-name, and per-row Detail
+     buttons stay a plain flat/transparent look -- an accent-filled button
+     on every table row (or in a dense action bar next to a bunch of
+     others) is too heavy visually; these are lightweight/secondary
+     actions, not calls to action. */
+  .btn-flat {
+    background: transparent;
+    color: var(--muted2);
+    border-color: var(--border);
+  }
+
+  .btn-flat:hover {
     background: var(--surface3);
-    color: var(--text)
+    color: var(--text);
+    border-color: var(--muted);
   }
 
   .btn-danger {
@@ -461,6 +488,17 @@
   .btn:disabled {
     opacity: .4;
     cursor: not-allowed
+  }
+
+  #btn-settings {
+    font-size: 20px;
+    line-height: 1;
+    padding: 4px 10px;
+    color: #fff;
+  }
+
+  #btn-settings:hover {
+    color: #fff;
   }
 
   #report-filter-panel {
@@ -723,23 +761,19 @@
   }
 
   tbody tr.ignored-row {
-    background: repeating-linear-gradient(
-      -45deg,
-      rgba(74, 85, 104, .12),
-      rgba(74, 85, 104, .12) 6px,
-      rgba(74, 85, 104, .28) 6px,
-      rgba(74, 85, 104, .28) 12px
-    );
+    background: repeating-linear-gradient(-45deg,
+        rgba(74, 85, 104, .12),
+        rgba(74, 85, 104, .12) 6px,
+        rgba(74, 85, 104, .28) 6px,
+        rgba(74, 85, 104, .28) 12px);
   }
 
   tbody tr.ignored-row:hover {
-    background: repeating-linear-gradient(
-      -45deg,
-      rgba(74, 85, 104, .2),
-      rgba(74, 85, 104, .2) 6px,
-      rgba(74, 85, 104, .36) 6px,
-      rgba(74, 85, 104, .36) 12px
-    );
+    background: repeating-linear-gradient(-45deg,
+        rgba(74, 85, 104, .2),
+        rgba(74, 85, 104, .2) 6px,
+        rgba(74, 85, 104, .36) 6px,
+        rgba(74, 85, 104, .36) 12px);
   }
 
   tbody tr.ignored-row td:first-child {
@@ -1177,6 +1211,11 @@
     scroll-behavior: smooth;
   }
 
+  #tab-reference {
+    user-select: none;
+    cursor: default;
+  }
+
   #ref-content {
     display: flex;
     flex-wrap: nowrap;
@@ -1377,6 +1416,7 @@
     font-size: 10px;
     font-weight: 600;
     color: var(--accent);
+    cursor: pointer;
     cursor: pointer;
     user-select: none;
   }
@@ -1769,11 +1809,25 @@
     word-break: break-word;
   }
 
-  .reg-col-cb     { width: 46px; }
-  .reg-col-ver    { width: 110px; }
-  .reg-col-rel    { width: 100px; }
-  .reg-col-compat { width: 170px; }
-  .reg-col-reset  { width: 90px; }
+  .reg-col-cb {
+    width: 46px;
+  }
+
+  .reg-col-ver {
+    width: 110px;
+  }
+
+  .reg-col-rel {
+    width: 100px;
+  }
+
+  .reg-col-compat {
+    width: 170px;
+  }
+
+  .reg-col-reset {
+    width: 90px;
+  }
 
   .registry-editor-body tr.reg-group-row td {
     background: var(--surface3);
@@ -1827,9 +1881,9 @@
   }
 
   /* ── Settings panel ─────────────────────────────────────────────────────── */
-  .settings-panel {
-    width: min(520px, 92vw);
-    height: auto;
+  .settings-page {
+    flex-direction: column;
+    margin-bottom: var(--dock-h);
   }
 
   .settings-body {
@@ -1840,14 +1894,93 @@
     overflow: auto;
   }
 
+  .settings-body-tabbed {
+    flex-direction: row;
+    gap: 0;
+    padding: 0;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .settings-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 160px;
+    border-right: 1px solid var(--border);
+    padding: 12px 8px;
+  }
+
+  .settings-nav-item {
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--muted2);
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+
+  .settings-nav-item:hover {
+    background: var(--surface3);
+    color: var(--text);
+  }
+
+  .settings-nav-item.active {
+    background: var(--surface3);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .settings-content {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settings-section {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settings-section.active {
+    display: flex;
+  }
+
   .settings-label {
+    display: block;
     font-size: 12px;
     font-weight: 600;
     color: var(--muted2);
+    margin-bottom: 6px;
   }
 
   .settings-input {
     width: 100%;
+  }
+
+  .settings-action-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .settings-action-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted3, var(--muted2));
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-bottom: 6px;
   }
 
   .settings-hint {
@@ -1873,9 +2006,17 @@
     font-size: 12px;
   }
 
-  .settings-test-result.ok    { color: var(--success); }
-  .settings-test-result.err   { color: var(--danger); }
-  .settings-test-result.busy  { color: var(--muted2); }
+  .settings-test-result.ok {
+    color: var(--success);
+  }
+
+  .settings-test-result.err {
+    color: var(--danger);
+  }
+
+  .settings-test-result.busy {
+    color: var(--muted2);
+  }
 
   .settings-test-output {
     background: var(--surface3);
@@ -1912,10 +2053,17 @@
     box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
   }
 
-  #updates-badge.show { display: flex; }
-  #updates-badge:hover { filter: brightness(1.08); }
+  #updates-badge.show {
+    display: flex;
+  }
 
-  .updates-panel { width: min(620px, 92vw); }
+  #updates-badge:hover {
+    filter: brightness(1.08);
+  }
+
+  .updates-panel {
+    width: min(620px, 92vw);
+  }
 
   .updates-body {
     display: flex;
@@ -1943,9 +2091,16 @@
     border-radius: var(--radius);
   }
 
-  .update-row-top { display: flex; align-items: center; gap: 10px; }
+  .update-row-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 
-  .update-row-title { font-size: 13px; font-weight: 600; }
+  .update-row-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
 
   .update-row-sub {
     font-size: 11px;
@@ -1955,6 +2110,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
   .update-row-sub.expanded {
     white-space: normal;
     overflow: visible;
@@ -1971,7 +2127,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .update-row-sub-toggle:hover { text-decoration: underline; }
+
+  .update-row-sub-toggle:hover {
+    text-decoration: underline;
+  }
 
   .update-lang-tag {
     display: inline-block;
@@ -1984,10 +2143,24 @@
     margin-right: 6px;
   }
 
-  .updates-view-toggle { display: flex; gap: 4px; margin-left: auto; margin-right: 10px; }
-  .updates-view-toggle .btn.active { background: var(--surface3); color: var(--text); }
+  .updates-view-toggle {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    margin-right: 10px;
+  }
 
-  .update-row-checkbox { flex-shrink: 0; width: 16px; height: 16px; cursor: pointer; }
+  .updates-view-toggle .btn.active {
+    background: var(--surface3);
+    color: var(--text);
+  }
+
+  .update-row-checkbox {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
 
   .update-row-images-added {
     font-size: 11px;
@@ -2002,7 +2175,9 @@
     white-space: nowrap;
   }
 
-  .update-row-tested-line { align-self: flex-start; }
+  .update-row-tested-line {
+    align-self: flex-start;
+  }
 
   .update-row-release-link {
     margin-left: 6px;
@@ -2010,7 +2185,10 @@
     text-decoration: none;
     white-space: nowrap;
   }
-  .update-row-release-link:hover { text-decoration: underline; }
+
+  .update-row-release-link:hover {
+    text-decoration: underline;
+  }
 </style>
 
 <!-- ── Toast container ─────────────────────────────────────────────────── -->
@@ -2019,8 +2197,8 @@
 <!-- ── Header ─────────────────────────────────────────────────────────── -->
 <header id="header">
   <h1><span title="Side-Channel / Software Crypto Analysis" style="cursor:help">SCA</span> <span
-      class="header-accent">Source Manager</span></h1>
-  <span class="mode-badge" id="mode-badge">Server mode</span>
+      class="header-accent">Dashboard</span></h1>
+  <span class="mode-badge" id="mode-badge">Server images</span>
   <div class="stats-bar" id="stats-bar">
     <span class="stat"><b id="s-total">–</b> sources</span>
 
@@ -2053,7 +2231,8 @@
     <span class="stat-sep">·</span>
     <span class="stat"><b id="cs-tested" style="color:var(--success)">–</b> tested</span>
     <span class="stat-sep fingerprint-feature">·</span>
-    <span class="stat fingerprint-feature"><b id="cs-fingerprinted" style="color:var(--accent)">–</b> fingerprinted</span>
+    <span class="stat fingerprint-feature"><b id="cs-fingerprinted" style="color:var(--accent)">–</b>
+      fingerprinted</span>
   </div>
   <nav class="tabs" id="tabs-server">
     <button class="tab-btn active" data-tab="images">Sources</button>
@@ -2066,10 +2245,12 @@
   </nav>
   <div class="header-actions">
     <button class="btn btn-ghost btn-sm" id="btn-mode-toggle"
-            title="Switch between server-side probing and client-side outbound-call fingerprinting">⇄ Switch to client mode</button>
+      title="Switch between server-side probing and client-side outbound-call fingerprinting">⇄ Switch to client
+      images</button>
     <button class="btn btn-ghost btn-sm host-scope-feature" id="btn-host-badge"
-            title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span id="host-badge-label">local</span></button>
-    <button class="btn btn-ghost btn-sm" id="btn-settings" title="Docker host settings">⚙ Settings</button>
+      title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span
+        id="host-badge-label">local</span></button>
+    <button class="btn btn-ghost btn-flat" id="btn-settings" title="Settings">⚙&#xFE0E;</button>
   </div>
 </header>
 
@@ -2149,15 +2330,16 @@
           <div class="docker-group-inner">
             <span id="sel-count">0 selected</span>
             <div class="sel-menu-wrap" id="review-wrap">
-              <button class="btn btn-ghost btn-sm" id="btn-review-menu">📋 Review ▾</button>
+              <button class="btn btn-ghost btn-flat btn-sm" id="btn-review-menu">📋 Review ▾</button>
               <div class="sel-menu" id="review-menu">
-                <div class="sel-menu-item" id="mnu-review-selection" title="Review the full selection in a separate screen">Selection</div>
+                <div class="sel-menu-item" id="mnu-review-selection"
+                  title="Review the full selection in a separate screen">Selection</div>
                 <div class="sel-menu-item" id="mnu-review-ignored" title="Review the ignore list">Ignore list</div>
               </div>
             </div>
             <div class="action-sep"></div>
             <div class="sel-menu-wrap">
-              <button class="btn btn-ghost btn-sm" id="btn-sel-menu">Select ▾</button>
+              <button class="btn btn-ghost btn-flat btn-sm" id="btn-sel-menu">Select ▾</button>
               <div class="sel-menu" id="sel-menu">
                 <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
                 <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
@@ -2188,7 +2370,7 @@
               title="Start containers for selected sources right away">▶ Launch</button>
             <button class="btn btn-warning btn-sm" id="btn-stop" disabled
               title="Stop containers for selected sources">Stop</button>
-            <button class="btn btn-ghost btn-sm" id="btn-stop-all" title="Stop all running pqc-* containers">Stop
+            <button class="btn btn-ghost btn-flat btn-sm" id="btn-stop-all" title="Stop all running pqc-* containers">Stop
               All</button>
             <button class="btn btn-danger btn-sm" id="btn-remove" disabled
               title="Remove Docker images for selected sources right away">🗑 Remove</button>
@@ -2215,7 +2397,7 @@
               <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Batch</label>
               <input id="run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px"
                 placeholder="auto">
-              <button class="btn btn-ghost btn-sm" id="btn-run-gen" title="Generate batch name">↺</button>
+              <button class="btn btn-ghost btn-flat btn-sm" id="btn-run-gen" title="Generate batch name">↺</button>
               <button class="btn btn-primary btn-sm" id="btn-start" disabled>▶ Execute</button>
               <div class="action-sep"></div>
               <button class="btn btn-success btn-sm" id="btn-mark-success" disabled
@@ -2231,17 +2413,23 @@
         <table id="img-table">
           <thead>
             <tr>
-              <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="header-cb" class="row-cb"></th>
-              <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
-              <th class="col-narrow" title="Whether a container for this image is currently running -- click the dot/circle to open it in a new tab"></th>
+              <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox"
+                  id="header-cb" class="row-cb"></th>
+              <th class="col-narrow"
+                title="Whether the image is actually present on the active Docker engine right now"></th>
+              <th class="col-narrow"
+                title="Whether a container for this image is currently running -- click the dot/circle to open it in a new tab">
+              </th>
               <th class="sortable" data-sort="language">Language <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="lang_version">Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="framework">Framework <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="fw_version">FW Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="library">Library <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-sort="lib_version">Lib Ver <span class="sort-icon">⬍</span></th>
-              <th class="sortable col-narrow" data-sort="build_success" title="Build status"><span class="sort-icon">⬍</span></th>
-              <th class="sortable col-narrow" data-sort="test_success" title="Test status"><span class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-sort="build_success" title="Build status"><span
+                  class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-sort="test_success" title="Test status"><span
+                  class="sort-icon">⬍</span></th>
               <th style="width:24px"></th>
             </tr>
           </thead>
@@ -2301,7 +2489,7 @@
           <div class="docker-group-inner">
             <span id="client-sel-count">0 selected</span>
             <div class="sel-menu-wrap">
-              <button class="btn btn-ghost btn-sm" id="btn-client-sel-menu">Select ▾</button>
+              <button class="btn btn-ghost btn-flat btn-sm" id="btn-client-sel-menu">Select ▾</button>
               <div class="sel-menu" id="client-sel-menu">
                 <div class="sel-menu-item" id="mnu-client-sel-page">Current page</div>
                 <div class="sel-menu-item" id="mnu-client-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
@@ -2320,10 +2508,12 @@
           <span class="docker-group-label">🐳 Docker</span>
           <div class="docker-group-inner">
             <button class="btn btn-success btn-sm" id="btn-client-launch" disabled
-              title="Start containers for selected client images right away, targeting the fingerprint-target app -- each exits after its one call">▶ Launch</button>
+              title="Start containers for selected client images right away, targeting the fingerprint-target app -- each exits after its one call">▶
+              Launch</button>
             <button class="btn btn-warning btn-sm" id="btn-client-stop" disabled
               title="Stop containers for selected client images">Stop</button>
-            <button class="btn btn-ghost btn-sm" id="btn-client-stop-all" title="Stop all running pqc-* containers">Stop All</button>
+            <button class="btn btn-ghost btn-flat btn-sm" id="btn-client-stop-all" title="Stop all running pqc-* containers">Stop
+              All</button>
             <button class="btn btn-danger btn-sm" id="btn-client-remove" disabled
               title="Remove Docker images for selected client images right away">🗑 Remove</button>
           </div>
@@ -2332,7 +2522,8 @@
         <div class="docker-group">
           <span class="docker-group-label">🔨 Build &amp; Test</span>
           <div class="docker-group-inner">
-            <label class="act-check" id="act-client-build-wrap"><input type="checkbox" id="act-client-build" disabled> Build</label>
+            <label class="act-check" id="act-client-build-wrap"><input type="checkbox" id="act-client-build" disabled>
+              Build</label>
             <label class="act-check" id="act-client-test-wrap"
               title="Run the client once, for real, from the built image against the persistent fingerprint-target app -- passes if the call succeeds (status 200)">
               <input type="checkbox" id="act-client-test" disabled> Test</label>
@@ -2349,7 +2540,7 @@
               <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Batch</label>
               <input id="client-run-name" class="filter-input" style="flex:1;min-width:60px;padding:3px 7px"
                 placeholder="auto">
-              <button class="btn btn-ghost btn-sm" id="btn-client-run-gen" title="Generate batch name">↺</button>
+              <button class="btn btn-ghost btn-flat btn-sm" id="btn-client-run-gen" title="Generate batch name">↺</button>
               <button class="btn btn-primary btn-sm" id="btn-client-start" disabled>▶ Execute</button>
             </div>
           </div>
@@ -2365,15 +2556,20 @@
         <table id="client-table">
           <thead>
             <tr>
-              <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="client-header-cb" class="row-cb"></th>
-              <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
+              <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox"
+                  id="client-header-cb" class="row-cb"></th>
+              <th class="col-narrow"
+                title="Whether the image is actually present on the active Docker engine right now"></th>
               <th class="sortable" data-csort="language">Language <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-csort="lang_version">Ver <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-csort="http_client">Library <span class="sort-icon">⬍</span></th>
               <th class="sortable" data-csort="http_client_version">Lib Ver <span class="sort-icon">⬍</span></th>
-              <th class="sortable col-narrow" data-csort="build_success" title="Build status"><span class="sort-icon">⬍</span></th>
-              <th class="sortable col-narrow" data-csort="test_success" title="Test status"><span class="sort-icon">⬍</span></th>
-              <th class="fingerprint-feature" title="Last fingerprint capture -- click to view the full report">Fingerprint</th>
+              <th class="sortable col-narrow" data-csort="build_success" title="Build status"><span
+                  class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-csort="test_success" title="Test status"><span
+                  class="sort-icon">⬍</span></th>
+              <th class="fingerprint-feature" title="Last fingerprint capture -- click to view the full report">
+                Fingerprint</th>
               <th style="width:24px"></th>
             </tr>
           </thead>
@@ -2533,25 +2729,161 @@
     </div>
     <div class="ref-lang-filter-bar" id="ref-lang-filter-bar" style="flex-shrink:0"></div>
     <div class="ref-hscroll">
-      <button type="button" class="ref-hscroll-nav ref-hscroll-prev" id="ref-scroll-prev" aria-label="Previous" disabled>‹</button>
+      <button type="button" class="ref-hscroll-nav ref-hscroll-prev" id="ref-scroll-prev" aria-label="Previous"
+        disabled>‹</button>
       <div class="ref-scroll ref-scroll-h" id="ref-content-scroll">
         <div id="ref-content" class="ref-grid">
           <div style="padding:32px;color:var(--muted);font-size:12px">Loading reference data…</div>
         </div>
       </div>
-      <button type="button" class="ref-hscroll-nav ref-hscroll-next" id="ref-scroll-next" aria-label="Next" disabled>›</button>
+      <button type="button" class="ref-hscroll-nav ref-hscroll-next" id="ref-scroll-next" aria-label="Next"
+        disabled>›</button>
     </div>
   </div>
 
   <div id="tab-agility" class="tab-panel">
     <div class="panel-header" style="flex-shrink:0">
       <h2>Crypto Agility</h2>
-      <span style="font-size:12px;color:var(--muted2);margin-left:4px">Algorithms, PQC migration paths, and platform constraints per library/version — structured from verified research, not a new research effort</span>
+      <span style="font-size:12px;color:var(--muted2);margin-left:4px">Algorithms, PQC migration paths, and platform
+        constraints per library/version — structured from verified research, not a new research effort</span>
     </div>
     <div class="ref-scroll">
       <div id="agility-content" class="ref-grid">
         <div style="padding:32px;color:var(--muted);font-size:12px">Loading crypto agility data…</div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Settings page ──────────────────────────────────────────────────── -->
+  <div id="tab-settings" class="tab-panel settings-page">
+    <div class="review-panel-header">
+      <h3>Settings</h3>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-close-settings-panel">✕</button>
+    </div>
+    <div class="review-body settings-body settings-body-tabbed">
+      <nav class="settings-nav">
+        <button class="settings-nav-item active" data-settings-tab="home">🏠 Home</button>
+        <button class="settings-nav-item" data-settings-tab="maintenance">🧹 Maintenance</button>
+        <button class="settings-nav-item" data-settings-tab="registry">📝 Registry</button>
+        <button class="settings-nav-item" data-settings-tab="accessibility">♿ Accessibility</button>
+      </nav>
+      <div class="settings-content">
+        <section class="settings-section active" data-settings-section="home">
+          <label class="settings-label" for="settings-default-workers">Default workers</label>
+          <input type="number" id="settings-default-workers" class="filter-input settings-input" min="1" max="16"
+            style="width:80px">
+          <p class="settings-hint">
+            Number of parallel docker build processes used when starting a build/test run.
+            Saved here so it survives a browser restart.
+          </p>
+
+          <label class="settings-label" for="settings-docker-host" style="margin-top:20px">Docker host</label>
+          <input type="text" id="settings-docker-host" class="filter-input settings-input"
+            placeholder="leave empty for local Docker, or ssh://user@host">
+          <p class="settings-hint">
+            Points every build/run/cleanup action at a remote Docker engine over SSH.
+            Requires <b>key-based</b> SSH auth (add this machine's public key to the
+            remote host's <code>authorized_keys</code> — password auth won't work
+            since builds run in the background with no terminal to prompt).
+            Leave empty to use the local Docker engine.
+          </p>
+          <div class="settings-test-row">
+            <button class="btn btn-ghost btn-sm" id="btn-test-docker">Test connection</button>
+            <span id="settings-test-result" class="settings-test-result"></span>
+          </div>
+          <pre id="settings-test-output" class="settings-test-output" style="display:none"></pre>
+
+          <label class="settings-label" for="settings-fingerprint-target" style="margin-top:20px">Fingerprint
+            target</label>
+          <input type="text" id="settings-fingerprint-target" class="filter-input settings-input"
+            placeholder="leave empty for the built-in pqc-fingerprint-target container">
+          <p class="settings-hint">
+            Overrides the host that client-image Test and Fingerprint runs call. Takes effect
+            immediately for every already-built client image — the target is passed in when
+            each container is run, nothing needs rebuilding or regenerating. Leave empty to use
+            the dashboard-managed <code>pqc-fingerprint-target</code> container.
+          </p>
+          <pre id="settings-fingerprint-preview" class="settings-test-output"></pre>
+        </section>
+
+        <section class="settings-section" data-settings-section="maintenance">
+          <label class="settings-label">Maintenance actions</label>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
+            <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
+              DB</button>
+          </div>
+          <p class="settings-hint">
+            Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
+            registry metadata and re-syncs from disk (only needed after a registry change).
+          </p>
+
+          <div class="settings-action-group-label" style="margin-top:16px">Cleanup</div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-normal">Normal cleanup</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-full">Full cleanup <span
+                style="font-size:10px;color:var(--muted2)">(+ volumes)</span></button>
+            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint">
+            Removes unused Docker containers, images, build cache, and (full) volumes.
+          </p>
+
+          <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-orphans-remove">Remove orphaned images</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-orphans-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint">
+            <code>pqc-*</code> tagged images built for a combo that no longer exists in the
+            current <code>images/</code> tree (e.g. after a registry fix narrowed a version
+            range, or a language was dropped) — Docker's own cleanup has no way to know this,
+            since it only tracks container references.
+          </p>
+        </section>
+
+        <section class="settings-section" data-settings-section="registry">
+          <label class="settings-label">Registry</label>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
+              title="Check upstream registries for new framework/library versions">🔔 New versions</button>
+          </div>
+          <p class="settings-hint">
+            Scans npm/PyPI/Packagist/Maven Central/NuGet for framework/library majors newer
+            than what's currently tracked — detection only, nothing is added or built until you
+            include it (also runs weekly via cron; the 🔔 badge in the bottom bar shows the
+            current pending count).
+          </p>
+
+          <div class="settings-action-list" style="margin-top:16px">
+            <button class="btn btn-ghost btn-sm" id="btn-settings-registry-editor"
+              title="Manually include/exclude framework and library versions">📝 Registry editor</button>
+          </div>
+          <p class="settings-hint">
+            Manually include/exclude any already-tracked framework or library version per
+            language, with a note explaining why — stored as a database override, the registry
+            files themselves are never edited.
+          </p>
+        </section>
+
+        <section class="settings-section" data-settings-section="accessibility">
+          <label class="settings-label" for="settings-accessibility-mode">Accessibility mode</label>
+          <label class="opt-label" style="display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="settings-accessibility-mode"> Show ✓ / ✕ symbols instead of plain colored dots
+          </label>
+          <p class="settings-hint">
+            Applies to the Build/Test/Docker status indicators in the sources table.
+            Off shows small colored dots; on shows a bordered circle with an explicit
+            checkmark or cross for better visibility.
+          </p>
+        </section>
+      </div>
+    </div>
+    <div class="review-panel-footer">
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-settings-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-settings-save">Save</button>
     </div>
   </div>
 
@@ -2598,7 +2930,8 @@
   <div class="review-panel">
     <div class="review-panel-header">
       <h3>Selected sources — <span id="sel-panel-count">0</span></h3>
-      <input type="text" id="sel-panel-search" class="filter-input review-search" placeholder="Search within selection…">
+      <input type="text" id="sel-panel-search" class="filter-input review-search"
+        placeholder="Search within selection…">
       <button class="btn btn-ghost btn-sm" id="btn-close-sel-panel">✕</button>
     </div>
     <div class="review-body">
@@ -2634,7 +2967,8 @@
   <div class="review-panel">
     <div class="review-panel-header">
       <h3>Ignored sources — <span id="ignore-panel-count">0</span></h3>
-      <input type="text" id="ignore-panel-search" class="filter-input review-search" placeholder="Search within ignore list…">
+      <input type="text" id="ignore-panel-search" class="filter-input review-search"
+        placeholder="Search within ignore list…">
       <button class="btn btn-ghost btn-sm" id="btn-close-ignore-panel">✕</button>
     </div>
     <div class="review-body">
@@ -2661,107 +2995,6 @@
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="btn-ignore-panel-cancel">Cancel</button>
       <button class="btn btn-primary btn-sm" id="btn-ignore-panel-apply" disabled>Confirm changes</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── Settings panel ───────────────────────────────────────────────────── -->
-<div id="settings-panel-overlay" class="review-overlay">
-  <div class="review-panel settings-panel">
-    <div class="review-panel-header">
-      <h3>Settings</h3>
-      <button class="btn btn-ghost btn-sm" id="btn-close-settings-panel">✕</button>
-    </div>
-    <div class="review-body settings-body">
-      <label class="settings-label" for="settings-docker-host">Docker host</label>
-      <input type="text" id="settings-docker-host" class="filter-input settings-input"
-             placeholder="leave empty for local Docker, or ssh://user@host">
-      <p class="settings-hint">
-        Points every build/run/cleanup action at a remote Docker engine over SSH.
-        Requires <b>key-based</b> SSH auth (add this machine's public key to the
-        remote host's <code>authorized_keys</code> — password auth won't work
-        since builds run in the background with no terminal to prompt).
-        Leave empty to use the local Docker engine.
-      </p>
-      <div class="settings-test-row">
-        <button class="btn btn-ghost btn-sm" id="btn-test-docker">Test connection</button>
-        <span id="settings-test-result" class="settings-test-result"></span>
-      </div>
-      <pre id="settings-test-output" class="settings-test-output" style="display:none"></pre>
-
-      <label class="settings-label" for="settings-default-workers" style="margin-top:16px">Default workers</label>
-      <input type="number" id="settings-default-workers" class="filter-input settings-input"
-             min="1" max="16" style="width:80px">
-      <p class="settings-hint">
-        Number of parallel docker build processes used when starting a build/test run.
-        Saved here so it survives a browser restart.
-      </p>
-
-      <label class="settings-label" for="settings-accessibility-mode" style="margin-top:16px">Accessibility mode</label>
-      <label class="opt-label" style="display:flex;align-items:center;gap:6px">
-        <input type="checkbox" id="settings-accessibility-mode"> Show ✓ / ✕ symbols instead of plain colored dots
-      </label>
-      <p class="settings-hint">
-        Applies to the Build/Test/Docker status indicators in the sources table.
-        Off shows small colored dots; on shows a bordered circle with an explicit
-        checkmark or cross for better visibility.
-      </p>
-
-      <label class="settings-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px;display:block">Maintenance actions</label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
-        <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init DB</button>
-        <div class="sel-menu-wrap" id="cleanup-wrap">
-          <button class="btn btn-ghost btn-sm" id="btn-cleanup" title="Docker cleanup">🧹 Cleanup ▾</button>
-          <div class="sel-menu" id="cleanup-menu">
-            <div class="sel-menu-item" id="mnu-cleanup-normal">Normal cleanup</div>
-            <div class="sel-menu-item" id="mnu-cleanup-full">Full cleanup <span
-                style="font-size:10px;color:var(--muted2)">(+ volumes)</span></div>
-            <div class="sel-menu-sep"></div>
-            <div class="sel-menu-item" id="mnu-cleanup-dry">Dry run (preview)</div>
-          </div>
-        </div>
-        <div class="sel-menu-wrap" id="orphans-wrap">
-          <button class="btn btn-ghost btn-sm" id="btn-orphans" title="Remove images not in the current registry">🗑 Orphaned images ▾</button>
-          <div class="sel-menu" id="orphans-menu">
-            <div class="sel-menu-item" id="mnu-orphans-remove">Remove orphaned images</div>
-            <div class="sel-menu-sep"></div>
-            <div class="sel-menu-item" id="mnu-orphans-dry">Dry run (preview)</div>
-          </div>
-        </div>
-      </div>
-      <p class="settings-hint">
-        Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
-        registry metadata and re-syncs from disk (only needed after a registry change).
-        Cleanup removes unused Docker containers, images, build cache, and (full) volumes.
-        Orphaned images are <code>pqc-*</code> tagged images built for a combo that no
-        longer exists in the current <code>images/</code> tree (e.g. after a registry fix
-        narrowed a version range, or a language was dropped) — Docker's own cleanup has no
-        way to know this, since it only tracks container references.
-      </p>
-
-      <label class="settings-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px;display:block">Registry</label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
-                title="Check upstream registries for new framework/library versions">🔔 New versions</button>
-        <button class="btn btn-ghost btn-sm" id="btn-settings-registry-editor"
-                title="Manually include/exclude framework and library versions">📝 Registry editor</button>
-      </div>
-      <p class="settings-hint">
-        New versions scans npm/PyPI/Packagist/Maven Central/NuGet for framework/library
-        majors newer than what's currently tracked — detection only, nothing is added or
-        built until you include it (also runs weekly via cron; the 🔔 badge in the bottom
-        bar shows the current pending count).
-        Registry editor lets you manually include/exclude any already-tracked
-        framework or library version per language, with a note explaining why —
-        stored as a database override, the registry files themselves are never
-        edited.
-      </p>
-    </div>
-    <div class="review-panel-footer">
-      <div style="flex:1"></div>
-      <button class="btn btn-ghost btn-sm" id="btn-settings-cancel">Cancel</button>
-      <button class="btn btn-primary btn-sm" id="btn-settings-save">Save</button>
     </div>
   </div>
 </div>
@@ -3179,9 +3412,9 @@
       <td style="padding:0 6px">
         <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
           ${ign ? ignoredBadge(r.ignore_reason) : ''}
-          ${(_fingerprintEnabled && (r.fp_ok_at || r.fp_err_at)) ? `<button class="btn btn-ghost btn-sm fingerprint-feature" style="padding:2px 6px"
+          ${(_fingerprintEnabled && (r.fp_ok_at || r.fp_err_at)) ? `<button class="btn btn-ghost btn-flat btn-sm fingerprint-feature" style="padding:2px 6px"
                   onclick="event.stopPropagation();openDetail(${r.id},'fingerprint')" title="Fingerprint captured — click to view">🫆</button>` : ''}
-          <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
+          <button class="btn btn-ghost btn-flat btn-sm" style="padding:2px 6px;opacity:.5"
                   onclick="event.stopPropagation();openDetail(${r.id})" title="Details">⋯</button>
         </div>
       </td>
@@ -3491,15 +3724,15 @@
         </td>
         <td>
           ${anyReport
-            ? `${r.reported_client ?? '?'} ${r.reported_client_version ?? '?'}
+          ? `${r.reported_client ?? '?'} ${r.reported_client_version ?? '?'}
                <span style="color:var(--muted2)">(lang ${r.reported_language_version ?? '?'})</span>
                ${_matchIcon(r.client_name_match)} ${_matchIcon(r.client_version_match)} ${_matchIcon(r.language_version_match)}`
-            : '<span style="color:var(--muted2)">no self-report</span>'}
+          : '<span style="color:var(--muted2)">no self-report</span>'}
         </td>
         <td class="col-narrow">${overallIcon}</td>
         <td class="col-narrow">${r.status_code ?? '–'}</td>
         <td class="mono-cell" style="font-size:11px">${r.captured_at}</td>
-        <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px" onclick="openClientFingerprintDetail(${r.id})" title="Full report">⋯</button></td>
+        <td><button class="btn btn-ghost btn-flat btn-sm" style="padding:2px 6px" onclick="openClientFingerprintDetail(${r.id})" title="Full report">⋯</button></td>
       </tr>`;
     }).join('');
   }
@@ -3532,7 +3765,7 @@
         <td class="col-narrow">${testBadge(r.test_success)}</td>
         <td class="fingerprint-feature">${fp}</td>
         <td style="padding:0 6px;text-align:right">
-          <button class="btn btn-ghost btn-sm" style="padding:2px 6px;opacity:.5"
+          <button class="btn btn-ghost btn-flat btn-sm" style="padding:2px 6px;opacity:.5"
                   onclick="event.stopPropagation();openClientDetail(${r.id})" title="Details">⋯</button>
         </td>
       </tr>`;
@@ -3583,9 +3816,9 @@
     document.getElementById('client-sel-count').textContent = `${n.toLocaleString()} selected`;
     const dis = n === 0;
     ['act-client-build', 'act-client-test', 'act-client-fingerprint', 'btn-client-start',
-     'btn-client-launch', 'btn-client-stop', 'btn-client-remove'].forEach(id => {
-      document.getElementById(id).disabled = dis;
-    });
+      'btn-client-launch', 'btn-client-stop', 'btn-client-remove'].forEach(id => {
+        document.getElementById(id).disabled = dis;
+      });
   }
 
   async function selectAllFilteredClients() {
@@ -3871,9 +4104,9 @@
     document.getElementById('tabs-client').style.display = isClient ? '' : 'none';
     document.getElementById('stats-bar').style.display = isClient ? 'none' : '';
     document.getElementById('client-stats-bar').style.display = isClient ? '' : 'none';
-    document.getElementById('mode-badge').textContent = isClient ? 'Client mode' : 'Server mode';
+    document.getElementById('mode-badge').textContent = isClient ? 'Client images' : 'Server images';
     document.getElementById('btn-mode-toggle').innerHTML =
-      isClient ? '⇄ Switch to server mode' : '⇄ Switch to client mode';
+      isClient ? '⇄ Switch to server images' : '⇄ Switch to client images';
     if (isClient && _clientView !== 'images') switchClientView('images');
     switchTab(isClient ? 'clients' : 'images');
     if (isClient) loadClientFilterOptions();
@@ -4374,7 +4607,9 @@
   }
 
   // ── Settings panel ────────────────────────────────────────────────────────
-  async function openSettingsPanel() {
+  let _settingsReturnTab = 'images';
+
+  async function openSettingsPanel(tab) {
     document.getElementById('settings-test-result').textContent = '';
     document.getElementById('settings-test-result').className = 'settings-test-result';
     document.getElementById('settings-test-output').style.display = 'none';
@@ -4383,26 +4618,47 @@
       document.getElementById('settings-docker-host').value = s.docker_host || '';
       document.getElementById('settings-default-workers').value = s.default_workers || 4;
       document.getElementById('settings-accessibility-mode').checked = !!s.accessibility_mode;
+      document.getElementById('settings-fingerprint-target').value = s.fingerprint_target || '';
+      updateFingerprintTargetPreview();
     } catch (e) {
       toast(`Error loading settings: ${e.message}`, 'err');
     }
-    document.getElementById('settings-panel-overlay').classList.add('open');
+    switchSettingsTab(tab || 'home');
+    if (state.currentTab !== 'settings') _settingsReturnTab = state.currentTab;
+    switchTab('settings');
+  }
+
+  function switchSettingsTab(tab) {
+    document.querySelectorAll('.settings-nav-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.settingsTab === tab);
+    });
+    document.querySelectorAll('.settings-section').forEach(el => {
+      el.classList.toggle('active', el.dataset.settingsSection === tab);
+    });
+  }
+
+  function updateFingerprintTargetPreview() {
+    const target = document.getElementById('settings-fingerprint-target').value.trim() || 'pqc-fingerprint-target';
+    document.getElementById('settings-fingerprint-preview').textContent =
+      `plain HTTP clients   ->  http://${target}:9000/probe\n` +
+      `raw-TLS clients      ->  https://${target}:9443/probe`;
   }
 
   function closeSettingsPanel() {
-    document.getElementById('settings-panel-overlay').classList.remove('open');
+    switchTab(_settingsReturnTab || 'images');
   }
 
   async function saveSettings() {
     const docker_host = document.getElementById('settings-docker-host').value.trim();
     const default_workers = parseInt(document.getElementById('settings-default-workers').value) || 4;
     const accessibility_mode = document.getElementById('settings-accessibility-mode').checked;
+    const fingerprint_target = document.getElementById('settings-fingerprint-target').value.trim();
     try {
       await api('/api/settings', {
         method: 'POST',
-        body: JSON.stringify({ docker_host, default_workers, accessibility_mode }),
+        body: JSON.stringify({ docker_host, default_workers, accessibility_mode, fingerprint_target }),
       });
-      toast(docker_host ? `Docker host set to ${docker_host}` : 'Using local Docker engine', 'ok');
+      toast('Settings saved', 'ok');
       closeSettingsPanel();
       // Built/tested status is scoped per host, and things like accessibility
       // mode change how rows render -- refresh whichever view is actually on
@@ -4499,7 +4755,7 @@
           <button class="btn btn-ghost btn-sm" onclick="dismissUpdate(${u.id})">Dismiss</button>
         </div>
         <div class="update-row-sub">
-          new major ${u.new_major} (latest ${u.latest_version || '?'}) —
+          new major ${u.new_major} (latest ${u.latest_version || '?'}${u.release_date ? `, released ${u.release_date}` : ''}) —
           currently tracking ${u.tracked_majors.join(', ') || 'nothing yet'}
         </div>
         <button type="button" class="update-row-sub-toggle" style="display:none" onclick="toggleRowSub(this)">more</button>
@@ -4539,8 +4795,8 @@
         <button type="button" class="update-row-sub-toggle" style="display:none" onclick="toggleRowSub(this)">more</button>
         <div class="update-row-tested-line">
           ${u.tested
-            ? `<span class="update-row-tested">✓ tested (new ${u.detected_at || ''})</span>`
-            : `<button class="btn btn-ghost btn-sm" onclick="markUpdateTested(${u.id})">Mark tested</button>`}
+        ? `<span class="update-row-tested">✓ tested (new ${u.detected_at || ''})</span>`
+        : `<button class="btn btn-ghost btn-sm" onclick="markUpdateTested(${u.id})">Mark tested</button>`}
         </div>
       </div>
     `).join('');
@@ -4846,6 +5102,11 @@
         async (err, cancelled) => {
           await loadImages(state.page);
           await loadStats();
+          // Overrides land in the DB before the regenerate step even starts,
+          // so the Reference tab's include/exclude state is already stale
+          // the moment Apply is clicked -- refresh it regardless of whether
+          // the regenerate itself succeeded, errored, or was cancelled.
+          await loadReference();
           if (err || cancelled) { await loadRegistryEditorData(); return; }
           closeRegistryEditorPanel();
         });
@@ -5095,16 +5356,20 @@
     // list of 3 raw dumps stacked on top of each other doesn't read well).
     const outTabs = [];
     if (imgData.build_output) {
-      outTabs.push({ key: 'build', label: 'Build' + (imgData.build_success === 0 ? ' ⚠' : ''),
-        html: outputPanelHtml(`bout-${id}`, imgData.build_output, imgData.build_success === 0) });
+      outTabs.push({
+        key: 'build', label: 'Build' + (imgData.build_success === 0 ? ' ⚠' : ''),
+        html: outputPanelHtml(`bout-${id}`, imgData.build_output, imgData.build_success === 0)
+      });
     }
     if (imgData.test_output || imgData.test_error) {
       // Some failure modes (image not found, container start failed, build
       // failed) never produce test output -- surface the error reason instead
       // of hiding the tab entirely.
       const testText = imgData.test_output || `(no output captured)\n\nReason: ${imgData.test_error}`;
-      outTabs.push({ key: 'test', label: 'Test' + (imgData.test_success === 0 ? ' ⚠' : ''),
-        html: outputPanelHtml(`tout-${id}`, testText, imgData.test_success === 0) });
+      outTabs.push({
+        key: 'test', label: 'Test' + (imgData.test_success === 0 ? ' ⚠' : ''),
+        html: outputPanelHtml(`tout-${id}`, testText, imgData.test_success === 0)
+      });
     }
     if (_fingerprintEnabled && (imgData.fp_ok_at || imgData.fp_err_at)) {
       outTabs.push({ key: 'fingerprint', label: '🫆 Fingerprint', html: fingerprintPanelHtml(id, imgData) });
@@ -5158,7 +5423,7 @@
 
   function fingerprintPanelHtml(id, d) {
     return fingerprintCallHtml('Successful call', d.fp_ok_status,
-        `fpoktraffic-${id}`, d.fp_ok_traffic, d.fp_ok_at, true)
+      `fpoktraffic-${id}`, d.fp_ok_traffic, d.fp_ok_at, true)
       + fingerprintCallHtml('Unsuccessful call', d.fp_err_status,
         `fperrtraffic-${id}`, d.fp_err_traffic, d.fp_err_at, false);
   }
@@ -5448,9 +5713,10 @@
         ).join('');
 
         const frameworks = lang.frameworks?.map(fw => {
-          const fwVers = (fw.versions || []).map(v =>
-            `<span class="ref-ver" title="${v.release_date || ''}">${v.version_nr}</span>`
-          ).join('');
+          const fwVers = (fw.versions || []).map(v => {
+            const tip = [v.release_date, v.note].filter(Boolean).join(' — ');
+            return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
+          }).join('');
           return `<div class="ref-item">
           <div class="ref-item-name">${fw.name}
             ${fw.module_path && fw.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${fw.module_path}</span>` : ''}
@@ -5461,9 +5727,10 @@
         }).join('') || '';
 
         const libraries = lang.libraries?.map(lib => {
-          const libVers = (lib.versions || []).map(v =>
-            `<span class="ref-ver" title="${v.release_date || ''}">${v.version_nr}</span>`
-          ).join('');
+          const libVers = (lib.versions || []).map(v => {
+            const tip = [v.release_date, v.note].filter(Boolean).join(' — ');
+            return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
+          }).join('');
           return `<div class="ref-item">
           <div class="ref-item-name">${lib.name}
             ${lib.module_path && lib.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${lib.module_path}</span>` : ''}
@@ -5503,8 +5770,8 @@
   // ── Crypto Agility (C.A.M. Component 2) ─────────────────────────────────────
   function algoBadge(supportLevel) {
     const cls = supportLevel === 'final' ? 'badge-ok'
-              : supportLevel === 'draft' ? 'badge-warn'
-              : 'badge-skip'; // deprecated / native / anything else
+      : supportLevel === 'draft' ? 'badge-warn'
+        : 'badge-skip'; // deprecated / native / anything else
     return `<span class="badge ${cls}" title="${escHtml(supportLevel)}">${escHtml(supportLevel)}</span>`;
   }
 
@@ -5559,7 +5826,7 @@
               ${p.from_algorithm ? escHtml(p.from_algorithm) : '<em style="color:var(--muted)">(new capability)</em>'}
               <span class="migration-arrow">→</span>
               <strong>${escHtml(p.to_algorithm)}</strong>
-              ${p.from_version || p.to_version ? `<span style="color:var(--muted2);font-family:var(--mono);font-size:11px;margin-left:8px">${p.from_version ? 'v'+escHtml(p.from_version) : '?'} → v${escHtml(p.to_version)}</span>` : ''}
+              ${p.from_version || p.to_version ? `<span style="color:var(--muted2);font-family:var(--mono);font-size:11px;margin-left:8px">${p.from_version ? 'v' + escHtml(p.from_version) : '?'} → v${escHtml(p.to_version)}</span>` : ''}
             </div>
             <div class="ref-item-note">${escHtml(p.description)}</div>
           </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No migration paths recorded yet.</div>'}
@@ -5591,7 +5858,7 @@
         <div class="ref-section">
           <div style="color:var(--muted);font-size:12px">
             ${vulns.length ? vulns.length + ' recorded.' :
-              'Schema is ready (per-library CVE/severity/affected-range), but no vulnerability data has been entered yet — nothing here is fabricated.'}
+          'Schema is ready (per-library CVE/severity/affected-range), but no vulnerability data has been entered yet — nothing here is fabricated.'}
           </div>
         </div>
       </div>`;
@@ -5875,14 +6142,15 @@
   document.getElementById('btn-client-view-images').addEventListener('click', () => switchClientView('images'));
   document.getElementById('btn-client-view-fplog').addEventListener('click', () => switchClientView('fplog'));
 
-  document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
-  document.getElementById('btn-host-badge').addEventListener('click', openSettingsPanel);
+  document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
+  document.getElementById('btn-host-badge').addEventListener('click', () => openSettingsPanel('home'));
   document.getElementById('btn-close-settings-panel').addEventListener('click', closeSettingsPanel);
   document.getElementById('btn-settings-cancel').addEventListener('click', closeSettingsPanel);
   document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
   document.getElementById('btn-test-docker').addEventListener('click', testDockerConnection);
-  document.getElementById('settings-panel-overlay').addEventListener('click', e => {
-    if (e.target.id === 'settings-panel-overlay') closeSettingsPanel();
+  document.getElementById('settings-fingerprint-target').addEventListener('input', updateFingerprintTargetPreview);
+  document.querySelectorAll('.settings-nav-item').forEach(item => {
+    item.addEventListener('click', () => switchSettingsTab(item.dataset.settingsTab));
   });
 
   document.getElementById('updates-badge').addEventListener('click', openUpdatesPanel);
@@ -6111,25 +6379,14 @@
     }
   }
 
-  const _cleanupMenu = document.getElementById('cleanup-menu');
-  document.getElementById('btn-cleanup').addEventListener('click', e => {
-    e.stopPropagation();
-    _cleanupMenu.classList.toggle('open');
-  });
-  document.addEventListener('click', () => _cleanupMenu.classList.remove('open'));
-  _cleanupMenu.addEventListener('click', e => e.stopPropagation());
-
   document.getElementById('mnu-cleanup-normal').addEventListener('click', () => {
-    _cleanupMenu.classList.remove('open');
     dockerCleanup(false, false);
   });
   document.getElementById('mnu-cleanup-full').addEventListener('click', () => {
-    _cleanupMenu.classList.remove('open');
     if (!confirm('Full cleanup: removes all unused images and volumes. Continue?')) return;
     dockerCleanup(true, false);
   });
   document.getElementById('mnu-cleanup-dry').addEventListener('click', () => {
-    _cleanupMenu.classList.remove('open');
     dockerCleanup(false, true);
   });
 
@@ -6147,21 +6404,11 @@
     }
   }
 
-  const _orphansMenu = document.getElementById('orphans-menu');
-  document.getElementById('btn-orphans').addEventListener('click', e => {
-    e.stopPropagation();
-    _orphansMenu.classList.toggle('open');
-  });
-  document.addEventListener('click', () => _orphansMenu.classList.remove('open'));
-  _orphansMenu.addEventListener('click', e => e.stopPropagation());
-
   document.getElementById('mnu-orphans-remove').addEventListener('click', () => {
-    _orphansMenu.classList.remove('open');
     if (!confirm('Remove all Docker images not present in the current registry/images tree?')) return;
     removeOrphans(false);
   });
   document.getElementById('mnu-orphans-dry').addEventListener('click', () => {
-    _orphansMenu.classList.remove('open');
     removeOrphans(true);
   });
 

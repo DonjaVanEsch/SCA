@@ -595,6 +595,7 @@ CMD ["python", "app.py"]
 # ── PyPI version resolution ───────────────────────────────────────────────────
 
 _PYPI_RELEASES: dict = {}
+_PYPI_RELEASE_DATES: dict = {}
 
 
 def _ver_key(v: str) -> tuple:
@@ -617,12 +618,29 @@ def _fetch_releases(pip_name: str) -> list:
              if re.match(r"^\d+(\.\d+)*$", v) and files),
             key=_ver_key,
         )
+        # Same response already has each release's upload date -- cache it
+        # alongside the version list so check_updates.py can look up a real
+        # release_date for a newly-detected major at zero extra requests.
+        dates = {}
+        for v in releases:
+            times = [f["upload_time_iso_8601"] for f in data["releases"][v]
+                     if f.get("upload_time_iso_8601")]
+            if times:
+                dates[v] = min(times)[:10]
+        _PYPI_RELEASE_DATES[pip_name] = dates
     except (URLError, KeyError, json.JSONDecodeError, OSError) as exc:
         print(f"  [WARN] PyPI lookup failed for {pip_name}: {exc}", flush=True)
         releases = []
 
     _PYPI_RELEASES[pip_name] = releases
     return releases
+
+
+def _release_date(pip_name: str, version: str) -> str | None:
+    """release_date for one already-known version, e.g. for a newly
+    detected major -- reuses _fetch_releases()'s cache, no extra request."""
+    _fetch_releases(pip_name)
+    return _PYPI_RELEASE_DATES.get(pip_name, {}).get(version)
 
 
 def _resolve(pip_name: str, registry_ver: str) -> str | None:

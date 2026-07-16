@@ -448,6 +448,7 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     new_major      TEXT NOT NULL,
     latest_version TEXT,
     tracked_majors TEXT,
+    release_date   TEXT,
     detected_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     dismissed      INTEGER NOT NULL DEFAULT 0,
     included       INTEGER NOT NULL DEFAULT 0,
@@ -730,6 +731,7 @@ def init_db() -> None:
             "ALTER TABLE pending_updates ADD COLUMN images_added INTEGER",
             "ALTER TABLE pending_updates ADD COLUMN tested INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE pending_updates ADD COLUMN tested_at TEXT",
+            "ALTER TABLE pending_updates ADD COLUMN release_date TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN client_output TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN observed_user_agent TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN observed_ja3_hash TEXT",
@@ -2953,21 +2955,23 @@ def get_vulnerabilities(filters: dict | None = None) -> list[dict]:
 
 def save_pending_update(language: str, kind: str, name: str, package_id: str | None,
                         new_major: str, latest_version: str | None,
-                        tracked_majors: list) -> None:
+                        tracked_majors: list, release_date: str | None = None) -> None:
     """Upsert one detected-but-not-yet-tracked major. Never touches
     `dismissed` on conflict, so re-detecting the same new_major on a later
     scan doesn't resurrect a row the user already dismissed."""
     with _connect() as conn:
         conn.execute("""
             INSERT INTO pending_updates
-                (language, kind, name, package_id, new_major, latest_version, tracked_majors)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (language, kind, name, package_id, new_major, latest_version,
+                 tracked_majors, release_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(language, kind, name, new_major) DO UPDATE SET
                 latest_version = excluded.latest_version,
                 tracked_majors = excluded.tracked_majors,
-                package_id     = excluded.package_id
+                package_id     = excluded.package_id,
+                release_date   = excluded.release_date
         """, (language, kind, name, package_id, new_major, latest_version,
-              json.dumps(tracked_majors)))
+              json.dumps(tracked_majors), release_date))
 
 
 def _rows_with_parsed_majors(rows) -> list:

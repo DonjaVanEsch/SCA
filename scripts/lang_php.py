@@ -50,6 +50,9 @@ def _ver_key(v: str) -> tuple:
         return (0,)
 
 
+_PACKAGIST_RELEASE_DATES: dict = {}
+
+
 def _fetch_packagist_versions(package: str) -> list:
     if package in _PACKAGIST_VERSIONS:
         return _PACKAGIST_VERSIONS[package]
@@ -64,13 +67,27 @@ def _fetch_packagist_versions(package: str) -> list:
         # Composer versions are inconsistently 'v'-prefixed depending on the
         # package's own tagging convention (Laravel/Symfony use 'v10.0.0',
         # Slim/phpseclib/sodium_compat usually don't) -- strip it uniformly.
-        candidates = (v.get("version", "").lstrip("vV") for v in raw)
-        versions = sorted((v for v in candidates if _STABLE_RE.match(v)), key=_ver_key)
+        stripped = [(e.get("version", "").lstrip("vV"), e.get("time")) for e in raw]
+        versions = sorted((v for v, _ in stripped if _STABLE_RE.match(v)), key=_ver_key)
+        # Each p2 entry already carries its own publish time -- cache it
+        # alongside the version list so check_updates.py can look up a real
+        # release_date for a newly-detected major at zero extra requests.
+        _PACKAGIST_RELEASE_DATES[package] = {
+            v: t[:10] for v, t in stripped if v in versions and t
+        }
     except (URLError, OSError, ValueError) as exc:
         print(f"  [WARN] Packagist lookup failed for {package}: {exc}", flush=True)
 
     _PACKAGIST_VERSIONS[package] = versions
     return versions
+
+
+def _release_date(package: str, version: str) -> str | None:
+    """release_date for one already-known version, e.g. for a newly
+    detected major -- reuses _fetch_packagist_versions()'s cache, no extra
+    request."""
+    _fetch_packagist_versions(package)
+    return _PACKAGIST_RELEASE_DATES.get(package, {}).get(version)
 
 
 def _resolve(package: str, registry_ver: str) -> str | None:

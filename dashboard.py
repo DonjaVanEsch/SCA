@@ -32,7 +32,8 @@ app = Flask(__name__, static_folder=str(PROJECT_ROOT / "static"))
 # ── Settings (Docker host, etc.) ──────────────────────────────────────────────
 
 SETTINGS_FILE = PROJECT_ROOT / "dashboard_settings.json"
-_DEFAULT_SETTINGS = {"docker_host": "", "default_workers": 4, "accessibility_mode": False}
+_DEFAULT_SETTINGS = {"docker_host": "", "default_workers": 4, "accessibility_mode": False,
+                     "fingerprint_target": ""}
 
 # Fingerprinting is gated behind an environment flag -- capturing real network
 # traffic against a running container is invasive enough that it should stay
@@ -222,9 +223,58 @@ def get_filters():
     return jsonify(db.get_filter_options())
 
 
+def _fw_lib_effective_includes(language: str) -> dict:
+    """(kind, name, nr) -> {"include": bool, "note": str} for every
+    framework/library version -- same registry-default-plus-DB-override
+    logic get_registry_editor_data() uses below, reused here so the
+    Reference tab's version chips can show the same include/exclude state
+    (and the override's note, if any) the Registry editor does
+    (fw_versions/lib_versions carry no such column of their own -- only
+    lang_versions.include is a stored DB column)."""
+    try:
+        registry_path = registry_writer.registry_path_for(language)
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    lang_data = next((l for l in data["languages"] if l["id"] == language), None)
+    if lang_data is None:
+        return {}
+
+    overrides = db.get_version_override_map(language)
+    result = {}
+    for kind, key in (("framework", "frameworks"), ("library", "cryptography_libs")):
+        for entry in lang_data.get(key, []):
+            name = entry["name"]
+            versions = entry.get("version")
+            ver_list = [{"nr": "builtin"}] if versions == "built-in" else (versions or [])
+            for v in ver_list:
+                nr = v["nr"]
+                registry_available = v.get("available", True)
+                ov = overrides.get((kind, name, nr))
+                override_available = ov["available"] if ov else None
+                result[(kind, name, nr)] = {
+                    "include": registry_available if override_available is None else override_available,
+                    "note": ov["note"] if ov else "",
+                }
+    return result
+
+
 @app.route("/api/reference")
 def get_reference():
-    return jsonify(db.get_reference_data())
+    data = db.get_reference_data()
+    for lang in data["languages"]:
+        includes = _fw_lib_effective_includes(lang["name"])
+        for fw in lang.get("frameworks", []):
+            for v in fw.get("versions", []):
+                info = includes.get(("framework", fw["name"], v["version_nr"]), {})
+                v["include"] = info.get("include", True)
+                v["note"] = info.get("note", "")
+        for lib in lang.get("libraries", []):
+            for v in lib.get("versions", []):
+                info = includes.get(("library", lib["name"], v["version_nr"]), {})
+                v["include"] = info.get("include", True)
+                v["note"] = info.get("note", "")
+    return jsonify(data)
 
 
 @app.route("/api/registry/<language>")
@@ -696,6 +746,7 @@ def client_action():
         return jsonify({"error": "No matching client images found"}), 404
 
     entries = _entries_from_client_db_rows(rows)
+    fingerprint_target = _load_settings().get("fingerprint_target", "")
     job_id, q = _new_job(action_str)
 
     log_lines = []
@@ -744,6 +795,7 @@ def client_action():
                     log_fn=log,
                     save_fn=_save_ctest,
                     stop_event=stop_event,
+                    target_override=fingerprint_target,
                 )
 
             elif action_str == "fingerprint":
@@ -754,6 +806,7 @@ def client_action():
                     log_fn=log,
                     save_fn=_save_cfp,
                     stop_event=stop_event,
+                    target_override=fingerprint_target,
                 )
 
             elif action_str == "remove":
@@ -890,6 +943,8 @@ def set_settings():
         settings["default_workers"] = max(1, min(16, default_workers))
     if "accessibility_mode" in data:
         settings["accessibility_mode"] = bool(data["accessibility_mode"])
+    if "fingerprint_target" in data:
+        settings["fingerprint_target"] = str(data["fingerprint_target"]).strip()
     _save_settings(settings)
     _apply_docker_host(docker_host)
     return jsonify({"ok": True, "settings": settings})
@@ -1151,7 +1206,7 @@ def dismiss_update(update_id: int):
             try:
                 registry_writer.add_bucket(
                     registry_path, section_key, item["name"], item["new_major"],
-                    None, [], available=False,
+                    item.get("release_date"), [], available=False,
                 )
             except registry_writer.RegistryWriteError as exc:
                 return jsonify({"ok": False, "error": str(exc)}), 500
@@ -1227,7 +1282,7 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
             try:
                 registry_writer.add_bucket(
                     registry_path, section_key, item["name"], item["new_major"],
-                    None, inherited_compat, available=None,
+                    item.get("release_date"), inherited_compat, available=None,
                 )
             except registry_writer.RegistryWriteError as exc:
                 log_fn(f"  ERROR writing registry: {exc}")
@@ -1260,7 +1315,7 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
                     try:
                         registry_writer.add_bucket(
                             registry_path, "http_clients", client_name, item["new_major"],
-                            None, client_compat, available=None,
+                            item.get("release_date"), client_compat, available=None,
                         )
                     except registry_writer.RegistryWriteError as exc:
                         log_fn(f"    ERROR writing http_clients/{client_name}: {exc}")

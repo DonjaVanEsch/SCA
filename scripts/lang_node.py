@@ -1060,6 +1060,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
 # ── npm registry version resolution ──────────────────────────────────────────
 
 _NPM_RELEASES: dict = {}
+_NPM_RELEASE_DATES: dict = {}
 
 
 def _ver_key(v: str) -> tuple:
@@ -1074,6 +1075,9 @@ def _fetch_releases(npm_name: str) -> list:
         return _NPM_RELEASES[npm_name]
 
     safe_name = urllib.parse.quote(npm_name, safe="")
+    # ?fields=versions is not an actual field filter npm honors -- it always
+    # returns the full document (confirmed live), so `time` (a version ->
+    # ISO-date map) rides along in the same response for free.
     url = f"https://registry.npmjs.org/{safe_name}?fields=versions"
     releases = []
     try:
@@ -1083,11 +1087,22 @@ def _fetch_releases(npm_name: str) -> list:
             (v for v in data.get("versions", {}) if re.match(r"^\d+(\.\d+)*$", v)),
             key=_ver_key,
         )
+        time_map = data.get("time", {})
+        _NPM_RELEASE_DATES[npm_name] = {
+            v: time_map[v][:10] for v in releases if v in time_map
+        }
     except (URLError, KeyError, json.JSONDecodeError, OSError) as exc:
         print(f"  [WARN] npm lookup failed for {npm_name}: {exc}", flush=True)
 
     _NPM_RELEASES[npm_name] = releases
     return releases
+
+
+def _release_date(npm_name: str, version: str) -> str | None:
+    """release_date for one already-known version, e.g. for a newly
+    detected major -- reuses _fetch_releases()'s cache, no extra request."""
+    _fetch_releases(npm_name)
+    return _NPM_RELEASE_DATES.get(npm_name, {}).get(version)
 
 
 def _resolve(npm_name: str, registry_ver: str) -> str | None:

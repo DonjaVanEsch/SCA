@@ -155,6 +155,35 @@ def _fetch(fetch_kind: str, package_id: str) -> list:
     raise ValueError(f"unknown fetch kind: {fetch_kind}")
 
 
+def _fetch_date(fetch_kind: str, package_id: str, version: str) -> str | None:
+    """release_date for one already-resolved version -- a newly detected
+    major's winning release, not the whole history. Best-effort: PyPI/npm/
+    Packagist read it straight out of the same response _fetch() already
+    cached; Maven/NuGet need one small supplementary request (see each
+    module's own _release_date). Any failure here just means the bucket
+    gets written with release_date=None, same as before this existed."""
+    try:
+        if fetch_kind == "npm":
+            import lang_node
+            return lang_node._release_date(package_id, version)
+        if fetch_kind == "pypi":
+            import lang_python
+            return lang_python._release_date(package_id, version)
+        if fetch_kind == "packagist":
+            import lang_php
+            return lang_php._release_date(package_id, version)
+        if fetch_kind == "maven":
+            import lang_java
+            group, artifact = package_id.split(":", 1)
+            return lang_java._release_date(group, artifact, version)
+        if fetch_kind == "nuget":
+            import lang_dotnet
+            return lang_dotnet._release_date(package_id, version)
+    except Exception as exc:
+        print(f"  [WARN] release-date lookup failed for {package_id} {version}: {exc}", flush=True)
+    return None
+
+
 def check_language(lang_id: str) -> list:
     """Returns a list of update dicts for one language -- one dict per
     (framework/library, newly-found major) pair not yet in registry.json."""
@@ -205,14 +234,16 @@ def check_language(lang_id: str) -> list:
             # Nothing tracked yet at all -- every real release is "new".
             new_majors = sorted(upstream_majors, key=_major_key)
         for maj in new_majors:
+            latest_version = upstream_majors[maj]
             results.append({
                 "language": lang_id,
                 "kind": kind,
                 "name": name,
                 "package_id": package_id,
                 "new_major": maj,
-                "latest_version": upstream_majors[maj],
+                "latest_version": latest_version,
                 "tracked_majors": sorted(tracked, key=_major_key),
+                "release_date": _fetch_date(fetch_kind, package_id, latest_version),
             })
     return results
 
