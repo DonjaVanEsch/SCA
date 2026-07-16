@@ -8,6 +8,7 @@ Opens: http://localhost:5050
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -259,17 +260,34 @@ def _fw_lib_effective_includes(language: str) -> dict:
     return result
 
 
+def _version_sort_key(nr: str) -> tuple:
+    """Natural version-number sort for the Reference tab's display order --
+    the DB query itself sorts by release_date (nulls last, see
+    db.get_reference_data()), which is the wrong axis to display by and
+    breaks down whenever a date is missing/null (e.g. an auto-detected major
+    included before this project started fetching real release dates) or a
+    plain string sort would put '10' before '9'. 'builtin' (no real version
+    number at all, e.g. Python's hashlib) always sorts first."""
+    if nr == "builtin":
+        return (-1,)
+    parts = re.findall(r"\d+", nr)
+    return tuple(int(p) for p in parts) if parts else (0,)
+
+
 @app.route("/api/reference")
 def get_reference():
     data = db.get_reference_data()
     for lang in data["languages"]:
+        lang["versions"].sort(key=lambda v: _version_sort_key(v["version_nr"]))
         includes = _fw_lib_effective_includes(lang["name"])
         for fw in lang.get("frameworks", []):
+            fw["versions"].sort(key=lambda v: _version_sort_key(v["version_nr"]))
             for v in fw.get("versions", []):
                 info = includes.get(("framework", fw["name"], v["version_nr"]), {})
                 v["include"] = info.get("include", True)
                 v["note"] = info.get("note", "")
         for lib in lang.get("libraries", []):
+            lib["versions"].sort(key=lambda v: _version_sort_key(v["version_nr"]))
             for v in lib.get("versions", []):
                 info = includes.get(("library", lib["name"], v["version_nr"]), {})
                 v["include"] = info.get("include", True)
