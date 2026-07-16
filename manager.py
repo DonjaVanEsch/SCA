@@ -795,21 +795,49 @@ def _do_docker_cleanup(full=False, dry_run=False, log_fn=print):
     log_fn("\nCleanup complete.")
 
 
+def _collect_client_tags(images_base=None) -> set:
+    """Client-image equivalent of _collect() + _image_tag() combined -- one
+    flat axis (language/lang_ver/http_client/hc_ver, no framework/library
+    split), so no scoped-name mis-slicing risk exists here today. Kept as
+    its own small walker rather than generalizing _collect() itself, since
+    the two directory shapes are genuinely different, not just a special
+    case of one another."""
+    base = Path(images_base) if images_base else CLIENT_IMAGES_BASE
+    tags = set()
+    for dockerfile in base.rglob("Dockerfile"):
+        parts = dockerfile.parent.relative_to(base).parts
+        if len(parts) != 4:
+            continue
+        language, lang_ver, http_client, hc_ver = parts
+        hc = http_client.lower().replace("/", "_").replace("@", "").replace(" ", "").replace(".", "-")
+        tags.add(f"pqc-client-{language}-{lang_ver}-{hc}-{hc_ver}")
+    return tags
+
+
 def _find_orphaned_image_tags(images_base=None) -> list:
     """Docker images tagged 'pqc-*' that no longer correspond to any context
-    in the current images/ tree (e.g. a framework/library/version excluded
-    by a later registry fix, or a whole language dropped from the project).
+    in the current images/ or images_clients/ tree (e.g. a framework/
+    library/version excluded by a later registry fix, or a whole language
+    dropped from the project).
 
     docker's own `image prune` has no notion of "still valid per the current
     registry" -- it only tracks container references, which this project's
     build->test->stop workflow always clears anyway, so it can't tell an
     orphan from a deliberately-kept fleet image. This walks the real
-    images/ tree (the source of truth for what SHOULD exist) and diffs it
-    against what actually exists on the engine.
+    images/ and images_clients/ trees (the source of truth for what SHOULD
+    exist) and diffs them against what actually exists on the engine.
+    `docker images --format {{.Repository}}` filtered by a "pqc-" prefix
+    matches server AND client tags alike (pqc-client-... starts with
+    "pqc-" too) plus the dashboard-managed pqc-fingerprint-target helper
+    image (built from scripts/fingerprint_target/, not from either tree) --
+    all three needed covering here, or every client image and the target
+    helper get flagged as "orphaned" on every single run.
     """
     base = Path(images_base) if images_base else IMAGES_BASE
     entries = _collect(base)
     expected_tags = {_image_tag(e) for e in entries}
+    expected_tags |= _collect_client_tags()
+    expected_tags.add(_FP_TARGET_IMAGE)
 
     r = subprocess.run(
         ["docker", "images", "--format", "{{.Repository}}"],
