@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS lang_versions (
     version_nr   TEXT    NOT NULL,
     release_date TEXT,
     include      INTEGER NOT NULL DEFAULT 1,
+    note         TEXT,
     UNIQUE(language_id, version_nr)
 );
 
@@ -732,6 +733,7 @@ def init_db() -> None:
             "ALTER TABLE pending_updates ADD COLUMN tested INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE pending_updates ADD COLUMN tested_at TEXT",
             "ALTER TABLE pending_updates ADD COLUMN release_date TEXT",
+            "ALTER TABLE lang_versions ADD COLUMN note TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN client_output TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN observed_user_agent TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN observed_ja3_hash TEXT",
@@ -3103,3 +3105,19 @@ def set_version_override(language: str, kind: str, name: str, nr: str,
                 note       = excluded.note,
                 updated_at = CURRENT_TIMESTAMP
         """, (language, kind, name, nr, None if available is None else int(available), note))
+
+
+def set_lang_version_note(language: str, nr: str, note: str) -> None:
+    """Set/clear the Reference-tab tooltip note for one language version.
+    Unlike framework/library versions, a language version has no separate
+    override table (version_overrides.kind doesn't cover 'language' -- its
+    only other axis, include/exclude, comes straight from the registry
+    JSON's own include flag, not a DB override) -- this is purely an
+    annotation on the existing lang_versions row, not an override of
+    anything. sync_registry()'s own INSERT...ON CONFLICT for this table
+    only touches release_date/include, so this survives future syncs."""
+    with _connect() as conn:
+        conn.execute("""
+            UPDATE lang_versions SET note = ?
+            WHERE version_nr = ? AND language_id = (SELECT id FROM languages WHERE name = ?)
+        """, (note.strip(), nr, language))

@@ -295,6 +295,22 @@ def get_reference():
     return jsonify(data)
 
 
+@app.route("/api/lang-version-note", methods=["POST"])
+def set_lang_version_note():
+    """Set/clear the Reference tab tooltip note for one language version --
+    the language-version equivalent of the Registry editor's per-framework/
+    library override note (see db.set_lang_version_note's own docstring for
+    why this needed a separate, simpler mechanism than version_overrides).
+    Body: {"language": "dotnet", "nr": "4.0", "note": "..."}"""
+    data = request.json or {}
+    language = data.get("language", "")
+    nr = data.get("nr", "")
+    if not language or not nr:
+        return jsonify({"error": "language and nr are required"}), 400
+    db.set_lang_version_note(language, nr, str(data.get("note", "")))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/registry/<language>")
 def get_registry_editor_data(language: str):
     """Read-only view of a language's frameworks/cryptography_libs versions

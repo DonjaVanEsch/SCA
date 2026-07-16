@@ -5708,9 +5708,10 @@
     try {
       const data = await api('/api/reference');
       el.innerHTML = data.languages.map(lang => {
-        const vers = lang.versions.map(v =>
-          `<span class="ref-ver ${v.include ? 'active' : ''}" title="${v.release_date || ''}">${v.version_nr}</span>`
-        ).join('');
+        const vers = lang.versions.map(v => {
+          const tip = [v.release_date, v.note].filter(Boolean).join(' — ');
+          return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
+        }).join('');
 
         const frameworks = lang.frameworks?.map(fw => {
           const fwVers = (fw.versions || []).map(v => {
