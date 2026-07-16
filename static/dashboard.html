@@ -2367,12 +2367,12 @@
             <tr>
               <th class="cb-cell" title="Shift+klik op een rij om een bereik te selecteren"><input type="checkbox" id="client-header-cb" class="row-cb"></th>
               <th class="col-narrow" title="Whether the image is actually present on the active Docker engine right now"></th>
-              <th class="sortable" data-csort="language">Language</th>
-              <th class="sortable" data-csort="lang_version">Ver</th>
-              <th class="sortable" data-csort="http_client">Library</th>
-              <th class="sortable" data-csort="http_client_version">Lib Ver</th>
-              <th class="sortable col-narrow" data-csort="build_success" title="Build status"></th>
-              <th class="sortable col-narrow" data-csort="test_success" title="Test status"></th>
+              <th class="sortable" data-csort="language">Language <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-csort="lang_version">Ver <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-csort="http_client">Library <span class="sort-icon">⬍</span></th>
+              <th class="sortable" data-csort="http_client_version">Lib Ver <span class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-csort="build_success" title="Build status"><span class="sort-icon">⬍</span></th>
+              <th class="sortable col-narrow" data-csort="test_success" title="Test status"><span class="sort-icon">⬍</span></th>
               <th class="fingerprint-feature" title="Last fingerprint capture -- click to view the full report">Fingerprint</th>
               <th style="width:24px"></th>
             </tr>
@@ -3356,7 +3356,10 @@
   }
 
   // ── Client images (Server/Client dashboard mode) ─────────────────────────
-  const clientState = { page: 1, perPage: 50, total: 0, pages: 1, selected: new Set(), items: [], selectAnchor: null };
+  const clientState = {
+    page: 1, perPage: 50, total: 0, pages: 1, selected: new Set(), items: [], selectAnchor: null,
+    sortCol: '', sortDir: 'asc',
+  };
 
   async function loadClientFilterOptions() {
     try {
@@ -3390,6 +3393,7 @@
     const params = filtersToParams(f, {
       page, per_page: clientState.perPage,
       include_ignored: includeIgnored,
+      ...(clientState.sortCol ? { sort_by: clientState.sortCol, sort_dir: clientState.sortDir } : {}),
     });
     try {
       const r = await api(`/api/client-images?${params}`);
@@ -3398,11 +3402,27 @@
       clientState.items = r.items;
       renderClientTable(r.items);
       renderClientPagination();
+      renderClientSortHeaders();
     } catch (e) {
       document.getElementById('client-tbody').innerHTML =
         `<tr><td colspan="9" style="padding:20px;color:var(--danger)">Error: ${e.message}</td></tr>`;
     }
     loadClientStats();
+  }
+
+  function renderClientSortHeaders() {
+    document.querySelectorAll('#client-table thead th.sortable').forEach(th => {
+      const col = th.dataset.csort;
+      const icon = th.querySelector('.sort-icon');
+      if (!icon) return;
+      if (col === clientState.sortCol) {
+        th.classList.add('sort-active');
+        icon.textContent = clientState.sortDir === 'asc' ? '↑' : '↓';
+      } else {
+        th.classList.remove('sort-active');
+        icon.textContent = '⬍';
+      }
+    });
   }
 
   async function loadClientStats() {
@@ -5681,8 +5701,14 @@
   ['f-ver', 'f-fwver', 'f-libver'].forEach(id =>
     document.getElementById(id).addEventListener('input', _debouncedRefresh));
 
-  // Sortable column headers
-  document.querySelectorAll('thead th.sortable').forEach(th =>
+  // Sortable column headers -- scoped to #img-table specifically, since the
+  // client-images table's headers share the same .sortable class for
+  // styling but use data-csort (own click handler, see below) not data-sort.
+  // An earlier unscoped selector here also attached to those headers,
+  // silently corrupting state.sortCol (data-sort is undefined on them) and
+  // firing a spurious loadImages(1) whenever a client-table header was
+  // clicked.
+  document.querySelectorAll('#img-table thead th.sortable').forEach(th =>
     th.addEventListener('click', () => {
       const col = th.dataset.sort;
       if (state.sortCol === col) {
@@ -5811,6 +5837,17 @@
     else clientState.items.forEach(r => clientState.selected.delete(r.id));
     renderClientTable(clientState.items);
   });
+  document.querySelectorAll('#client-table thead th.sortable').forEach(th =>
+    th.addEventListener('click', () => {
+      const col = th.dataset.csort;
+      if (clientState.sortCol === col) {
+        clientState.sortDir = clientState.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        clientState.sortCol = col;
+        clientState.sortDir = 'asc';
+      }
+      loadClientImages(1);
+    }));
   document.getElementById('btn-client-sel-menu').addEventListener('click', () =>
     document.getElementById('client-sel-menu').classList.toggle('open'));
   document.getElementById('mnu-client-sel-page').addEventListener('click', () => {
