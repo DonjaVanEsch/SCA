@@ -132,8 +132,18 @@ def _collect(base):
 
     The framework folder may contain a path separator (e.g. net/http stored as
     nested directories), so framework is reconstructed by joining all parts
-    between lang_ver and fw_ver (the last three parts are always fw_ver,
-    library, lib_ver).
+    between lang_ver and fw_ver (the last three parts are normally fw_ver,
+    library, lib_ver) -- UNLESS the library itself is a scoped npm package
+    name (e.g. "@noble/curves"), which write_context() passes straight into
+    a Path() join, and pathlib silently splits its embedded "/" into an
+    EXTRA real directory level on disk. Detected here by the segment that
+    would otherwise be fw_ver starting with "@" -- a real fw_ver is always a
+    plain version string and never starts with "@" -- in which case the
+    library spans that segment plus the next one, and everything shifts
+    left by one. Found via a false "orphaned image" report for every
+    @noble/curves and @noble/post-quantum combo (a real, valid, built image
+    whose re-derived tag never matched anything in expected_tags because of
+    this exact mis-slice).
     """
     entries = []
     for dockerfile in sorted(base.rglob("Dockerfile")):
@@ -143,9 +153,14 @@ def _collect(base):
         language  = parts[0]
         lang_ver  = parts[1]
         lib_ver   = parts[-1]
-        library   = parts[-2]
-        fw_ver    = parts[-3]
-        framework = "/".join(parts[2:-3])
+        if len(parts) >= 7 and parts[-3].startswith("@"):
+            library   = f"{parts[-3]}/{parts[-2]}"
+            fw_ver    = parts[-4]
+            framework = "/".join(parts[2:-4])
+        else:
+            library   = parts[-2]
+            fw_ver    = parts[-3]
+            framework = "/".join(parts[2:-3])
         entries.append({
             "language":  language,
             "lang_ver":  lang_ver,
