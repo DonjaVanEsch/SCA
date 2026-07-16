@@ -27,7 +27,9 @@ SCRIPT_DIR         = Path(__file__).parent
 CLIENT_IMAGES_BASE = SCRIPT_DIR.parent / "images_clients"
 
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(SCRIPT_DIR.parent))
 from generate_images import _included  # noqa: E402 (language-agnostic, reused as-is)
+import db  # noqa: E402 (db.py lives at the project root, see generate_images.py)
 
 _REGISTRY_FILES = {
     "python": SCRIPT_DIR / "registry python.json",
@@ -62,6 +64,9 @@ def generate(lang_id: str) -> None:
     lang_versions = [v["nr"] for v in lang_obj.get("versions", []) if v.get("include", True)]
     print(f"{lang_id} client versions to build: {lang_versions}")
 
+    db.init_db()
+    overrides = db.get_version_override_map(lang_id)
+
     generated = 0
     skipped   = 0
 
@@ -80,7 +85,13 @@ def generate(lang_id: str) -> None:
                 # `available: false` marks a version as a historical
                 # reference row (known real ceiling/impossibility) -- never
                 # actually generated, same convention as generate_images.py.
-                if not hv.get("available", True) or not _included(lang_ver, hv.get("compatibility")):
+                # A user-set override (Registry editor) takes precedence
+                # over the registry's own `available` value when present.
+                hc_avail = hv.get("available", True)
+                hc_ov = overrides.get(("http_client", hc_name, hc_ver))
+                if hc_ov is not None and hc_ov["available"] is not None:
+                    hc_avail = hc_ov["available"]
+                if not hc_avail or not _included(lang_ver, hv.get("compatibility")):
                     out = (CLIENT_IMAGES_BASE / lang_id / lang_ver / hc_name / hc_ver)
                     if out.exists():
                         shutil.rmtree(out)

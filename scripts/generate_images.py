@@ -30,6 +30,13 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).parent
 IMAGES_BASE = SCRIPT_DIR.parent / "images"
 
+# db.py lives at the project root, one level up from scripts/ -- needed so
+# this script (also run standalone via CLI/SSH, independent of the Flask
+# dashboard) can consult the user's manual include/exclude overrides (see
+# db.get_version_override_map) the same way the dashboard itself would.
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+import db
+
 
 # ── Compatibility helpers (language-agnostic) ─────────────────────────────────
 
@@ -144,6 +151,9 @@ def main() -> None:
 
     lang.prefetch(lang_data)
 
+    db.init_db()
+    overrides = db.get_version_override_map(lang_id)
+
     count = skipped = not_available = 0
 
     for lang_ver in included_versions:
@@ -167,7 +177,11 @@ def main() -> None:
                 fw_compat = fw_ver.get("compatibility")  # None → no restriction
                 fw_dir = images_base / lang_id / lang_ver / fw_name / fw_major
 
-                if not fw_ver.get("available", True):
+                fw_ov = overrides.get(("framework", fw_name, fw_major))
+                fw_avail = fw_ver.get("available", True)
+                if fw_ov is not None and fw_ov["available"] is not None:
+                    fw_avail = fw_ov["available"]
+                if not fw_avail:
                     if fw_dir.exists():
                         shutil.rmtree(fw_dir)
                     skipped += 1
@@ -184,11 +198,20 @@ def main() -> None:
                     lib_versions = lib.get("version")
 
                     if lib_versions == "built-in":
+                        out = (images_base / lang_id / lang_ver
+                               / fw_name / fw_major / lib_name / "builtin")
+
+                        lib_ov = overrides.get(("library", lib_name, "builtin"))
+                        if lib_ov is not None and lib_ov["available"] is not None \
+                                and not lib_ov["available"]:
+                            if out.exists():
+                                shutil.rmtree(out)
+                            skipped += 1
+                            continue
+
                         # Optional lib-level compatibility (e.g. crypto/mlkem → 1.24+).
                         lib_compat = lib.get("compatibility")
                         if not _included(lang_ver, lib_compat):
-                            out = (images_base / lang_id / lang_ver
-                                   / fw_name / fw_major / lib_name / "builtin")
                             if out.exists():
                                 shutil.rmtree(out)
                             skipped += 1
@@ -204,7 +227,11 @@ def main() -> None:
                         out = (images_base / lang_id / lang_ver
                                / fw_name / fw_major / lib_name / lib_ver_nr)
 
-                        if not lv.get("available", True):
+                        lib_ov = overrides.get(("library", lib_name, lib_ver_nr))
+                        lv_avail = lv.get("available", True)
+                        if lib_ov is not None and lib_ov["available"] is not None:
+                            lv_avail = lib_ov["available"]
+                        if not lv_avail:
                             if out.exists():
                                 shutil.rmtree(out)
                             skipped += 1

@@ -1736,6 +1736,96 @@
     color: var(--muted2);
   }
 
+  /* ── Registry editor panel ───────────────────────────────────────────────── */
+  .registry-editor-panel {
+    width: min(1200px, 95vw);
+  }
+
+  .registry-editor-warning {
+    background: #3d1212;
+    border-left: 3px solid var(--danger);
+    color: var(--text);
+    font-size: 12px;
+    padding: 8px 14px;
+    flex-shrink: 0;
+  }
+
+  .registry-editor-body h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted2);
+    padding: 10px 10px 4px;
+  }
+
+  /* Fixed column widths -- no horizontal scrollbar, long text wraps instead */
+  .registry-editor-body table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  .registry-editor-body td,
+  .registry-editor-body th {
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .reg-col-cb     { width: 46px; }
+  .reg-col-ver    { width: 110px; }
+  .reg-col-rel    { width: 100px; }
+  .reg-col-compat { width: 170px; }
+  .reg-col-reset  { width: 90px; }
+
+  .registry-editor-body tr.reg-group-row td {
+    background: var(--surface3);
+  }
+
+  .registry-editor-body tr.reg-group-row strong {
+    color: var(--text);
+  }
+
+  .reg-group-caret {
+    display: inline-block;
+    width: 12px;
+    text-align: center;
+  }
+
+  .reg-indent {
+    padding-left: 26px !important;
+  }
+
+  .reg-notes-toggle {
+    margin-left: 6px;
+  }
+
+  .reg-notes-text {
+    margin-top: 4px;
+    color: var(--muted2);
+    font-size: 11.5px;
+    font-weight: 400;
+    white-space: normal;
+  }
+
+  .registry-editor-note-input {
+    width: 100%;
+    min-width: 140px;
+    font-size: 12px;
+    padding: 2px 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text);
+    border-radius: 3px;
+  }
+
+  .registry-editor-note-input:hover,
+  .registry-editor-note-input:focus {
+    border-color: var(--border2);
+    background: var(--surface3);
+  }
+
+  .registry-editor-body tr.pending-change td {
+    background: rgba(88, 166, 255, .08);
+  }
+
   /* ── Settings panel ─────────────────────────────────────────────────────── */
   .settings-panel {
     width: min(520px, 92vw);
@@ -2639,8 +2729,6 @@
             <div class="sel-menu-item" id="mnu-orphans-dry">Dry run (preview)</div>
           </div>
         </div>
-        <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
-                title="Check upstream registries for new framework/library versions">🔔 New versions</button>
       </div>
       <p class="settings-hint">
         Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
@@ -2650,10 +2738,24 @@
         longer exists in the current <code>images/</code> tree (e.g. after a registry fix
         narrowed a version range, or a language was dropped) — Docker's own cleanup has no
         way to know this, since it only tracks container references.
+      </p>
+
+      <label class="settings-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px;display:block">Registry</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
+                title="Check upstream registries for new framework/library versions">🔔 New versions</button>
+        <button class="btn btn-ghost btn-sm" id="btn-settings-registry-editor"
+                title="Manually include/exclude framework and library versions">📝 Registry editor</button>
+      </div>
+      <p class="settings-hint">
         New versions scans npm/PyPI/Packagist/Maven Central/NuGet for framework/library
         majors newer than what's currently tracked — detection only, nothing is added or
         built until you include it (also runs weekly via cron; the 🔔 badge in the bottom
         bar shows the current pending count).
+        Registry editor lets you manually include/exclude any already-tracked
+        framework or library version per language, with a note explaining why —
+        stored as a database override, the registry files themselves are never
+        edited.
       </p>
     </div>
     <div class="review-panel-footer">
@@ -2694,6 +2796,32 @@
       <label style="font-size:11.5px;color:var(--muted2);display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="chk-updates-hide-tested">Hide tested
       </label>
+    </div>
+  </div>
+</div>
+
+<!-- ── Registry editor panel ─────────────────────────────────────────────── -->
+<div id="registry-editor-overlay" class="review-overlay">
+  <div class="review-panel registry-editor-panel">
+    <div class="review-panel-header">
+      <h3>Registry editor</h3>
+      <select id="reg-editor-lang" class="filter-select" style="margin-left:12px"></select>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-close-registry-editor">✕</button>
+    </div>
+    <div class="registry-editor-warning">
+      ⚠ Changes here take effect immediately once applied — a full regenerate
+      runs afterward, which can delete or rebuild large numbers of image
+      contexts for this language. Nothing is written until you click Apply.
+    </div>
+    <div class="review-body registry-editor-body" id="registry-editor-body">
+      <p class="updates-empty">Loading…</p>
+    </div>
+    <div class="review-panel-footer">
+      <span class="review-pending-note" id="registry-editor-pending-note"></span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-registry-editor-discard" disabled>Discard changes</button>
+      <button class="btn btn-primary btn-sm" id="btn-registry-editor-apply" disabled>Apply changes</button>
     </div>
   </div>
 </div>
@@ -4475,9 +4603,234 @@
       _updatesSelected.clear();
       _updateIncludeButtonState();
       openLog(`Including ${ids.length} version(s)`, r.job_id, 'include-updates',
-        async () => { await _loadUpdatesView(); await loadUpdatesBadge(); });
+        async () => {
+          await _loadUpdatesView();
+          await loadUpdatesBadge();
+          await loadImages(state.page);
+          await loadStats();
+        });
     } catch (e) {
       toast(`Include failed: ${e.message}`, 'err');
+    }
+  }
+
+  // ── Registry editor (manual include/exclude overrides) ───────────────────
+  let _regEditorLang = null;
+  // key = "kind|name|nr" -> {kind, name, nr, available, note} staged, not yet applied
+  const _regEditorPending = new Map();
+  // key = "kind|name" -> expanded (tree view; collapsed by default)
+  const _regExpandedGroups = new Set();
+
+  function _regKey(kind, name, nr) {
+    return `${kind}|${name}|${nr}`;
+  }
+
+  function _updateRegistryApplyState() {
+    const btn = document.getElementById('btn-registry-editor-apply');
+    const discardBtn = document.getElementById('btn-registry-editor-discard');
+    const n = _regEditorPending.size;
+    btn.disabled = n === 0;
+    btn.textContent = n ? `Apply ${n} change${n === 1 ? '' : 's'}` : 'Apply changes';
+    discardBtn.disabled = n === 0;
+    document.getElementById('registry-editor-pending-note').textContent =
+      n ? `${n} unsaved change${n === 1 ? '' : 's'} — nothing is written until you Apply.` : '';
+  }
+
+  async function discardRegistryEditorChanges() {
+    if (!_regEditorPending.size) return;
+    if (!confirm(`Discard ${_regEditorPending.size} unsaved change(s)?`)) return;
+    _regEditorPending.clear();
+    _updateRegistryApplyState();
+    await loadRegistryEditorData();
+  }
+
+  function _renderRegistryEditorSection(title, kind, entries) {
+    const groups = [];
+    entries.forEach(entry => {
+      if (!entry.versions.length) return;
+      const groupKey = `${kind}|${entry.name}`;
+      const expanded = _regExpandedGroups.has(groupKey);
+      const rows = entry.versions.map(v => {
+        const key = _regKey(kind, entry.name, v.nr);
+        const staged = _regEditorPending.get(key);
+        const effectiveAvailable = staged ? (staged.available !== false) : v.effective_available;
+        const noteVal = staged ? (staged.note || '') : (v.note || '');
+        const hasOverride = staged
+          ? (staged.available !== null || !!staged.note)
+          : (v.override_available !== null || !!v.note);
+        return `
+          <tr data-key="${escHtml(key)}" data-group="${escHtml(groupKey)}"
+              class="${staged ? 'pending-change' : ''}" style="${expanded ? '' : 'display:none'}">
+            <td class="cb-cell"><input type="checkbox" class="row-cb reg-row-cb" ${effectiveAvailable ? 'checked' : ''}></td>
+            <td class="mono-cell reg-indent">${escHtml(v.nr)}</td>
+            <td>${escHtml(v.release_date || '')}</td>
+            <td>${escHtml((v.compatibility || []).join(', '))}</td>
+            <td><input type="text" class="reg-row-note registry-editor-note-input"
+                       value="${escHtml(noteVal)}" placeholder="note (optional)"></td>
+            <td>${hasOverride ? '<button type="button" class="btn btn-ghost btn-sm reg-row-reset">↺ reset</button>' : ''}</td>
+          </tr>
+        `;
+      });
+      // Notes are hidden by default (only a toggle button shows), not
+      // truncated-but-visible -- distinct from the New-versions panel's
+      // more/less pattern, per explicit user preference.
+      const notesToggleHtml = entry.notes
+        ? `<button type="button" class="btn btn-ghost btn-sm reg-notes-toggle">notes</button>` : '';
+      const notesTextHtml = entry.notes
+        ? `<div class="reg-notes-text" style="display:none">${escHtml(entry.notes)}</div>` : '';
+      groups.push(`
+        <tr class="reg-group-row" data-group-toggle="${escHtml(groupKey)}">
+          <td class="cb-cell" style="vertical-align:top"><span class="reg-group-caret">${expanded ? '▾' : '▸'}</span></td>
+          <td colspan="5" style="vertical-align:top">
+            <div><strong>${escHtml(entry.name)}</strong>
+              <span style="font-weight:400;color:var(--muted2)">(${entry.versions.length})</span>
+              ${notesToggleHtml}</div>
+            ${notesTextHtml}
+          </td>
+        </tr>
+        ${rows.join('')}
+      `);
+    });
+    if (!groups.length) return '';
+    return `
+      <h4>${escHtml(title)}</h4>
+      <table class="review-table">
+        <colgroup>
+          <col class="reg-col-cb"><col class="reg-col-ver"><col class="reg-col-rel">
+          <col class="reg-col-compat"><col><col class="reg-col-reset">
+        </colgroup>
+        <thead><tr>
+          <th class="cb-cell" title="Include this version the next time images are regenerated — unchecked versions are removed on Apply.">Incl.</th>
+          <th class="reg-indent">Version</th><th>Released</th><th>Compatibility</th>
+          <th>Note</th><th></th>
+        </tr></thead>
+        <tbody>${groups.join('')}</tbody>
+      </table>
+    `;
+  }
+
+  function _toggleRegGroup(groupKey, headerTr) {
+    const expand = !_regExpandedGroups.has(groupKey);
+    if (expand) _regExpandedGroups.add(groupKey); else _regExpandedGroups.delete(groupKey);
+    const caret = headerTr.querySelector('.reg-group-caret');
+    if (caret) caret.textContent = expand ? '▾' : '▸';
+    headerTr.parentElement.querySelectorAll('tr[data-group]').forEach(tr => {
+      if (tr.dataset.group === groupKey) tr.style.display = expand ? '' : 'none';
+    });
+  }
+
+  function _stageRegistryChange(kind, name, nr, available, note) {
+    const key = _regKey(kind, name, nr);
+    _regEditorPending.set(key, { kind, name, nr, available, note });
+  }
+
+  function _bindRegistryEditorRows(body) {
+    body.querySelectorAll('tr[data-group-toggle]').forEach(tr => {
+      tr.addEventListener('click', () => _toggleRegGroup(tr.dataset.groupToggle, tr));
+    });
+
+    body.querySelectorAll('.reg-notes-toggle').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation(); // don't also trigger the group row's expand/collapse
+        const textEl = btn.closest('td').querySelector('.reg-notes-text');
+        if (!textEl) return;
+        const showing = textEl.style.display !== 'none';
+        textEl.style.display = showing ? 'none' : 'block';
+        btn.textContent = showing ? 'notes' : 'hide notes';
+      });
+    });
+
+    body.querySelectorAll('tr[data-key]').forEach(tr => {
+      const key = tr.dataset.key;
+      const [kind, name, nr] = key.split('|');
+      const cb = tr.querySelector('.reg-row-cb');
+      const noteInput = tr.querySelector('.reg-row-note');
+
+      function stageFromRow() {
+        _stageRegistryChange(kind, name, nr, cb.checked, noteInput.value);
+        tr.classList.add('pending-change');
+        _updateRegistryApplyState();
+      }
+
+      cb.addEventListener('change', stageFromRow);
+      noteInput.addEventListener('input', debounce(stageFromRow, 300));
+
+      const resetBtn = tr.querySelector('.reg-row-reset');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+          _stageRegistryChange(kind, name, nr, null, '');
+          cb.checked = true;
+          noteInput.value = '';
+          tr.classList.add('pending-change');
+          resetBtn.remove();
+          _updateRegistryApplyState();
+        });
+      }
+    });
+  }
+
+  async function loadRegistryEditorData() {
+    const body = document.getElementById('registry-editor-body');
+    body.innerHTML = '<p class="updates-empty">Loading…</p>';
+    try {
+      const data = await api(`/api/registry/${_regEditorLang}`);
+      const html = [
+        _renderRegistryEditorSection('Frameworks', 'framework', data.frameworks || []),
+        _renderRegistryEditorSection('Cryptography libs', 'library', data.cryptography_libs || []),
+      ].join('');
+      body.innerHTML = html || '<p class="updates-empty">Nothing to show for this language.</p>';
+      _bindRegistryEditorRows(body);
+    } catch (e) {
+      body.innerHTML = `<p class="updates-empty">Error loading registry: ${e.message}</p>`;
+    }
+  }
+
+  async function _populateRegistryEditorLangSelect() {
+    const sel = document.getElementById('reg-editor-lang');
+    if (sel.options.length) return;
+    try {
+      const opts = await api('/api/filters');
+      (opts.languages || []).forEach(l => sel.appendChild(new Option(l, l)));
+    } catch { }
+  }
+
+  async function openRegistryEditorPanel() {
+    await _populateRegistryEditorLangSelect();
+    if (!_regEditorLang) {
+      _regEditorLang = document.getElementById('reg-editor-lang').value || 'python';
+      document.getElementById('reg-editor-lang').value = _regEditorLang;
+    }
+    _regEditorPending.clear();
+    _updateRegistryApplyState();
+    document.getElementById('registry-editor-overlay').classList.add('open');
+    await loadRegistryEditorData();
+  }
+
+  function closeRegistryEditorPanel() {
+    document.getElementById('registry-editor-overlay').classList.remove('open');
+  }
+
+  async function applyRegistryEditorChanges() {
+    const changes = Array.from(_regEditorPending.values());
+    if (!changes.length) return;
+    if (!confirm(`Apply ${changes.length} change(s) to ${_regEditorLang}? `
+      + `This takes effect immediately and triggers a full regenerate, which can delete or `
+      + `rebuild large numbers of image contexts for this language.`)) return;
+    try {
+      const r = await api(`/api/registry/${_regEditorLang}/apply`, {
+        method: 'POST', body: JSON.stringify({ changes }),
+      });
+      _regEditorPending.clear();
+      _updateRegistryApplyState();
+      openLog(`Applying ${changes.length} registry override(s)`, r.job_id, 'registry-apply',
+        async (err, cancelled) => {
+          await loadImages(state.page);
+          await loadStats();
+          if (err || cancelled) { await loadRegistryEditorData(); return; }
+          closeRegistryEditorPanel();
+        });
+    } catch (e) {
+      toast(`Apply failed: ${e.message}`, 'err');
     }
   }
 
@@ -5516,6 +5869,23 @@
     closeSettingsPanel();
     openUpdatesPanel();
   });
+  document.getElementById('btn-settings-registry-editor').addEventListener('click', () => {
+    closeSettingsPanel();
+    openRegistryEditorPanel();
+  });
+  document.getElementById('btn-close-registry-editor').addEventListener('click', closeRegistryEditorPanel);
+  document.getElementById('registry-editor-overlay').addEventListener('click', e => {
+    if (e.target.id === 'registry-editor-overlay') closeRegistryEditorPanel();
+  });
+  document.getElementById('reg-editor-lang').addEventListener('change', async e => {
+    _regEditorLang = e.target.value;
+    _regEditorPending.clear();
+    _regExpandedGroups.clear();
+    _updateRegistryApplyState();
+    await loadRegistryEditorData();
+  });
+  document.getElementById('btn-registry-editor-apply').addEventListener('click', applyRegistryEditorChanges);
+  document.getElementById('btn-registry-editor-discard').addEventListener('click', discardRegistryEditorChanges);
 
   document.getElementById('btn-sync').addEventListener('click', async () => {
     const btn = document.getElementById('btn-sync');

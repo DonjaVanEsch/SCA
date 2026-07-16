@@ -227,6 +227,165 @@ def get_reference():
     return jsonify(db.get_reference_data())
 
 
+@app.route("/api/registry/<language>")
+def get_registry_editor_data(language: str):
+    """Read-only view of a language's frameworks/cryptography_libs versions
+    for the manual Registry editor, each annotated with any active DB
+    override (see the version_overrides table / db.get_version_override_map).
+    Registry JSON files are never written by this route or its POST
+    counterpart below -- overrides live purely in the database."""
+    registry_path = registry_writer.registry_path_for(language)
+    try:
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return jsonify({"error": f"unknown language '{language}'"}), 404
+    lang_data = next((l for l in data["languages"] if l["id"] == language), None)
+    if lang_data is None:
+        return jsonify({"error": f"unknown language '{language}'"}), 404
+
+    overrides = db.get_version_override_map(language)
+
+    def _rows(entries: list, kind: str) -> list:
+        out = []
+        for entry in entries:
+            name = entry["name"]
+            versions = entry.get("version")
+            # "built-in" (e.g. Python's hashlib) normalizes to a single
+            # synthetic bucket, same convention generate_images.py itself
+            # uses -- nr="builtin" is just another override key, no
+            # special-casing needed on the write side.
+            ver_list = [{"nr": "builtin"}] if versions == "built-in" else (versions or [])
+
+            rows = []
+            for v in ver_list:
+                nr = v["nr"]
+                registry_available = v.get("available", True)
+                ov = overrides.get((kind, name, nr))
+                override_available = ov["available"] if ov else None
+                effective_available = (
+                    registry_available if override_available is None else override_available
+                )
+                rows.append({
+                    "nr": nr,
+                    "release_date": v.get("release_date"),
+                    "compatibility": v.get("compatibility"),
+                    "registry_available": registry_available,
+                    "override_available": override_available,
+                    "effective_available": effective_available,
+                    "note": ov["note"] if ov else "",
+                })
+            out.append({"name": name, "notes": entry.get("notes"), "versions": rows})
+        return out
+
+    return jsonify({
+        "frameworks":        _rows(lang_data.get("frameworks", []), "framework"),
+        "cryptography_libs": _rows(lang_data.get("cryptography_libs", []), "library"),
+    })
+
+
+@app.route("/api/registry/<language>/apply", methods=["POST"])
+def apply_registry_overrides(language: str):
+    """Apply manual include/exclude overrides staged in the Registry editor
+    modal. Writes ONLY to the version_overrides DB table (never the
+    registry JSON files, per the user's explicit preference to keep those
+    files hand/scanner-edited only), then regenerates images for this
+    language -- and, for any mirrored Python cryptography_libs (see
+    _CLIENT_LIB_MAP), the matching client images too.
+    Body: {"changes": [{"kind": "framework"|"library", "name": str,
+    "nr": str, "available": bool|null, "note": str}, ...]}."""
+    data = request.json or {}
+    changes = data.get("changes") or []
+    job_id, q = _new_job(f"registry-apply-{language}-{len(changes)}")
+
+    def run():
+        try:
+            _do_apply_registry_overrides(language, changes, log_fn=lambda msg="": q.put(str(msg)))
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+def _regenerate_and_sync(languages: set, client_mirrored: bool, log_fn=print) -> tuple:
+    """Shared regenerate-and-sync tail for both the Registry editor's Apply
+    action and the new-versions scanner's Include action: run
+    generate_images.py per affected language + sync_images(), and -- only
+    if a Python cryptography_libs change mirrored onto http_clients (see
+    _CLIENT_LIB_MAP) -- generate_client_images.py + sync_client_images()
+    too. Returns (images_inserted, client_images_inserted)."""
+    for lang in sorted(languages):
+        log_fn(f"Regenerating images for {lang} ...")
+        proc = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "generate_images.py"), "--lang", lang],
+            capture_output=True, text=True,
+        )
+        for line in proc.stdout.splitlines():
+            log_fn(f"  {line}")
+        if proc.returncode != 0:
+            log_fn(f"  [WARN] generate_images.py exited {proc.returncode}: {proc.stderr[-500:]}")
+
+    log_fn("Syncing image database ...")
+    _total, inserted, removed = db.sync_images()
+    log_fn(f"  {inserted} new, {removed} removed")
+
+    cinserted = 0
+    if client_mirrored:
+        log_fn("Regenerating CLIENT images for python ...")
+        proc = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "generate_client_images.py"), "--lang", "python"],
+            capture_output=True, text=True,
+        )
+        for line in proc.stdout.splitlines():
+            log_fn(f"  {line}")
+        if proc.returncode != 0:
+            log_fn(f"  [WARN] generate_client_images.py exited {proc.returncode}: {proc.stderr[-500:]}")
+
+        log_fn("Syncing client image database ...")
+        _total, cinserted, cremoved = db.sync_client_images()
+        log_fn(f"  {cinserted} new, {cremoved} removed")
+
+    return inserted, cinserted
+
+
+def _do_apply_registry_overrides(language: str, changes: list, log_fn=print) -> None:
+    client_mirrored = False
+
+    for ch in changes:
+        kind = ch.get("kind")
+        name = ch.get("name")
+        nr = ch.get("nr")
+        available = ch.get("available")  # bool or None (None = reset to registry default)
+        note = ch.get("note") or ""
+
+        if kind not in _KIND_TO_SECTION:
+            log_fn(f"  [SKIP] unknown kind {kind!r} for {name} {nr}")
+            continue
+
+        db.set_version_override(language, kind, name, nr, available, note)
+        log_fn(f"Set {language}/{kind}/{name} {nr}: available={available} note={note!r}")
+
+        # Mirror onto the linked http_clients entry/entries too, same
+        # mapping used by today's Include-mirroring fix -- unconditional,
+        # no existence check needed, since an override for an (name, nr)
+        # the registry doesn't actually have for that http_client is simply
+        # never consulted by generate_client_images.py's own loop.
+        if kind == "library" and language == "python" and name in _CLIENT_LIB_MAP:
+            for client_name in _CLIENT_LIB_MAP[name]:
+                db.set_version_override(language, "http_client", client_name, nr, available, note)
+                log_fn(f"  Mirrored to http_client/{client_name} {nr}")
+                client_mirrored = True
+
+    if not changes:
+        log_fn("Nothing to apply.")
+        return
+
+    _regenerate_and_sync({language}, client_mirrored, log_fn)
+    log_fn(f"Done -- applied {len(changes)} override(s).")
+
+
 @app.route("/api/runs")
 def get_runs():
     return jsonify(db.get_runs())
@@ -949,6 +1108,25 @@ def run_update_check():
 
 _KIND_TO_SECTION = {"framework": "frameworks", "library": "cryptography_libs"}
 
+# Python cryptography_libs name -> client-side http_clients entries that
+# mirror its version history (see project_client_fingerprinting memory --
+# client-side density was originally seeded by copying each lib's majors
+# into these entries by hand, so an Include on the server-side lib now
+# needs to add the same major here too instead of silently falling behind).
+# hashlib has no versioned entry ("built-in") so it never appears as an
+# Include target and is deliberately omitted.
+_CLIENT_LIB_MAP = {
+    "pyOpenSSL":      ["pyopenssl-raw", "pyopenssl-sign"],
+    "M2Crypto":       ["m2crypto-raw", "m2crypto-sign"],
+    "PyNaCl":         ["pynacl-sign"],
+    "cryptography":   ["cryptography-sign"],
+    "PyCryptodome":   ["pycryptodome-sign"],
+    "liboqs-python":  ["liboqs-sign"],
+    "Authlib":        ["authlib-jwt"],
+    "ecdsa":          ["ecdsa-sign"],
+    "PyCrypto":       ["pycrypto-sign"],
+}
+
 
 @app.route("/api/updates/<int:update_id>/dismiss", methods=["POST"])
 def dismiss_update(update_id: int):
@@ -988,6 +1166,9 @@ def include_updates():
     since an empty array would make generate_images.py skip it entirely --
     then regenerate images for every affected language and report how many
     new image contexts resulted, per (language, framework/library, major).
+    For a Python cryptography_libs library with a client-side companion
+    (see _CLIENT_LIB_MAP), also mirrors the major into its http_clients
+    entry/entries and regenerates the matching client images.
     Body: {"ids": [1, 2, 3]}."""
     data = request.json or {}
     ids = data.get("ids") or []
@@ -1008,6 +1189,9 @@ def include_updates():
 def _do_include_updates(ids: list, log_fn=print) -> None:
     affected_languages = set()
     to_process = []
+    # (item, client_http_client_name) pairs whose client-side registry
+    # bucket also needs writing/regenerating -- see _CLIENT_LIB_MAP.
+    client_targets = []
 
     for uid in ids:
         item = db.get_pending_update(uid)
@@ -1021,6 +1205,7 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
 
         section_key = _KIND_TO_SECTION[item["kind"]]
         registry_path = registry_writer.registry_path_for(item["language"])
+        tracked = item["tracked_majors"]
 
         # A stale row from a DIFFERENT host's database (each Docker host has
         # its own SQLite db, but they share the same checked-in registry
@@ -1031,7 +1216,6 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
             log_fn(f"{item['language']}/{item['kind']} {item['name']} major {item['new_major']} "
                    f"already tracked (added by another host?) -- skipping registry write")
         else:
-            tracked = item["tracked_majors"]
             inherited_compat = []
             if tracked:
                 inherited_compat = registry_writer.get_entry_compatibility(
@@ -1052,27 +1236,50 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
         affected_languages.add(item["language"])
         to_process.append(item)
 
+        # Client-side density: some Python cryptography_libs have companion
+        # http_clients entries that mirror their version history (see
+        # _CLIENT_LIB_MAP) -- a server-side Include must add the same major
+        # there too, or client image generation silently falls behind.
+        if item["kind"] == "library" and item["language"] == "python":
+            for client_name in _CLIENT_LIB_MAP.get(item["name"], []):
+                if registry_writer.bucket_exists(registry_path, "http_clients", client_name, item["new_major"]):
+                    log_fn(f"  http_clients/{client_name} major {item['new_major']} "
+                           f"already tracked -- skipping registry write")
+                else:
+                    client_compat = None
+                    if tracked:
+                        client_compat = registry_writer.get_entry_compatibility(
+                            registry_path, "http_clients", client_name, tracked[-1])
+                    if not client_compat:
+                        client_compat = (registry_writer.get_entry_compatibility(
+                            registry_path, section_key, item["name"], item["new_major"]) or [])
+
+                    log_fn(f"  Also including client http_clients/{client_name} "
+                           f"major {item['new_major']} (mirrors {item['name']}, "
+                           f"compatibility: {client_compat})")
+                    try:
+                        registry_writer.add_bucket(
+                            registry_path, "http_clients", client_name, item["new_major"],
+                            None, client_compat, available=None,
+                        )
+                    except registry_writer.RegistryWriteError as exc:
+                        log_fn(f"    ERROR writing http_clients/{client_name}: {exc}")
+                        continue
+
+                client_targets.append((item, client_name))
+
     if not to_process:
         log_fn("Nothing included.")
         return
 
     # New buckets were just written straight to the registry JSON via
-    # registry_writer -- the DB's reference tables (fw_versions/lib_versions,
-    # used below to FK-resolve newly generated images) won't see them until
-    # the registry is re-parsed.
+    # registry_writer -- the DB's reference tables (fw_versions/lib_versions/
+    # http_clients, used below to FK-resolve newly generated images) won't
+    # see them until the registry is re-parsed.
     log_fn("Syncing registry reference tables ...")
     db.load_registry()
 
-    for lang in sorted(affected_languages):
-        log_fn(f"Regenerating images for {lang} ...")
-        proc = subprocess.run(
-            [sys.executable, str(PROJECT_ROOT / "scripts" / "generate_images.py"), "--lang", lang],
-            capture_output=True, text=True,
-        )
-        for line in proc.stdout.splitlines():
-            log_fn(f"  {line}")
-        if proc.returncode != 0:
-            log_fn(f"  [WARN] generate_images.py exited {proc.returncode}: {proc.stderr[-500:]}")
+    _regenerate_and_sync(affected_languages, bool(client_targets), log_fn)
 
     for item in to_process:
         images_base = PROJECT_ROOT / "images" / item["language"]
@@ -1084,9 +1291,13 @@ def _do_include_updates(ids: list, log_fn=print) -> None:
         db.mark_pending_update_included(item["id"], count)
         log_fn(f"  {item['language']}/{item['name']} {item['new_major']}: {count} new image(s)")
 
-    log_fn("Syncing image database ...")
-    _total, inserted, _removed = db.sync_images()
-    log_fn(f"Done -- {inserted} new image(s) synced into the database "
+    for item, client_name in client_targets:
+        images_base = PROJECT_ROOT / "images_clients" / item["language"]
+        pattern = f"*/{client_name}/{item['new_major']}/Dockerfile"
+        count = len(list(images_base.glob(pattern)))
+        log_fn(f"  {item['language']}/{client_name} {item['new_major']}: {count} new client image(s)")
+
+    log_fn(f"Done -- included {len(to_process)} version(s) "
            f"(now build/test them via the Sources tab).")
 
 

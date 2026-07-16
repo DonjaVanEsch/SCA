@@ -456,6 +456,29 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     UNIQUE(language, kind, name, new_major)
 );
 CREATE INDEX IF NOT EXISTS idx_pu_dismissed ON pending_updates(dismissed);
+
+-- ── Manual include/exclude overrides (Registry editor) ──────────────────────
+-- User-driven override layer on top of the registry JSON files' own
+-- `available` field -- deliberately NOT written into the registry files
+-- themselves (those stay pure upstream-tracked reference data). A row only
+-- exists once the user has actually set something for that exact
+-- (language, kind, name, nr); `available` NULL means "no override, defer
+-- to whatever the registry file says", 0/1 is an explicit user force.
+-- scripts/generate_images.py and scripts/generate_client_images.py both
+-- read this table directly (so it's respected even when run standalone via
+-- CLI/SSH, not just through the dashboard) and let it take precedence over
+-- the registry's own `available` value whenever non-NULL.
+CREATE TABLE IF NOT EXISTS version_overrides (
+    id          INTEGER PRIMARY KEY,
+    language    TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK(kind IN ('framework','library','http_client')),
+    name        TEXT NOT NULL,
+    nr          TEXT NOT NULL,
+    available   INTEGER,
+    note        TEXT,
+    updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(language, kind, name, nr)
+);
 """
 
 # Metadata only -- deliberately excludes build/test status. Build results are
@@ -3026,3 +3049,53 @@ def count_pending_updates() -> int:
         return conn.execute(
             "SELECT COUNT(*) FROM pending_updates WHERE dismissed = 0 AND included = 0"
         ).fetchone()[0]
+
+
+# ── Manual include/exclude overrides (Registry editor) ──────────────────────
+
+def get_version_overrides(language: str) -> list[dict]:
+    """Every active override row for a language -- used by the dashboard's
+    registry-editor GET route to annotate the registry data it returns."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM version_overrides WHERE language = ? ORDER BY kind, name, nr",
+            (language,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_version_override_map(language: str) -> dict:
+    """(kind, name, nr) -> {"available": bool|None, "note": str}, for
+    scripts/generate_images.py's and generate_client_images.py's one-time
+    per-run lookup while deciding what to build."""
+    return {
+        (r["kind"], r["name"], r["nr"]): {
+            "available": None if r["available"] is None else bool(r["available"]),
+            "note": r["note"] or "",
+        }
+        for r in get_version_overrides(language)
+    }
+
+
+def set_version_override(language: str, kind: str, name: str, nr: str,
+                         available: bool | None, note: str | None) -> None:
+    """Upsert one override. Deletes the row instead when both `available` is
+    None and `note` is empty, so clearing an override never leaves a dead
+    neutral row behind -- "no override" is the absence of a row, not a row
+    full of NULLs."""
+    note = (note or "").strip()
+    with _connect() as conn:
+        if available is None and not note:
+            conn.execute(
+                "DELETE FROM version_overrides WHERE language=? AND kind=? AND name=? AND nr=?",
+                (language, kind, name, nr),
+            )
+            return
+        conn.execute("""
+            INSERT INTO version_overrides (language, kind, name, nr, available, note, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(language, kind, name, nr) DO UPDATE SET
+                available  = excluded.available,
+                note       = excluded.note,
+                updated_at = CURRENT_TIMESTAMP
+        """, (language, kind, name, nr, None if available is None else int(available), note))
