@@ -1888,12 +1888,26 @@ def get_or_create_run(name: str, host: str = "") -> int:
         return cur.lastrowid
 
 
-def get_runs() -> list[dict]:
-    """Return all runs ordered newest first, with duration_seconds computed."""
+def get_runs(scope: str = "") -> list[dict]:
+    """Return all runs ordered newest first, with duration_seconds computed.
+
+    The runs table is shared by server AND client actions (a batch name
+    typed for one kind has no meaning for the other) -- scope='server'
+    restricts to runs referenced by a server build/test, scope='client' to
+    runs referenced by a client build/test. Unscoped (the default) returns
+    every run regardless of kind.
+    """
+    where = ""
+    if scope == "server":
+        where = ("WHERE EXISTS (SELECT 1 FROM build_results b WHERE b.run_id = runs.id) "
+                 "OR EXISTS (SELECT 1 FROM test_results t WHERE t.run_id = runs.id)")
+    elif scope == "client":
+        where = ("WHERE EXISTS (SELECT 1 FROM client_build_results b WHERE b.run_id = runs.id) "
+                 "OR EXISTS (SELECT 1 FROM client_test_results t WHERE t.run_id = runs.id)")
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at, status, finished_at, docker_host "
-            "FROM runs ORDER BY created_at DESC"
+            f"SELECT id, name, created_at, status, finished_at, docker_host "
+            f"FROM runs {where} ORDER BY created_at DESC"
         ).fetchall()
     result = []
     for r in rows:

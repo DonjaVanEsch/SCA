@@ -4156,33 +4156,46 @@
     return `${base}-${String(maxSeq + 1).padStart(3, '0')}`;
   }
 
-  async function loadRuns() {
-    try {
-      const runs = await api('/api/runs');
-      ['f-run', 'rf-run', 'cf-run'].forEach(id => {
-        const sel = document.getElementById(id);
-        while (sel.options.length > 1) sel.remove(1);
-        runs.forEach(r => {
-          const opt = new Option(r.name, r.name);
-          opt.dataset.host = r.docker_host || '';
-          const host = `host: ${hostLabel(r.docker_host || '')}`;
-          if (r.duration_seconds != null) {
-            const s = r.duration_seconds;
-            const h = Math.floor(s / 3600);
-            const m = Math.floor((s % 3600) / 60);
-            const sec = s % 60;
-            const fmt = h > 0
-              ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-              : `${m}:${String(sec).padStart(2, '0')}`;
-            opt.title = `${r.status}  ·  duur: ${fmt}  ·  ${host}`;
-          } else if (r.status === 'running') {
-            opt.title = `nog bezig…  ·  ${host}`;
-          } else {
-            opt.title = host;
-          }
-          sel.appendChild(opt);
-        });
+  function _populateRunSelects(ids, runs) {
+    ids.forEach(id => {
+      const sel = document.getElementById(id);
+      while (sel.options.length > 1) sel.remove(1);
+      runs.forEach(r => {
+        const opt = new Option(r.name, r.name);
+        opt.dataset.host = r.docker_host || '';
+        const host = `host: ${hostLabel(r.docker_host || '')}`;
+        if (r.duration_seconds != null) {
+          const s = r.duration_seconds;
+          const h = Math.floor(s / 3600);
+          const m = Math.floor((s % 3600) / 60);
+          const sec = s % 60;
+          const fmt = h > 0
+            ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+            : `${m}:${String(sec).padStart(2, '0')}`;
+          opt.title = `${r.status}  ·  duur: ${fmt}  ·  ${host}`;
+        } else if (r.status === 'running') {
+          opt.title = `nog bezig…  ·  ${host}`;
+        } else {
+          opt.title = host;
+        }
+        sel.appendChild(opt);
       });
+    });
+  }
+
+  async function loadRuns() {
+    // The runs table is shared by server and client actions alike -- a
+    // batch name typed for one kind has no meaning for the other, so each
+    // dropdown is populated from its own scoped fetch instead of one mixed
+    // list (server images filtering by a client-only batch name, or vice
+    // versa, would always show zero results).
+    try {
+      const [serverRuns, clientRuns] = await Promise.all([
+        api('/api/runs?scope=server'),
+        api('/api/runs?scope=client'),
+      ]);
+      _populateRunSelects(['f-run', 'rf-run'], serverRuns);
+      _populateRunSelects(['cf-run'], clientRuns);
     } catch { }
   }
 

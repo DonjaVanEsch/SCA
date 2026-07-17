@@ -514,7 +514,7 @@ def _do_apply_registry_overrides(language: str, changes: list, log_fn=print) -> 
 
 @app.route("/api/runs")
 def get_runs():
-    return jsonify(db.get_runs())
+    return jsonify(db.get_runs(request.args.get("scope", "")))
 
 
 @app.route("/api/runs/summary")
