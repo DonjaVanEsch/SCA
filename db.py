@@ -1822,6 +1822,7 @@ _CLIENT_DETAIL_FILTER_MAP = [
     ("lang_version",        "version"),
     ("http_client",         "http_client"),
     ("http_client_version", "http_client_version"),
+    ("build_run",           "run"),
 ]
 
 

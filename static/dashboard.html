@@ -2476,12 +2476,14 @@
             <label>Lib version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
             <input class="filter-input" id="cf-hcver" placeholder="e.g. 2.34.2 or 2.x">
           </div>
+          <div class="filter-row">
+            <label>Batch</label>
+            <select class="filter-select" id="cf-run">
+              <option value="">All</option>
+            </select>
+          </div>
         </div>
         <div class="filter-divider"></div>
-        <label class="filter-check">
-          <input type="checkbox" id="cf-ignored" checked>
-          Show ignored clients
-        </label>
         <div class="filter-actions">
           <button class="btn btn-ghost btn-sm" id="btn-clear-client-filter" style="flex:1">Clear filters</button>
         </div>
@@ -3630,16 +3632,15 @@
       version: document.getElementById('cf-ver').value.trim(),
       http_client: document.getElementById('cf-hc').value,
       http_client_version: document.getElementById('cf-hcver').value.trim(),
+      run: document.getElementById('cf-run').value,
     };
   }
 
   async function loadClientImages(page = 1) {
     clientState.page = page;
     const f = getClientFilters();
-    const includeIgnored = document.getElementById('cf-ignored').checked;
     const params = filtersToParams(f, {
       page, per_page: clientState.perPage,
-      include_ignored: includeIgnored,
       ...(clientState.sortCol ? { sort_by: clientState.sortCol, sort_dir: clientState.sortDir } : {}),
     });
     try {
@@ -3836,9 +3837,7 @@
   }
 
   async function selectAllFilteredClients() {
-    const params = filtersToParams(getClientFilters(), {
-      include_ignored: document.getElementById('cf-ignored').checked,
-    });
+    const params = filtersToParams(getClientFilters());
     try {
       const r = await api(`/api/client-images/ids?${params}`);
       r.ids.forEach(id => clientState.selected.add(id));
@@ -4160,7 +4159,7 @@
   async function loadRuns() {
     try {
       const runs = await api('/api/runs');
-      ['f-run', 'rf-run'].forEach(id => {
+      ['f-run', 'rf-run', 'cf-run'].forEach(id => {
         const sel = document.getElementById(id);
         while (sel.options.length > 1) sel.remove(1);
         runs.forEach(r => {
@@ -6101,7 +6100,7 @@
   document.getElementById('cf-hc').addEventListener('change', () => loadClientImages(1));
   document.getElementById('cf-ver').addEventListener('input', debounce(() => loadClientImages(1), 400));
   document.getElementById('cf-hcver').addEventListener('input', debounce(() => loadClientImages(1), 400));
-  document.getElementById('cf-ignored').addEventListener('change', () => loadClientImages(1));
+  document.getElementById('cf-run').addEventListener('change', () => loadClientImages(1));
   document.getElementById('btn-clear-client-filter').addEventListener('click', () => {
     document.getElementById('cf-lang').value = '';
     document.getElementById('cf-hc').value = '';

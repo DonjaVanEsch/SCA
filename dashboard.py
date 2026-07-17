@@ -755,7 +755,7 @@ def get_client_filters():
 @app.route("/api/client-images")
 def get_client_images_route():
     filters = {k: request.args.get(k, "") for k in (
-        "language", "version", "http_client", "http_client_version",
+        "language", "version", "http_client", "http_client_version", "run",
     )}
     include_ignored = request.args.get("include_ignored", "true").lower() == "true"
     page     = max(1, int(request.args.get("page", 1)))
@@ -771,7 +771,7 @@ def get_client_images_route():
 @app.route("/api/client-images/ids")
 def get_all_client_ids():
     filters = {k: request.args.get(k, "") for k in (
-        "language", "version", "http_client", "http_client_version",
+        "language", "version", "http_client", "http_client_version", "run",
     )}
     include_ignored = request.args.get("include_ignored", "true").lower() == "true"
     ids = db.get_all_client_ids_for_filter(filters, include_ignored, host=_current_host())
