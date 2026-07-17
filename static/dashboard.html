@@ -2248,6 +2248,7 @@
   </nav>
   <nav class="tabs" id="tabs-client" style="display:none">
     <button class="tab-btn active" data-tab="clients">Clients</button>
+    <button class="tab-btn" data-tab="reference">Reference</button>
   </nav>
   <div class="header-actions">
     <button class="btn btn-ghost btn-sm" id="btn-mode-toggle"
@@ -5724,6 +5725,25 @@
     el.scrollBy({ left: direction * el.clientWidth * 0.9, behavior: 'smooth' });
   }
 
+  // Shared by Frameworks / Crypto libraries / Client libraries sections --
+  // each version badge's tooltip shows its release date, compatibility
+  // range (which language versions it supports), and any note.
+  function _renderRefEntryList(entries) {
+    return (entries || []).map(entry => {
+      const vers = (entry.versions || []).map(v => {
+        const tip = [v.release_date, (v.compatibility || []).join(', '), v.note].filter(Boolean).join(' — ');
+        return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
+      }).join('');
+      return `<div class="ref-item">
+        <div class="ref-item-name">${escHtml(entry.name)}
+          ${entry.module_path && entry.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${escHtml(entry.module_path)}</span>` : ''}
+        </div>
+        <div class="ref-version-list" style="margin-top:4px">${vers}</div>
+        ${entry.notes ? `<div class="ref-item-note">${escHtml(entry.notes)}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
   async function loadReference() {
     const el = document.getElementById('ref-content');
     try {
@@ -5734,33 +5754,9 @@
           return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
         }).join('');
 
-        const frameworks = lang.frameworks?.map(fw => {
-          const fwVers = (fw.versions || []).map(v => {
-            const tip = [v.release_date, v.note].filter(Boolean).join(' — ');
-            return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
-          }).join('');
-          return `<div class="ref-item">
-          <div class="ref-item-name">${fw.name}
-            ${fw.module_path && fw.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${fw.module_path}</span>` : ''}
-          </div>
-          <div class="ref-version-list" style="margin-top:4px">${fwVers}</div>
-          ${fw.notes ? `<div class="ref-item-note">${fw.notes}</div>` : ''}
-        </div>`;
-        }).join('') || '';
-
-        const libraries = lang.libraries?.map(lib => {
-          const libVers = (lib.versions || []).map(v => {
-            const tip = [v.release_date, v.note].filter(Boolean).join(' — ');
-            return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
-          }).join('');
-          return `<div class="ref-item">
-          <div class="ref-item-name">${lib.name}
-            ${lib.module_path && lib.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${lib.module_path}</span>` : ''}
-          </div>
-          <div class="ref-version-list" style="margin-top:4px">${libVers}</div>
-          ${lib.notes ? `<div class="ref-item-note">${lib.notes}</div>` : ''}
-        </div>`;
-        }).join('') || '';
+        const frameworks = _renderRefEntryList(lang.frameworks);
+        const libraries = _renderRefEntryList(lang.libraries);
+        const httpClients = _renderRefEntryList(lang.http_clients);
 
         return `<div class="ref-card" data-lang="${escHtml(lang.name)}">
         <div class="ref-card-header">
@@ -5773,12 +5769,16 @@
           <div class="ref-version-list">${vers}</div>
         </div>
         ${frameworks ? `<div class="ref-section">
-          <div class="ref-section-title">Frameworks (${lang.frameworks?.length || 0})</div>
+          <div class="ref-section-title">Frameworks (${lang.frameworks?.length || 0}) — server-side</div>
           ${frameworks}
         </div>` : ''}
         ${libraries ? `<div class="ref-section">
-          <div class="ref-section-title">Crypto libraries (${lang.libraries?.length || 0})</div>
+          <div class="ref-section-title">Crypto libraries (${lang.libraries?.length || 0}) — server-side</div>
           ${libraries}
+        </div>` : ''}
+        ${httpClients ? `<div class="ref-section">
+          <div class="ref-section-title">Client libraries (${lang.http_clients?.length || 0}) — client-side</div>
+          ${httpClients}
         </div>` : ''}
       </div>`;
       }).join('');

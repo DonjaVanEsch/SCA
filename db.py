@@ -2293,8 +2293,23 @@ def get_all_ids_for_filter(filters: dict,
     return [r[0] for r in rows]
 
 
+def _versions_with_parsed_compat(rows) -> list:
+    """fw_versions/lib_versions/http_client_versions all store `compatibility`
+    as a JSON-encoded TEXT column -- parse it into a real list (or None) so
+    callers (the Reference tab) don't each have to JSON.parse it themselves."""
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["compatibility"] = json.loads(d["compatibility"]) if d.get("compatibility") else None
+        out.append(d)
+    return out
+
+
 def get_reference_data() -> dict:
-    """Return full reference tables for the dashboard info panel."""
+    """Return full reference tables for the dashboard info panel -- both the
+    server-side axis (frameworks/cryptography_libs) and the client-side axis
+    (http_clients), so the Reference tab can show compatibility ranges for
+    either dashboard mode."""
     with _connect() as conn:
         langs = [dict(r) for r in conn.execute(
             "SELECT * FROM languages ORDER BY name"
@@ -2312,11 +2327,11 @@ def get_reference_data() -> dict:
                 (lang_id,),
             ):
                 fw_dict = dict(fw)
-                fw_dict["versions"] = [dict(r) for r in conn.execute(
+                fw_dict["versions"] = _versions_with_parsed_compat(conn.execute(
                     "SELECT * FROM fw_versions WHERE framework_id=? "
                     "ORDER BY release_date IS NULL, release_date, version_nr",
                     (fw["id"],),
-                )]
+                ))
                 lang["frameworks"].append(fw_dict)
             lang["libraries"] = []
             for lib in conn.execute(
@@ -2324,12 +2339,24 @@ def get_reference_data() -> dict:
                 (lang_id,),
             ):
                 lib_dict = dict(lib)
-                lib_dict["versions"] = [dict(r) for r in conn.execute(
+                lib_dict["versions"] = _versions_with_parsed_compat(conn.execute(
                     "SELECT * FROM lib_versions WHERE library_id=? "
                     "ORDER BY release_date IS NULL, release_date, version_nr",
                     (lib["id"],),
-                )]
+                ))
                 lang["libraries"].append(lib_dict)
+            lang["http_clients"] = []
+            for hc in conn.execute(
+                "SELECT * FROM http_clients WHERE language_id=? ORDER BY name",
+                (lang_id,),
+            ):
+                hc_dict = dict(hc)
+                hc_dict["versions"] = _versions_with_parsed_compat(conn.execute(
+                    "SELECT * FROM http_client_versions WHERE http_client_id=? "
+                    "ORDER BY release_date IS NULL, release_date, version_nr",
+                    (hc["id"],),
+                ))
+                lang["http_clients"].append(hc_dict)
     return {"languages": langs}
 
 
