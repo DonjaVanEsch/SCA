@@ -1334,6 +1334,12 @@
     background: var(--surface3);
     border: 1px solid var(--border);
     color: var(--muted2);
+    cursor: pointer;
+  }
+
+  .ref-ver:hover {
+    filter: brightness(1.3);
+    border-color: var(--muted2);
   }
 
   .ref-ver.active {
@@ -5726,14 +5732,16 @@
   }
 
   // Shared by Frameworks / Crypto libraries / Client libraries sections --
-  // each version badge's tooltip shows its release date, compatibility
-  // range (which language versions it supports), and any note.
-  function _renderRefEntryList(entries) {
+  // each version badge is clickable (see _openRefVersionDetail) instead of
+  // carrying a tooltip, opening the same detail drawer used for image rows
+  // with every available field laid out plainly.
+  function _renderRefEntryList(entries, kind, langName) {
     return (entries || []).map(entry => {
-      const vers = (entry.versions || []).map(v => {
-        const tip = [v.release_date, (v.compatibility || []).join(', '), v.note].filter(Boolean).join(' — ');
-        return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
-      }).join('');
+      const vers = (entry.versions || []).map(v => `
+        <span class="ref-ver ${v.include ? 'active' : ''}"
+              data-ref-kind="${kind}" data-ref-lang="${escHtml(langName)}"
+              data-ref-entry="${escHtml(entry.name)}" data-ref-nr="${escHtml(v.version_nr)}"
+        >${escHtml(v.version_nr)}</span>`).join('');
       return `<div class="ref-item">
         <div class="ref-item-name">${escHtml(entry.name)}
           ${entry.module_path && entry.module_path !== 'built-in' ? `<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:6px">${escHtml(entry.module_path)}</span>` : ''}
@@ -5744,19 +5752,81 @@
     }).join('');
   }
 
+  let _refData = null;
+
+  // Opens the shared #detail-drawer (same one image rows use) for a single
+  // language/framework/library/http_client version, showing every field the
+  // Reference API has for it -- release date, compatibility range, note,
+  // include state, plus the entry's own module path / free-text notes.
+  function _openRefVersionDetail(kind, langName, entryName, nr) {
+    const lang = _refData?.languages.find(l => l.name === langName);
+    if (!lang) return;
+
+    if (kind === 'language') {
+      const v = lang.versions.find(x => x.version_nr === nr);
+      if (!v) return;
+      document.getElementById('detail-tag').textContent = `${lang.display_name || lang.name} ${nr}`;
+      document.getElementById('detail-body').innerHTML = _clientDetailHeaderHtml([
+        ['Language', lang.display_name || lang.name],
+        ['Version', nr],
+        ['Release date', v.release_date || '—'],
+        ['Included', v.include ? '✓ yes' : '✗ no'],
+        ['Note', v.note || '—'],
+      ]);
+      document.getElementById('detail-drawer').classList.add('open');
+      return;
+    }
+
+    const list = kind === 'framework' ? lang.frameworks : kind === 'library' ? lang.libraries : lang.http_clients;
+    const entry = list?.find(e => e.name === entryName);
+    const v = entry?.versions.find(x => x.version_nr === nr);
+    if (!entry || !v) return;
+
+    const kindLabel = kind === 'framework' ? 'Framework (server-side)'
+      : kind === 'library' ? 'Crypto library (server-side)'
+        : 'Client library (client-side)';
+
+    document.getElementById('detail-tag').textContent = `${entry.name} ${nr}`;
+    const body = document.getElementById('detail-body');
+    body.innerHTML = _clientDetailHeaderHtml([
+      ['Language', lang.display_name || lang.name],
+      ['Kind', kindLabel],
+      ['Name', entry.name],
+      ['Module', entry.module_path && entry.module_path !== 'built-in' ? entry.module_path : '—'],
+      ['Version', nr],
+      ['Release date', v.release_date || '—'],
+      ['Compatibility', (v.compatibility || []).join(', ') || '—'],
+      ['Included', v.include ? '✓ yes' : '✗ no'],
+      ['Version note', v.note || '—'],
+    ]);
+    if (entry.notes) {
+      body.innerHTML += `<div class="detail-row" style="border-bottom:none"><div class="detail-note">${escHtml(entry.notes)}</div></div>`;
+    }
+    document.getElementById('detail-drawer').classList.add('open');
+  }
+
+  function _bindRefVersionClicks(root) {
+    root.querySelectorAll('.ref-ver[data-ref-kind]').forEach(span => {
+      span.addEventListener('click', () => _openRefVersionDetail(
+        span.dataset.refKind, span.dataset.refLang, span.dataset.refEntry, span.dataset.refNr));
+    });
+  }
+
   async function loadReference() {
     const el = document.getElementById('ref-content');
     try {
       const data = await api('/api/reference');
+      _refData = data;
       el.innerHTML = data.languages.map(lang => {
-        const vers = lang.versions.map(v => {
-          const tip = [v.release_date, v.note].filter(Boolean).join(' — ');
-          return `<span class="ref-ver ${v.include ? 'active' : ''}" title="${escHtml(tip)}">${v.version_nr}</span>`;
-        }).join('');
+        const vers = lang.versions.map(v => `
+          <span class="ref-ver ${v.include ? 'active' : ''}"
+                data-ref-kind="language" data-ref-lang="${escHtml(lang.name)}"
+                data-ref-entry="" data-ref-nr="${escHtml(v.version_nr)}"
+          >${escHtml(v.version_nr)}</span>`).join('');
 
-        const frameworks = _renderRefEntryList(lang.frameworks);
-        const libraries = _renderRefEntryList(lang.libraries);
-        const httpClients = _renderRefEntryList(lang.http_clients);
+        const frameworks = _renderRefEntryList(lang.frameworks, 'framework', lang.name);
+        const libraries = _renderRefEntryList(lang.libraries, 'library', lang.name);
+        const httpClients = _renderRefEntryList(lang.http_clients, 'http_client', lang.name);
 
         return `<div class="ref-card" data-lang="${escHtml(lang.name)}">
         <div class="ref-card-header">
@@ -5783,6 +5853,7 @@
       </div>`;
       }).join('');
       setupNoteToggles(el);
+      _bindRefVersionClicks(el);
       renderRefLangFilterBar(data.languages);
     } catch (e) {
       el.innerHTML = `<div style="padding:20px;color:var(--danger)">Error: ${e.message}</div>`;
