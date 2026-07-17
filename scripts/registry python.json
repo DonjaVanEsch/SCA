@@ -1255,13 +1255,13 @@
           "name": "pycryptodome-sign",
           "module": null,
           "version": [
-            { "nr": "3.0", "release_date": "2014-06-24", "compatibility": [ "2.6+", "3.3+" ] },
-            { "nr": "3.1", "release_date": "2015-03-16", "compatibility": [ "2.6+", "3.3+" ] },
-            { "nr": "3.2", "release_date": "2015-09-05", "compatibility": [ "2.6+", "3.3+" ] },
-            { "nr": "3.3", "release_date": "2015-10-28", "compatibility": [ "2.6+", "3.3+" ] },
-            { "nr": "3.4", "release_date": "2016-02-07", "compatibility": [ "2.6+", "3.3+" ] },
-            { "nr": "3.5", "release_date": "2018-03-07", "compatibility": [ "2.6+", "3.3+" ] },
-            { "nr": "3.6", "release_date": "2018-04-08", "compatibility": [ "2.6+", "3.3+" ] },
+            { "nr": "3.0", "release_date": "2014-06-24", "compatibility": [ "2.6+", "3.3+" ], "available": false },
+            { "nr": "3.1", "release_date": "2015-03-16", "compatibility": [ "2.6+", "3.3+" ], "available": false },
+            { "nr": "3.2", "release_date": "2015-09-05", "compatibility": [ "2.6+", "3.3+" ], "available": false },
+            { "nr": "3.3", "release_date": "2015-10-28", "compatibility": [ "2.6+", "3.3+" ], "available": false },
+            { "nr": "3.4", "release_date": "2016-02-07", "compatibility": [ "2.6+", "3.3+" ], "available": false },
+            { "nr": "3.5", "release_date": "2018-03-07", "compatibility": [ "2.6+", "3.3+" ], "available": false },
+            { "nr": "3.6", "release_date": "2018-04-08", "compatibility": [ "2.6+", "3.3+" ], "available": false },
             { "nr": "3.7", "release_date": "2018-10-28", "compatibility": [ "2.6+", "3.3+" ] },
             { "nr": "3.8", "release_date": "2019-03-23", "compatibility": [ "2.6+", "3.3+" ] },
             { "nr": "3.9", "release_date": "2019-08-28", "compatibility": [ "2.7+", "3.5+" ] },
@@ -1280,7 +1280,7 @@
             { "nr": "3.22", "release_date": "2025-03-15", "compatibility": [ "3.7+" ] },
             { "nr": "3.23", "release_date": "2025-05-17", "compatibility": [ "3.7+" ] }
           ],
-          "notes": "RSA-2048 PSS/SHA-256 via Crypto.Signature.pss + Crypto.PublicKey.RSA -- same algorithm choice as cryptography-sign on purpose, to see whether two independent RSA-PSS implementations are distinguishable at all from the header alone (they should look byte-identical in size/encoding -- a useful negative control)."
+          "notes": "RSA-2048 PSS/SHA-256 via Crypto.Signature.pss + Crypto.PublicKey.RSA -- same algorithm choice as cryptography-sign on purpose, to see whether two independent RSA-PSS implementations are distinguishable at all from the header alone (they should look byte-identical in size/encoding -- a useful negative control). Majors 3.0-3.6 are marked `available: false`: a real docker build+run investigation (not a bare-import check) found `Crypto/Util/number.py` contains a genuine Python-2-only `0xffffffffL` integer literal that Python 3's own parser has never accepted, at ANY Python 3 version -- confirmed via `ast.parse()` against the real published sdist for every major from 3.0 through 3.8 (3.0-3.6 all fail to parse at that exact line; 3.7 is the first genuinely Python-3-clean release) and reproduced live via `from Crypto.PublicKey import RSA` on a real python:3.10-slim container. A bare `import Crypto` alone does NOT trigger this (the broken submodule is only reached via `Crypto.PublicKey`/`Crypto.Util.number`), which is why this can look deceptively fine under a shallow smoke test."
         },
         {
           "name": "pycrypto-sign",
