@@ -269,6 +269,149 @@
           ],
           "notes": "Auditable pure-JS ML-KEM/ML-DSA/SLH-DSA/FN-DSA (FIPS 203/204/205 + Falcon). The Node.js equivalent of Go's circl/liboqs-go — primary PQC library for this language."
         }
+      ],
+      "_comment_http_clients": "New axis for the client-fingerprinting experiment (see registry python.json's own _comment_http_clients for the full design rationale) -- outbound HTTP(S) call generators, not servers. Mirrors each cryptography_libs entry's version history into one or more client counterparts. Only node-forge gets a -raw variant (the only Node crypto library with its own TLS implementation distinct from the built-in OpenSSL-backed tls module) -- every other entry is sign-only, attaching an X-Signature header built with that library's own natural primitive.",
+      "http_clients": [
+        {
+          "name": "crypto-hmac",
+          "module": null,
+          "version": "built-in",
+          "notes": "HMAC-SHA256 over the probe message via Node's built-in crypto module, shared secret. Mirrors Python's hashlib-hmac -- the lowest-bar reference point."
+        },
+        {
+          "name": "node-forge-raw",
+          "module": "node-forge",
+          "version": [
+            { "nr": "0.1", "release_date": "2013-06-19", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "0.10", "release_date": "2020-05-19", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.0", "release_date": "2022-01-05", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.4", "release_date": "2024-11-25", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Drives node-forge's own pure-JS TLS implementation (forge.tls) directly over a raw net.Socket against the target's :9443 -- the only Node crypto library with its own TLS stack distinct from Node's OpenSSL-backed built-in tls module, mirroring pyOpenSSL-raw/M2Crypto-raw. GENUINE, verified limitation (2026-07-17): builds and runs fine standalone, but a real fingerprint capture against fingerprint_target fails with a `protocol_version` TLS alert -- confirmed via node-forge's own source (`lib/tls.js`) that `tls.SupportedVersions` only ever contains TLS_1_0/TLS_1_1; `tls.Versions.TLS_1_2` is defined but referenced nowhere else in the file, meaning TLS 1.2 protocol support was simply never implemented. fingerprint_target's default Python `ssl.SSLContext(PROTOCOL_TLS_SERVER)` requires TLS 1.2+, so the two can never negotiate a shared version. Deliberately left as-is (same category as pyOpenSSL 0.15.1's documented impossibility) rather than weakening the shared target's minimum TLS version for every other client just to accommodate this one."
+        },
+        {
+          "name": "node-forge-sign",
+          "module": "node-forge",
+          "version": [
+            { "nr": "0.1", "release_date": "2013-06-19", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "0.10", "release_date": "2020-05-19", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.0", "release_date": "2022-01-05", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.4", "release_date": "2024-11-25", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "RSA-2048 PSS/SHA-256 via forge.pki/forge.pss over plain HTTP(S) transport -- same algorithm choice as cryptography-sign (Python) on purpose, for cross-language negative-control comparison."
+        },
+        {
+          "name": "tweetnacl-sign",
+          "module": "tweetnacl",
+          "version": [
+            { "nr": "0", "release_date": "2014-07-11", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1", "release_date": "2016-11-17", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Ed25519 via nacl.sign.detached -- mirrors pynacl-sign."
+        },
+        {
+          "name": "node-jose-sign",
+          "module": "node-jose",
+          "version": [
+            { "nr": "0", "release_date": "2015-09-21", "compatibility": [ "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1", "release_date": "2018-05-30", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2020-09-20", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Compact JWS via node-jose's JWK/JWS API -- a genuinely different package from 'jose' below (Cisco's keystore-object model vs panva's functional API), tracked separately."
+        },
+        {
+          "name": "jose-sign",
+          "module": "jose",
+          "version": [
+            { "nr": "1", "release_date": "2019-10-01", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2020-09-08", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2020-11-14", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2021-10-14", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2023-10-25", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "6", "release_date": "2025-02-22", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Compact JWS via jose's functional CompactSign API -- mirrors authlib-jwt's cleartext-alg-announcing shape."
+        },
+        {
+          "name": "crypto-js-sign",
+          "module": "crypto-js",
+          "version": [
+            { "nr": "3", "release_date": "2013-05-07", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2020-02-12", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "HMAC-SHA256 via CryptoJS -- same algorithm as crypto-hmac, a JS-library-vs-built-in comparison point."
+        },
+        {
+          "name": "sodium-native-sign",
+          "module": "sodium-native",
+          "version": [
+            { "nr": "2", "release_date": "2017-11-07", "compatibility": [ "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2020-02-20", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "4", "release_date": "2023-01-09", "compatibility": [ "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "5", "release_date": "2025-04-01", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Ed25519 via sodium-native's crypto_sign primitives -- mirrors pynacl-sign (both libsodium-backed)."
+        },
+        {
+          "name": "bcrypt-sign",
+          "module": "bcrypt",
+          "version": [
+            { "nr": "0", "release_date": "2011-02-21", "compatibility": [ "8" ] },
+            { "nr": "1", "release_date": "2016-12-05", "compatibility": [ "6", "8" ] },
+            { "nr": "2", "release_date": "2018-04-07", "compatibility": [ "6", "8", "10" ] },
+            { "nr": "3", "release_date": "2018-07-06", "compatibility": [ "6", "7", "8", "9", "10", "11", "12", "13", "14" ] },
+            { "nr": "4", "release_date": "2020-02-21", "compatibility": [ "10", "11", "12", "13", "14", "15", "16" ] },
+            { "nr": "5", "release_date": "2020-06-08", "compatibility": [ "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20" ] },
+            { "nr": "6", "release_date": "2025-05-11", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "bcrypt hash of the probe message + shared secret (distinctive $2b$ header shape) -- native node-gyp binding."
+        },
+        {
+          "name": "bcryptjs-sign",
+          "module": "bcryptjs",
+          "version": [
+            { "nr": "1", "release_date": "2014-06-08", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2", "release_date": "2014-07-15", "compatibility": [ "0.10", "0.12", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "3", "release_date": "2025-02-13", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "Same construction as bcrypt-sign, pure-JS implementation -- no native toolchain needed."
+        },
+        {
+          "name": "argon2-sign",
+          "module": "argon2",
+          "version": [
+            { "nr": "0", "release_date": "2015-08-01", "compatibility": [ "18", "20", "22", "24", "26" ] }
+          ],
+          "notes": "argon2id hash of the probe message + shared secret (distinctive $argon2id$ header shape)."
+        },
+        {
+          "name": "liboqs-node-sign",
+          "module": "liboqs-node",
+          "version": [
+            { "nr": "0.1", "release_date": "2021-05-24", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "ML-DSA/Dilithium3 signature (draft algorithm name -- this project's liboqs-node binding only exposes pre-standardization names, see the server-side cryptography_libs entry's own notes) -- mirrors liboqs-sign."
+        },
+        {
+          "name": "noble-curves-sign",
+          "module": "@noble/curves",
+          "version": [
+            { "nr": "0.1", "release_date": "2022-12-04", "compatibility": [ "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "1.0", "release_date": "2023-04-12", "compatibility": [ "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2.0", "release_date": "2025-08-25", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "2.2", "release_date": null, "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "ed25519/secp256k1 signature via @noble/curves -- mirrors ecdsa-sign."
+        },
+        {
+          "name": "noble-pq-sign",
+          "module": "@noble/post-quantum",
+          "version": [
+            { "nr": "0.1", "release_date": "2024-04-02", "compatibility": [ "18", "19", "20", "21", "22", "23", "24", "25", "26" ] },
+            { "nr": "0.6", "release_date": "2025-11-10", "compatibility": [ "20", "21", "22", "23", "24", "25", "26" ] }
+          ],
+          "notes": "ML-DSA signature via @noble/post-quantum -- a second, independent PQC-native library alongside liboqs-node-sign."
+        }
       ]
     }
   ]
