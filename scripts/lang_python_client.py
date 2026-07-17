@@ -34,7 +34,7 @@ import shutil
 from pathlib import Path
 
 from lang_python import (  # noqa: F401 (re-exported for callers)
-    _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE, _needs_legacy_openssl,
+    _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE, _needs_legacy_openssl, _parse,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -49,6 +49,22 @@ _CLIENT_LEGACY_OPENSSL_LIB = {
     "m2crypto-sign": "M2Crypto",
     "cryptography-sign": "cryptography",
 }
+
+# cryptography's generate_private_key() (and other primitive constructors)
+# required an explicit `backend` argument before 3.1, when the multi-backend
+# API was deprecated and the default backend became implicit. Confirmed live
+# via real docker installs on python:3.9-slim-bullseye: 2.0 raises
+# "generate_private_key() missing 1 required positional argument: 'backend'"
+# without it; 3.3 works fine either way. Of this project's tracked majors
+# (1.0, 2.0, 3.3, 3.4, 35.0+), only "2.0" actually reaches this in a real
+# generated image -- "1.0"'s own compat floor (Python 2.6) excludes every
+# Python version this project tests.
+_CRYPTOGRAPHY_BACKEND_REQUIRED_MAX = (3, 1)
+
+
+def _cryptography_needs_backend(hc_ver: str) -> bool:
+    parsed = _parse(hc_ver)
+    return bool(parsed) and parsed < _CRYPTOGRAPHY_BACKEND_REQUIRED_MAX
 
 # Every client that pip-installs something gets this base toolchain
 # unconditionally (matching lang_python.py's own server-side base set) --
@@ -278,36 +294,43 @@ except Exception as exc:
 """
 
 
-def _cryptography_sign_app() -> str:
-    return """\
+def _cryptography_sign_app(hc_ver: str = "") -> str:
+    # Pre-3.1 cryptography requires `backend` as an explicit positional/
+    # keyword argument to generate_private_key() -- see
+    # _cryptography_needs_backend()'s docstring-comment above for the real
+    # docker-verified threshold.
+    needs_backend = _cryptography_needs_backend(hc_ver)
+    backend_import = "from cryptography.hazmat.backends import default_backend\n" if needs_backend else ""
+    backend_kwarg = ", backend=default_backend()" if needs_backend else ""
+    return f"""\
 import base64
 import json
 import os
 import sys
 import requests
 import cryptography
-from cryptography.hazmat.primitives import hashes
+{backend_import}from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 target = os.environ.get("PQC_TARGET_URL", "http://host.docker.internal:9000/probe")
 MESSAGE = b"pqc-sca-fingerprint-probe"
 
 try:
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048{backend_kwarg})
     signature = private_key.sign(
         MESSAGE,
         padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
         hashes.SHA256(),
     )
-    headers = {"X-Signature": f"rsa2048-pss-sha256={base64.b64encode(signature).decode()}"}
+    headers = {{"X-Signature": f"rsa2048-pss-sha256={{base64.b64encode(signature).decode()}}"}}
     r = requests.get(target, headers=headers, timeout=10)
-    print(json.dumps({
+    print(json.dumps({{
         "client": "cryptography-sign", "client_version": cryptography.__version__,
         "language_version": sys.version.split()[0],
         "status_code": r.status_code, "body": r.text[:500],
-    }))
+    }}))
 except Exception as exc:
-    print(json.dumps({"client": "cryptography-sign", "error": str(exc)}))
+    print(json.dumps({{"client": "cryptography-sign", "error": str(exc)}}))
 """
 
 
@@ -661,7 +684,10 @@ def write_client_context(python_ver: str, hc_name: str, hc_ver: str, out_base: P
     out.mkdir(parents=True)
 
     (out / "Dockerfile").write_text(make_client_dockerfile(python_ver, hc_name, hc_ver), encoding="utf-8", newline="\n")
-    (out / "client.py").write_text(meta["app"](), encoding="utf-8", newline="\n")
+    # cryptography-sign's script varies by version (see
+    # _cryptography_needs_backend) -- every other client's is static.
+    app_content = _cryptography_sign_app(hc_ver) if hc_name == "cryptography-sign" else meta["app"]()
+    (out / "client.py").write_text(app_content, encoding="utf-8", newline="\n")
     if reqs:
         (out / "requirements.txt").write_text(reqs, encoding="utf-8", newline="\n")
 
