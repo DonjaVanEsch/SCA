@@ -51,6 +51,7 @@ SHARED_SECRET = "pqc-sca-shared-secret"
 # since Node 6.13/8) -- several of these libraries' own tracked compat
 # reaches back to Node 4/0.10.
 _REQUEST_HELPER = """\
+"use strict";
 const http = require("http");
 const https = require("https");
 const urlParse = require("url").parse;
@@ -121,6 +122,7 @@ def _node_forge_raw_app(hc_ver: str = "") -> str:
     # net.Socket -- mirrors pyopenssl-raw/m2crypto-raw's "drive the target
     # library's own TLS stack, not the language's built-in one" design.
     return """\
+"use strict";
 const net = require("net");
 const forge = require("node-forge");
 const urlParse = require("url").parse;
@@ -198,16 +200,27 @@ def _node_forge_sign_app(hc_ver: str = "") -> str:
     # RSA-2048 PSS/SHA-256 via forge.pki/forge.pss -- same algorithm choice
     # as cryptography-sign (Python) on purpose, for cross-language
     # negative-control comparison (both should look byte-identical in size).
+    #
+    # BUG FIXED 2026-07-17: forge.pss.create() takes an OPTIONS OBJECT
+    # ({md, mgf, saltLength}) only from some later version onward -- the
+    # original API (still the ONLY form node-forge 0.1.x understands,
+    # confirmed via a real docker run against the actual resolved 0.1.15)
+    # is positional: create(hash, mgf, sLen). Passing an options object to
+    # that old signature makes `hash` BE the whole options object, which
+    # has no .start() method, crashing inside pss.js's own encode() with
+    # "hash.start is not a function". The positional form works identically
+    # on both 0.1.15 and the latest (1.4.0) release -- confirmed via a real
+    # docker run on both -- so it's the one universally-compatible form.
     return _wrap("""\
 const forge = require("node-forge");
 
 try {
 \tconst keys = forge.pki.rsa.generateKeyPair({ bits: 2048, e: 0x10001 });
-\tconst pss = forge.pss.create({
-\t\tmd: forge.md.sha256.create(),
-\t\tmgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
-\t\tsaltLength: 32,
-\t});
+\tconst pss = forge.pss.create(
+\t\tforge.md.sha256.create(),
+\t\tforge.mgf.mgf1.create(forge.md.sha256.create()),
+\t\t32
+\t);
 \tconst md = forge.md.sha256.create();
 \tmd.update(MESSAGE_, "utf8");
 \tconst signature = keys.privateKey.sign(md, pss);
@@ -265,9 +278,15 @@ def _jose_sign_app(hc_ver: str = "") -> str:
     # majors are a real, disclosed gap, expected to need a per-version fix
     # once actually build/test-verified, same iterative pattern as every
     # other version-specific bug already found elsewhere in this project.
+    # BUG FIXED 2026-07-17: TextEncoder is only a GLOBAL since Node 11 --
+    # confirmed via a real docker run on node:10-slim ("ReferenceError:
+    # TextEncoder is not defined"), which jose's own tracked compat
+    # (majors 1+ start at Node 10) reaches. require("util").TextEncoder
+    # has existed since Node 8.3 and is the same class either way.
     body = """\
 function run(joseLib) {
 \ttry {
+\t\tconst TextEncoder = require("util").TextEncoder;
 \t\tconst secret = new TextEncoder().encode(SHARED_SECRET_);
 \t\tconst payload = new TextEncoder().encode(MESSAGE_);
 \t\tnew joseLib.CompactSign(payload)
@@ -376,18 +395,22 @@ argon2.hash(MESSAGE_ + SHARED_SECRET_)
 # ── liboqs-node (git-cloned, not npm-installed -- see _liboqs_node_stage) ─────
 
 def _liboqs_node_sign_app(hc_ver: str = "") -> str:
-    # Best-effort API shape, modeled on liboqs-python's own oqs.Signature
-    # class (this project's other liboqs bindings follow a similar
-    # generate_keypair()/sign() shape) -- not independently confirmed
-    # against liboqs-node's actual TypeScript/JS surface, since this
-    # binding's own README already documents it as EXPERIMENTAL with
-    # sparse docs. Real build/test verification (per the user's own pass)
-    # will surface the actual method names if these are wrong.
+    # Method names (generateKeypair()/sign()) confirmed correct via a real
+    # docker run's Object.getOwnPropertyNames(oqs.Signature.prototype).
+    #
+    # BUG FIXED 2026-07-17: "Dilithium3" (the modern liboqs-python-style
+    # name) is not a name this binding's vendored liboqs commit knows --
+    # confirmed live via oqs.Sigs.getEnabledAlgorithms(): this old (~2021)
+    # liboqs build only exposes the historical all-caps/underscore draft
+    # name "DILITHIUM_3" (alongside DILITHIUM_2/DILITHIUM_4, Falcon,
+    # SPHINCS+, etc.) -- the same "draft, not final NIST name" situation
+    # this project's own lang_node.py already documented for this exact
+    # binding's KEM side (Kyber768, not ML-KEM-768).
     return _wrap("""\
 const oqs = require("/opt/liboqs-node/lib/index.js");
 
 try {
-\tconst sig = new oqs.Signature("Dilithium3");
+\tconst sig = new oqs.Signature("DILITHIUM_3");
 \tconst publicKey = sig.generateKeypair();
 \tconst messageBytes = Buffer.from(MESSAGE_, "utf8");
 \tconst signature = sig.sign(messageBytes);
@@ -500,11 +523,12 @@ def make_client_package_json(npm: str | None, version_resolved: str | None) -> s
     return json.dumps(manifest, indent=2) + "\n"
 
 
-def _make_liboqs_client_dockerfile(node_ver: str) -> str:
+def _make_liboqs_client_dockerfile(node_ver: str, cache_bust: str) -> str:
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(node_ver)
     return (
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
+        f"{cache_bust}"
         f"{_liboqs_node_stage(apt_sources, apt_flag, allow_unauth)}"
         "COPY client.js .\n"
         'CMD ["node", "client.js"]\n'
@@ -512,8 +536,21 @@ def _make_liboqs_client_dockerfile(node_ver: str) -> str:
 
 
 def make_client_dockerfile(node_ver: str, hc_name: str, hc_ver: str = "") -> str:
+    # Cache-key diversifier (2026-07-17): mirrors lang_node.py's own
+    # server-side cache_bust ARG. Two different (hc_name, hc_ver) combos
+    # sharing the same node_ver + apt/install shape have an otherwise
+    # byte-identical Dockerfile prefix, and this project's own real-world
+    # investigation (see lang_node.py's cache_bust comment) already
+    # confirmed BuildKit's cache can alias a COPY layer across two
+    # unrelated combos under parallel builds. Confirmed live here too: a
+    # real test batch had several tweetnacl-sign images crash with
+    # "Cannot find module 'tweetnacl'" despite a correct on-disk
+    # package.json/client.js -- same root cause/class, just never guarded
+    # against on the client side until now.
+    cache_bust = f'ARG PQC_CLIENT_ID="{hc_name}@{hc_ver}"\n'
+
     if hc_name == "liboqs-node-sign":
-        return _make_liboqs_client_dockerfile(node_ver)
+        return _make_liboqs_client_dockerfile(node_ver, cache_bust)
 
     meta = _CLIENT_META[hc_name]
     sys_deps = meta["sys_deps"]
@@ -539,6 +576,7 @@ def make_client_dockerfile(node_ver: str, hc_name: str, hc_ver: str = "") -> str
     return (
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
+        f"{cache_bust}"
         f"{apt_block}{install_block}"
         "COPY client.js .\n"
         'CMD ["node", "client.js"]\n'
