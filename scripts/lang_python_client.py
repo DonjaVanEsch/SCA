@@ -35,6 +35,7 @@ from pathlib import Path
 
 from lang_python import (  # noqa: F401 (re-exported for callers)
     _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE, _needs_legacy_openssl, _parse,
+    LIB_VERSION_EXTRA,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -78,8 +79,25 @@ _BASE_BUILD_SYS_DEPS = ("build-essential", "gcc", "libffi-dev", "libssl-dev")
 
 # ── Per-client-library app templates ──────────────────────────────────────────
 
-def _pyopenssl_raw_app() -> str:
-    return """\
+# pyOpenSSL renamed its "negotiate the best mutually supported protocol"
+# method constant from SSLv23_METHOD to TLS_METHOD somewhere between 17.5.0
+# and 22.1.0, the only two tracked majors that actually build (0.15.1 is the
+# separately-excluded impossibility, see registry notes). Confirmed live via
+# real docker runs: 17.5.0 has no TLS_METHOD attribute at all (AttributeError);
+# 22.1.0 has both names (kept SSLv23_METHOD for backwards compat), so using
+# the legacy name there would also still work, but TLS_METHOD is what current
+# pyOpenSSL docs recommend.
+_PYOPENSSL_TLS_METHOD_MIN = (22, 1)
+
+
+def _pyopenssl_needs_legacy_method_name(hc_ver: str) -> bool:
+    parsed = _parse(hc_ver)
+    return bool(parsed) and parsed < _PYOPENSSL_TLS_METHOD_MIN
+
+
+def _pyopenssl_raw_app(hc_ver: str = "") -> str:
+    method_const = "SSLv23_METHOD" if _pyopenssl_needs_legacy_method_name(hc_ver) else "TLS_METHOD"
+    template = """\
 import json
 import os
 import select
@@ -109,7 +127,7 @@ def _retry_ssl(fn):
             select.select([], [sock], [])
 
 try:
-    ctx = SSL.Context(SSL.TLS_METHOD)
+    ctx = SSL.Context(SSL.__METHOD__)
     ctx.set_verify(SSL.VERIFY_NONE, lambda *a: True)
     sock = socket.create_connection((host, port), timeout=10)
     conn = SSL.Connection(ctx, sock)
@@ -151,6 +169,7 @@ try:
 except Exception as exc:
     print(json.dumps({"client": "pyopenssl-raw", "error": repr(exc)}))
 """
+    return template.replace("__METHOD__", method_const)
 
 
 def _m2crypto_raw_app() -> str:
@@ -585,6 +604,12 @@ def make_requirements(hc_name: str, hc_ver: str) -> str | None:
         if exact is None:
             return None
         lines.append(f"{meta['pip']}=={exact}")
+        # Same transitive-dependency pins the server side needs for the
+        # exact same library version (e.g. pyOpenSSL 17.5.0 -> cryptography<36,
+        # see lang_python.py's LIB_VERSION_EXTRA) -- these clients mirror the
+        # server-side cryptography_libs version history, so the same real
+        # docker-confirmed breakage applies identically here.
+        lines += LIB_VERSION_EXTRA.get((meta["pip"], hc_ver), [])
     lines += meta.get("extra_pip", [])
     return ("\n".join(lines) + "\n") if lines else ""
 
@@ -663,6 +688,14 @@ CMD ["python", "client.py"]
 """
 
 
+# Clients whose generated client.py content depends on hc_ver -- every
+# other entry's "app" callable in _CLIENT_META takes no arguments.
+_VERSION_AWARE_APPS = {
+    "cryptography-sign": _cryptography_sign_app,
+    "pyopenssl-raw": _pyopenssl_raw_app,
+}
+
+
 def write_client_context(python_ver: str, hc_name: str, hc_ver: str, out_base: Path | None = None) -> bool:
     """Generate one client image context under
     images_clients/python/{python_ver}/{hc_name}/{hc_ver}/, where hc_ver is
@@ -684,9 +717,11 @@ def write_client_context(python_ver: str, hc_name: str, hc_ver: str, out_base: P
     out.mkdir(parents=True)
 
     (out / "Dockerfile").write_text(make_client_dockerfile(python_ver, hc_name, hc_ver), encoding="utf-8", newline="\n")
-    # cryptography-sign's script varies by version (see
-    # _cryptography_needs_backend) -- every other client's is static.
-    app_content = _cryptography_sign_app(hc_ver) if hc_name == "cryptography-sign" else meta["app"]()
+    # cryptography-sign's and pyopenssl-raw's scripts vary by version (see
+    # _cryptography_needs_backend / _pyopenssl_needs_legacy_method_name) --
+    # every other client's is static.
+    app_fn = _VERSION_AWARE_APPS.get(hc_name)
+    app_content = app_fn(hc_ver) if app_fn else meta["app"]()
     (out / "client.py").write_text(app_content, encoding="utf-8", newline="\n")
     if reqs:
         (out / "requirements.txt").write_text(reqs, encoding="utf-8", newline="\n")
