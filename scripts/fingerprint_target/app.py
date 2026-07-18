@@ -63,12 +63,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass  # stay quiet -- the real record is the external packet capture
 
 
+# ThreadingHTTPServer, not plain HTTPServer -- confirmed the hard way: a
+# single client that hangs mid-request (e.g. a raw-TLS client's ClientHello
+# arriving at the plain HTTP listener) wedges a single-threaded server for
+# every other client forever after, surfacing as a ~2 minute TCP-connect
+# timeout on totally unrelated, otherwise-working combos. Handler has no
+# shared mutable state (each response is built purely from the request's
+# own attributes), so concurrent handling needs no locking.
 def _serve_http():
-    http.server.HTTPServer(("0.0.0.0", HTTP_PORT), Handler).serve_forever()
+    http.server.ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler).serve_forever()
 
 
 def _serve_https():
-    httpd = http.server.HTTPServer(("0.0.0.0", HTTPS_PORT), Handler)
+    httpd = http.server.ThreadingHTTPServer(("0.0.0.0", HTTPS_PORT), Handler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
     httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
