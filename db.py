@@ -2216,6 +2216,32 @@ def get_client_filter_options() -> dict:
         }
 
 
+def get_client_cascading_filter_options(active: dict) -> dict:
+    """Client-mode counterpart to get_cascading_filter_options() -- narrows
+    the http_client/version option lists to whatever actually exists for the
+    already-selected parent dimensions, same language -> lang_version ->
+    http_client -> http_client_version dependency order as the server side."""
+    def _vals(col: str, restrict: dict) -> list:
+        where_sql, params = _build_client_where(restrict)
+        rows = _connect().execute(
+            f"SELECT DISTINCT {col} FROM client_image_details {where_sql} ORDER BY {col}",
+            params,
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    lang = active.get("language", "")
+    ver  = active.get("version", "")
+    hc   = active.get("http_client", "")
+
+    return {
+        "languages":            _vals("language",             {}),
+        "lang_versions":        _vals("lang_version",         {"language": lang}),
+        "http_clients":         _vals("http_client",           {"language": lang, "version": ver}),
+        "http_client_versions": _vals("http_client_version",   {"language": lang, "version": ver,
+                                                                  "http_client": hc}),
+    }
+
+
 def save_client_build_result(client_image_id: int, success: bool,
                              output: str,
                              started_at: str, finished_at: str,

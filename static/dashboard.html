@@ -3679,21 +3679,45 @@
     sortCol: '', sortDir: 'asc',
   };
 
-  async function loadClientFilterOptions() {
+  // Cascades cf-hc (and cf-lang, for symmetry with the server-side pattern)
+  // to only the values that actually exist for the currently-selected
+  // parent filters -- same language -> lang_version -> http_client ->
+  // http_client_version dependency order as refreshCascadingOptions().
+  async function refreshClientCascadingOptions() {
     try {
-      const opts = await api('/api/client-filters');
+      const params = filtersToParams(getClientFilters());
+      const opts = await api(`/api/client-filters?${params}`);
       function repop(selId, values) {
         const sel = document.getElementById(selId);
         if (!sel) return;
         const cur = sel.value;
         while (sel.options.length > 1) sel.remove(1);
         values.forEach(v => sel.appendChild(new Option(v, v)));
-        if (values.includes(cur)) sel.value = cur;
+        sel.value = values.includes(cur) ? cur : '';
       }
       repop('cf-lang', opts.languages || []);
       repop('cf-hc', opts.http_clients || []);
     } catch { }
+  }
+
+  async function loadClientFilterOptions() {
+    // Step 1: load ALL options unfiltered first, so a restored value that
+    // doesn't yet exist as an <option> isn't silently dropped by the browser.
+    try {
+      const opts = await api('/api/client-filters');
+      function repopAll(selId, values) {
+        const sel = document.getElementById(selId);
+        if (!sel) return;
+        while (sel.options.length > 1) sel.remove(1);
+        values.forEach(v => sel.appendChild(new Option(v, v)));
+      }
+      repopAll('cf-lang', opts.languages || []);
+      repopAll('cf-hc', opts.http_clients || []);
+    } catch { }
+    // Step 2: restore saved values (options now exist in the selects)
     restoreClientFilters();
+    // Step 3: cascade based on the restored values
+    await refreshClientCascadingOptions();
     loadClientImages(1);
   }
 
@@ -6276,17 +6300,30 @@
   document.getElementById('btn-mode-toggle').addEventListener('click', () => {
     switchDashboardMode(_dashboardMode === 'client' ? 'server' : 'client');
   });
-  document.getElementById('cf-lang').addEventListener('change', () => { saveClientFilters(); loadClientImages(1); });
-  document.getElementById('cf-hc').addEventListener('change', () => { saveClientFilters(); loadClientImages(1); });
-  document.getElementById('cf-ver').addEventListener('input', debounce(() => { saveClientFilters(); loadClientImages(1); }, 400));
+  // Live refresh: cf-lang/cf-hc trigger cascading immediately, same pattern
+  // as f-lang/f-fw/f-lib on the server side (narrows cf-hc to only the
+  // libraries that actually exist for the selected language).
+  ['cf-lang', 'cf-hc'].forEach(id =>
+    document.getElementById(id).addEventListener('change', async () => {
+      saveClientFilters();
+      await refreshClientCascadingOptions();
+      loadClientImages(1);
+    }));
+  const _debouncedClientRefresh = debounce(async () => {
+    saveClientFilters();
+    await refreshClientCascadingOptions();
+    loadClientImages(1);
+  }, 400);
+  document.getElementById('cf-ver').addEventListener('input', _debouncedClientRefresh);
   document.getElementById('cf-hcver').addEventListener('input', debounce(() => { saveClientFilters(); loadClientImages(1); }, 400));
   document.getElementById('cf-run').addEventListener('change', () => loadClientImages(1));
-  document.getElementById('btn-clear-client-filter').addEventListener('click', () => {
+  document.getElementById('btn-clear-client-filter').addEventListener('click', async () => {
     document.getElementById('cf-lang').value = '';
     document.getElementById('cf-hc').value = '';
     document.getElementById('cf-ver').value = '';
     document.getElementById('cf-hcver').value = '';
     localStorage.removeItem(_CLIENT_FILTER_KEY);
+    await refreshClientCascadingOptions();
     loadClientImages(1);
   });
   document.getElementById('client-header-cb').addEventListener('change', (e) => {

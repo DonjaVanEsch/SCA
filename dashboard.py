@@ -749,6 +749,12 @@ def get_client_stats_route():
 
 @app.route("/api/client-filters")
 def get_client_filters():
+    """Return client-filter options, cascaded by any active filter params
+    in the query string -- same pattern as /api/filters for server mode."""
+    active = {k: request.args.get(k, "") for k in ("language", "version", "http_client")}
+    any_active = any(v for v in active.values())
+    if any_active:
+        return jsonify(db.get_client_cascading_filter_options(active))
     return jsonify(db.get_client_filter_options())
 
 
