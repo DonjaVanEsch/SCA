@@ -1089,6 +1089,38 @@
     color: var(--text)
   }
 
+  .ref-scope-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .ref-scope-btn {
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    background: var(--surface3);
+    color: var(--muted2);
+    cursor: pointer;
+    transition: background .1s, color .1s;
+  }
+
+  .ref-scope-btn+.ref-scope-btn {
+    border-left: 1px solid var(--border);
+  }
+
+  .ref-scope-btn.active {
+    background: var(--accent);
+    color: var(--btn-text);
+  }
+
+  .ref-scope-btn:hover:not(.active) {
+    background: var(--surface2);
+    color: var(--text);
+  }
+
   .ref-lang-filter-bar {
     display: flex;
     align-items: center;
@@ -1342,9 +1374,12 @@
     border-color: var(--muted2);
   }
 
+  /* Included versions are always blue, even in Client mode where var(--accent)
+     is re-themed to cyan -- "included" is a data fact about the registry, not
+     a mode-dependent style, so it deliberately doesn't follow the accent token. */
   .ref-ver.active {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: #1e7bd9;
+    color: #1e7bd9;
     background: rgba(30, 123, 217, .1)
   }
 
@@ -2741,6 +2776,10 @@
     <div class="panel-header" style="flex-shrink:0">
       <h2>Registry reference</h2>
       <span style="font-size:12px;color:var(--muted2);margin-left:4px">Metadata from registry JSON files</span>
+      <div class="ref-scope-toggle" id="ref-scope-toggle" style="margin-left:auto">
+        <button type="button" class="ref-scope-btn" data-scope="server">Server-side</button>
+        <button type="button" class="ref-scope-btn" data-scope="client">Client-side</button>
+      </div>
     </div>
     <div class="ref-lang-filter-bar" id="ref-lang-filter-bar" style="flex-shrink:0"></div>
     <div class="ref-hscroll">
@@ -3116,6 +3155,7 @@
     sortCol: '',
     sortDir: 'asc',
     refLangFilter: null,      // Set of language names to show in Reference tab, null = all
+    refScope: 'server',       // 'server' | 'client' -- which section the Reference tab shows
   };
 
   // ── API helpers ───────────────────────────────────────────────────────────
@@ -3215,6 +3255,28 @@
       });
       if (saved.include_ignored !== undefined)
         document.getElementById('f-ignored').checked = saved.include_ignored;
+    } catch { }
+  }
+
+  // Client mode's own filter bar (cf-*), same persistence pattern as above.
+  const _CLIENT_FILTER_KEY = 'pqc-client-filters';
+
+  function saveClientFilters() {
+    localStorage.setItem(_CLIENT_FILTER_KEY, JSON.stringify(getClientFilters()));
+  }
+
+  function restoreClientFilters() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(_CLIENT_FILTER_KEY) || 'null');
+      if (!saved) return;
+      const map = {
+        'cf-lang': saved.language, 'cf-ver': saved.version,
+        'cf-hc': saved.http_client, 'cf-hcver': saved.http_client_version,
+      };
+      Object.entries(map).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el && val !== undefined) el.value = val;
+      });
     } catch { }
   }
 
@@ -3631,6 +3693,8 @@
       repop('cf-lang', opts.languages || []);
       repop('cf-hc', opts.http_clients || []);
     } catch { }
+    restoreClientFilters();
+    loadClientImages(1);
   }
 
   function getClientFilters() {
@@ -3967,7 +4031,10 @@
     document.getElementById('btn-client-remove').disabled = true;
     runClientAction('remove', ids, {}, (err, cancelled) => {
       document.getElementById('btn-client-remove').disabled = clientState.selected.size === 0;
-      if (!err && !cancelled) loadClientImages(clientState.page);
+      if (!err && !cancelled) {
+        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
+        loadClientImages(clientState.page);
+      }
     });
   }
 
@@ -3977,7 +4044,10 @@
     document.getElementById('btn-client-launch').disabled = true;
     runClientAction('run', ids, {}, (err, cancelled) => {
       document.getElementById('btn-client-launch').disabled = clientState.selected.size === 0;
-      if (!err && !cancelled) loadClientImages(clientState.page);
+      if (!err && !cancelled) {
+        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
+        loadClientImages(clientState.page);
+      }
     });
   }
 
@@ -3987,7 +4057,10 @@
     document.getElementById('btn-client-stop').disabled = true;
     runClientAction('stop', ids, {}, (err, cancelled) => {
       document.getElementById('btn-client-stop').disabled = clientState.selected.size === 0;
-      if (!err && !cancelled) loadClientImages(clientState.page);
+      if (!err && !cancelled) {
+        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
+        loadClientImages(clientState.page);
+      }
     });
   }
 
@@ -5812,6 +5885,22 @@
     });
   }
 
+  // Server-side (Frameworks / Crypto libraries) vs client-side (Client
+  // libraries) sections are both rendered up front and toggled purely via
+  // CSS display, so switching scope is instant and doesn't need a re-fetch.
+  function setRefScope(scope) {
+    state.refScope = scope;
+    document.querySelectorAll('.ref-scope-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.scope === scope));
+    applyRefScopeVisibility();
+  }
+
+  function applyRefScopeVisibility() {
+    document.querySelectorAll('#ref-content [data-ref-scope]').forEach(el => {
+      el.style.display = el.dataset.refScope === state.refScope ? '' : 'none';
+    });
+  }
+
   async function loadReference() {
     const el = document.getElementById('ref-content');
     try {
@@ -5838,16 +5927,16 @@
           <div class="ref-section-title">Versions (active)</div>
           <div class="ref-version-list">${vers}</div>
         </div>
-        ${frameworks ? `<div class="ref-section">
-          <div class="ref-section-title">Frameworks (${lang.frameworks?.length || 0}) — server-side</div>
+        ${frameworks ? `<div class="ref-section" data-ref-scope="server">
+          <div class="ref-section-title">Frameworks (${lang.frameworks?.length || 0})</div>
           ${frameworks}
         </div>` : ''}
-        ${libraries ? `<div class="ref-section">
-          <div class="ref-section-title">Crypto libraries (${lang.libraries?.length || 0}) — server-side</div>
+        ${libraries ? `<div class="ref-section" data-ref-scope="server">
+          <div class="ref-section-title">Crypto libraries (${lang.libraries?.length || 0})</div>
           ${libraries}
         </div>` : ''}
-        ${httpClients ? `<div class="ref-section">
-          <div class="ref-section-title">Client libraries (${lang.http_clients?.length || 0}) — client-side</div>
+        ${httpClients ? `<div class="ref-section" data-ref-scope="client">
+          <div class="ref-section-title">Client libraries (${lang.http_clients?.length || 0})</div>
           ${httpClients}
         </div>` : ''}
       </div>`;
@@ -5855,6 +5944,7 @@
       setupNoteToggles(el);
       _bindRefVersionClicks(el);
       renderRefLangFilterBar(data.languages);
+      applyRefScopeVisibility();
     } catch (e) {
       el.innerHTML = `<div style="padding:20px;color:var(--danger)">Error: ${e.message}</div>`;
     }
@@ -5972,7 +6062,10 @@
       (name === 'images' || name === 'reports' || (name === 'clients' && _clientView === 'images')) ? '' : 'none';
     if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
     if (name === 'reports') renderReportPagination();
-    if (name === 'reference' && !document.querySelector('#ref-content .ref-card')) loadReference();
+    if (name === 'reference') {
+      setRefScope(_dashboardMode === 'client' ? 'client' : 'server');
+      if (!document.querySelector('#ref-content .ref-card')) loadReference();
+    }
     if (name === 'agility') loadCryptoAgility();
     if (name === 'clients') {
       if (_clientView === 'fplog') loadClientFingerprintLog();
@@ -6176,20 +6269,24 @@
     if (e.target.id === 'ignore-panel-overlay') closeIgnorePanel();
   });
 
+  document.querySelectorAll('.ref-scope-btn').forEach(b =>
+    b.addEventListener('click', () => setRefScope(b.dataset.scope)));
+
   // ── Client mode wiring ────────────────────────────────────────────────────
   document.getElementById('btn-mode-toggle').addEventListener('click', () => {
     switchDashboardMode(_dashboardMode === 'client' ? 'server' : 'client');
   });
-  document.getElementById('cf-lang').addEventListener('change', () => loadClientImages(1));
-  document.getElementById('cf-hc').addEventListener('change', () => loadClientImages(1));
-  document.getElementById('cf-ver').addEventListener('input', debounce(() => loadClientImages(1), 400));
-  document.getElementById('cf-hcver').addEventListener('input', debounce(() => loadClientImages(1), 400));
+  document.getElementById('cf-lang').addEventListener('change', () => { saveClientFilters(); loadClientImages(1); });
+  document.getElementById('cf-hc').addEventListener('change', () => { saveClientFilters(); loadClientImages(1); });
+  document.getElementById('cf-ver').addEventListener('input', debounce(() => { saveClientFilters(); loadClientImages(1); }, 400));
+  document.getElementById('cf-hcver').addEventListener('input', debounce(() => { saveClientFilters(); loadClientImages(1); }, 400));
   document.getElementById('cf-run').addEventListener('change', () => loadClientImages(1));
   document.getElementById('btn-clear-client-filter').addEventListener('click', () => {
     document.getElementById('cf-lang').value = '';
     document.getElementById('cf-hc').value = '';
     document.getElementById('cf-ver').value = '';
     document.getElementById('cf-hcver').value = '';
+    localStorage.removeItem(_CLIENT_FILTER_KEY);
     loadClientImages(1);
   });
   document.getElementById('client-header-cb').addEventListener('change', (e) => {
