@@ -1078,13 +1078,16 @@ _FP_TARGET_HTTP_PORT  = 9000
 _FP_TARGET_HTTPS_PORT = 9443
 _FP_TARGET_DOCKERFILE_DIR = PROJECT_ROOT / "scripts" / "fingerprint_target"
 
-# Clients that drive their own raw TLS handshake (pyopenssl-raw/m2crypto-raw)
-# need the target's HTTPS port, not the plain one every other client uses --
-# confirmed the hard way: pointing pyopenssl-raw at the plain HTTP port
-# raised "wrong version number" (a TLS ClientHello arriving at a non-TLS
-# listener). Kept as an explicit set here rather than inferred from the tag
-# string, since new raw-TLS clients might not all share the "-raw" suffix.
-_TLS_RAW_CLIENTS = {"pyopenssl-raw", "m2crypto-raw"}
+# Clients that drive their own raw TLS handshake (pyopenssl-raw/m2crypto-raw/
+# node-forge-raw) need the target's HTTPS port, not the plain one every
+# other client uses -- confirmed the hard way: pointing pyopenssl-raw at the
+# plain HTTP port raised "wrong version number" (a TLS ClientHello arriving
+# at a non-TLS listener); node-forge-raw instead just hangs until the test
+# harness's own timeout, since forge's TLS client never gets a TLS
+# ServerHello back from the plain HTTP listener. Kept as an explicit set
+# here rather than inferred from the tag string, since new raw-TLS clients
+# might not all share the "-raw" suffix.
+_TLS_RAW_CLIENTS = {"pyopenssl-raw", "m2crypto-raw", "node-forge-raw"}
 
 
 def _client_image_tag(e):
@@ -1224,13 +1227,13 @@ def _do_client_run(entries, log_fn=print):
 
     n   = len(entries)
     pad = len(str(n))
-    target_url = f"http://{_FP_TARGET_CONTAINER}:{_FP_TARGET_HTTP_PORT}/probe"
     log_fn(f"\nStarting {n:,} client container(s) against {target_container} ...\n")
 
     started, failed = [], []
     for i, e in enumerate(entries, 1):
         tag  = _client_image_tag(e)
         name = tag
+        target_url = _client_target_url(e.get("http_client", ""))
         log_fn(f"[{i:{pad}}/{n}] {name}")
 
         if not _image_exists(tag):
