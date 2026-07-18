@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS fw_versions (
     version_nr    TEXT    NOT NULL,          -- major nr or "builtin"
     release_date  TEXT,
     compatibility TEXT,                      -- JSON array e.g. ["1.6+","3.3+"]
+    available     INTEGER NOT NULL DEFAULT 1, -- registry's own per-version "available" flag
     UNIQUE(framework_id, version_nr)
 );
 
@@ -110,6 +111,7 @@ CREATE TABLE IF NOT EXISTS lib_versions (
     version_nr    TEXT    NOT NULL,          -- version string or "builtin"
     release_date  TEXT,
     compatibility TEXT,                      -- JSON array
+    available     INTEGER NOT NULL DEFAULT 1, -- registry's own per-version "available" flag
     UNIQUE(library_id, version_nr)
 );
 
@@ -152,6 +154,7 @@ CREATE TABLE IF NOT EXISTS http_client_versions (
     version_nr      TEXT    NOT NULL,          -- version string or "builtin"
     release_date    TEXT,
     compatibility   TEXT,                      -- JSON array
+    available       INTEGER NOT NULL DEFAULT 1, -- registry's own per-version "available" flag
     UNIQUE(http_client_id, version_nr)
 );
 
@@ -738,6 +741,9 @@ def init_db() -> None:
             "ALTER TABLE client_fingerprints ADD COLUMN observed_user_agent TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN observed_ja3_hash TEXT",
             "ALTER TABLE client_fingerprints ADD COLUMN observed_ja3_string TEXT",
+            "ALTER TABLE fw_versions ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE lib_versions ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE http_client_versions ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
         ]:
             try:
                 conn.execute(ddl)
@@ -927,18 +933,20 @@ def load_registry() -> dict[str, int]:
 
                     seen_fw_versions = set()
                     for fv in versions:
-                        nr      = _norm_version(str(fv.get("nr", "")))
-                        rdate   = fv.get("release_date")
-                        compat  = json.dumps(fv.get("compatibility", []))
+                        nr        = _norm_version(str(fv.get("nr", "")))
+                        rdate     = fv.get("release_date")
+                        compat    = json.dumps(fv.get("compatibility", []))
+                        available = int(bool(fv.get("available", True)))
                         seen_fw_versions.add(nr)
                         conn.execute(
                             """INSERT INTO fw_versions
-                                   (framework_id, version_nr, release_date, compatibility)
-                               VALUES (?,?,?,?)
+                                   (framework_id, version_nr, release_date, compatibility, available)
+                               VALUES (?,?,?,?,?)
                                ON CONFLICT(framework_id, version_nr)
                                DO UPDATE SET release_date=excluded.release_date,
-                                             compatibility=excluded.compatibility""",
-                            (fw_id, nr, rdate, compat),
+                                             compatibility=excluded.compatibility,
+                                             available=excluded.available""",
+                            (fw_id, nr, rdate, compat, available),
                         )
                         counts["fw_versions"] += 1
 
@@ -985,18 +993,20 @@ def load_registry() -> dict[str, int]:
 
                     seen_lib_versions = set()
                     for lv in versions:
-                        nr      = _norm_version(str(lv.get("nr", "")))
-                        rdate   = lv.get("release_date")
-                        compat  = json.dumps(lv.get("compatibility", []))
+                        nr        = _norm_version(str(lv.get("nr", "")))
+                        rdate     = lv.get("release_date")
+                        compat    = json.dumps(lv.get("compatibility", []))
+                        available = int(bool(lv.get("available", True)))
                         seen_lib_versions.add(nr)
                         conn.execute(
                             """INSERT INTO lib_versions
-                                   (library_id, version_nr, release_date, compatibility)
-                               VALUES (?,?,?,?)
+                                   (library_id, version_nr, release_date, compatibility, available)
+                               VALUES (?,?,?,?,?)
                                ON CONFLICT(library_id, version_nr)
                                DO UPDATE SET release_date=excluded.release_date,
-                                             compatibility=excluded.compatibility""",
-                            (lib_id, nr, rdate, compat),
+                                             compatibility=excluded.compatibility,
+                                             available=excluded.available""",
+                            (lib_id, nr, rdate, compat, available),
                         )
                         counts["lib_versions"] += 1
 
@@ -1044,18 +1054,20 @@ def load_registry() -> dict[str, int]:
 
                     seen_hc_versions = set()
                     for hv in versions:
-                        nr     = _norm_version(str(hv.get("nr", "")))
-                        rdate  = hv.get("release_date")
-                        compat = json.dumps(hv.get("compatibility", []))
+                        nr        = _norm_version(str(hv.get("nr", "")))
+                        rdate     = hv.get("release_date")
+                        compat    = json.dumps(hv.get("compatibility", []))
+                        available = int(bool(hv.get("available", True)))
                         seen_hc_versions.add(nr)
                         conn.execute(
                             """INSERT INTO http_client_versions
-                                   (http_client_id, version_nr, release_date, compatibility)
-                               VALUES (?,?,?,?)
+                                   (http_client_id, version_nr, release_date, compatibility, available)
+                               VALUES (?,?,?,?,?)
                                ON CONFLICT(http_client_id, version_nr)
                                DO UPDATE SET release_date=excluded.release_date,
-                                             compatibility=excluded.compatibility""",
-                            (hc_id, nr, rdate, compat),
+                                             compatibility=excluded.compatibility,
+                                             available=excluded.available""",
+                            (hc_id, nr, rdate, compat, available),
                         )
                         counts["http_client_versions"] += 1
 
@@ -2293,14 +2305,26 @@ def get_all_ids_for_filter(filters: dict,
     return [r[0] for r in rows]
 
 
-def _versions_with_parsed_compat(rows) -> list:
+def _versions_with_parsed_compat(rows, overrides=None, kind=None, entry_name=None) -> list:
     """fw_versions/lib_versions/http_client_versions all store `compatibility`
     as a JSON-encoded TEXT column -- parse it into a real list (or None) so
-    callers (the Reference tab) don't each have to JSON.parse it themselves."""
+    callers (the Reference tab) don't each have to JSON.parse it themselves.
+
+    Also computes the effective `include` flag the Reference tab displays
+    (blue badge / "Included" field): the registry's own per-version
+    `available` column, overridden by a matching version_overrides row when
+    one exists (same override the Registry Editor and generate_images.py /
+    generate_client_images.py already honor at build time) -- so what the
+    Reference tab shows always matches what actually gets built."""
+    overrides = overrides or {}
     out = []
     for r in rows:
         d = dict(r)
         d["compatibility"] = json.loads(d["compatibility"]) if d.get("compatibility") else None
+        override = overrides.get((kind, entry_name, d["version_nr"])) if kind else None
+        base_available = bool(d.pop("available", True))
+        d["include"] = base_available if override is None or override["available"] is None else override["available"]
+        d["note"] = (override["note"] if override else "") or None
         out.append(d)
     return out
 
@@ -2316,6 +2340,7 @@ def get_reference_data() -> dict:
         )]
         for lang in langs:
             lang_id = lang["id"]
+            overrides = get_version_override_map(lang["name"])
             lang["versions"] = [dict(r) for r in conn.execute(
                 "SELECT * FROM lang_versions WHERE language_id=? "
                 "ORDER BY release_date IS NULL, release_date, version_nr",
@@ -2331,7 +2356,7 @@ def get_reference_data() -> dict:
                     "SELECT * FROM fw_versions WHERE framework_id=? "
                     "ORDER BY release_date IS NULL, release_date, version_nr",
                     (fw["id"],),
-                ))
+                ), overrides, "framework", fw["name"])
                 lang["frameworks"].append(fw_dict)
             lang["libraries"] = []
             for lib in conn.execute(
@@ -2343,7 +2368,7 @@ def get_reference_data() -> dict:
                     "SELECT * FROM lib_versions WHERE library_id=? "
                     "ORDER BY release_date IS NULL, release_date, version_nr",
                     (lib["id"],),
-                ))
+                ), overrides, "library", lib["name"])
                 lang["libraries"].append(lib_dict)
             lang["http_clients"] = []
             for hc in conn.execute(
@@ -2355,7 +2380,7 @@ def get_reference_data() -> dict:
                     "SELECT * FROM http_client_versions WHERE http_client_id=? "
                     "ORDER BY release_date IS NULL, release_date, version_nr",
                     (hc["id"],),
-                ))
+                ), overrides, "http_client", hc["name"])
                 lang["http_clients"].append(hc_dict)
     return {"languages": langs}
 
