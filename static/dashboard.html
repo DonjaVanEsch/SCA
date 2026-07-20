@@ -1377,13 +1377,15 @@
     border-color: var(--muted2);
   }
 
-  /* Included versions are always blue, even in Client mode where var(--accent)
-     is re-themed to cyan -- "included" is a data fact about the registry, not
-     a mode-dependent style, so it deliberately doesn't follow the accent token. */
+  /* Included versions use the same amber "draft" color as the Crypto Agility
+     badges (.badge-warn) -- with so many versions included by default, a
+     blue that also doubled as the accent/interactive color made nearly the
+     whole grid light up blue. Fixed, not accent-linked, same reasoning as
+     the comment this replaced: "included" is a data fact, not a mode style. */
   .ref-ver.active {
-    border-color: #1e7bd9;
-    color: #1e7bd9;
-    background: rgba(30, 123, 217, .1)
+    border-color: #e3b341;
+    color: #e3b341;
+    background: #2d2008
   }
 
   .ref-item {
