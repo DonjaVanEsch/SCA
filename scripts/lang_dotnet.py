@@ -24,6 +24,16 @@ LANGUAGE_ID   = "dotnet"
 REGISTRY_FILE = "registry dotnet.json"
 
 
+class NuGetLookupError(Exception):
+    """Raised when a NuGet metadata fetch fails for a network/rate-limit
+    reason -- deliberately distinct from _resolve() returning None for a
+    package/version actually checked and confirmed absent. Same bug class
+    as Java's MavenLookupError (see lang_java.py): conflating the two used
+    to make write_context() delete existing output on a transient failure,
+    not just a confirmed-gone package. Callers must not delete existing
+    output on this exception."""
+
+
 # ── NuGet version resolution ──────────────────────────────────────────────────
 # NuGet's flatcontainer API (api.nuget.org/v3-flatcontainer/{id}/index.json)
 # is the direct analog of Maven's maven-metadata.xml used for Java: it lists
@@ -53,12 +63,13 @@ def _ver_key(v: str) -> tuple:
 
 
 def _fetch_nuget_versions(package_id: str) -> list:
+    """Raises NuGetLookupError on a network/rate-limit failure -- does NOT
+    cache that as "zero versions found" (see NuGetLookupError's docstring)."""
     cache_key = package_id.lower()
     if cache_key in _NUGET_VERSIONS:
         return _NUGET_VERSIONS[cache_key]
 
     url = f"https://api.nuget.org/v3-flatcontainer/{cache_key}/index.json"
-    versions = []
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -66,7 +77,7 @@ def _fetch_nuget_versions(package_id: str) -> list:
         raw = data.get("versions", [])
         versions = sorted((v for v in raw if _STABLE_RE.match(v)), key=_ver_key)
     except (URLError, OSError, ValueError) as exc:
-        print(f"  [WARN] NuGet lookup failed for {package_id}: {exc}", flush=True)
+        raise NuGetLookupError(f"{package_id}: {exc}") from exc
 
     _NUGET_VERSIONS[cache_key] = versions
     return versions
@@ -236,8 +247,11 @@ def prefetch(lang_data: dict) -> None:
 
     print("Fetching available versions from NuGet ...")
     for pkg in sorted(package_ids):
-        versions = _fetch_nuget_versions(pkg)
-        print(f"  {pkg}: {len(versions)} version(s) found")
+        try:
+            versions = _fetch_nuget_versions(pkg)
+            print(f"  {pkg}: {len(versions)} version(s) found")
+        except NuGetLookupError as exc:
+            print(f"  [WARN] {exc}")
     print()
 
 
@@ -752,7 +766,11 @@ def _aspnetcore_package_refs(lang_ver: str) -> list:
     if lang_ver == "1.1":
         refs = []
         for pkg in ("Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Server.Kestrel"):
-            ver = _resolve(pkg, lang_ver)
+            try:
+                ver = _resolve(pkg, lang_ver)
+            except NuGetLookupError as exc:
+                print(f"  [WARN] {exc} -- skipping this package ref", flush=True)
+                continue
             if ver:
                 refs.append((pkg, ver))
         return refs
@@ -796,7 +814,11 @@ def make_csproj(lang_ver: str, fw_name: str, fw_resolved: str,
         packages.append((fw_pkg, fw_resolved))
     if fw_name == "NancyFx":
         packages.append(("Nancy.Owin", fw_resolved))
-        owin_ver = _resolve("Microsoft.AspNetCore.Owin", lang_ver)
+        try:
+            owin_ver = _resolve("Microsoft.AspNetCore.Owin", lang_ver)
+        except NuGetLookupError as exc:
+            print(f"  [WARN] {exc} -- skipping this package ref", flush=True)
+            owin_ver = None
         if owin_ver:
             packages.append(("Microsoft.AspNetCore.Owin", owin_ver))
 
@@ -916,7 +938,9 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     """Write app.csproj / *.cs / Dockerfile for one image context.
 
     Returns False (and removes any stale directory) when a required NuGet
-    package version cannot be resolved.
+    package version is confirmed absent. Returns False WITHOUT touching any
+    existing directory when the lookup itself failed (network/rate-limit) --
+    see NuGetLookupError.
     """
     out = images_base / "dotnet" / lang_ver / fw_name / fw_major / lib_name / lib_ver
 
@@ -924,7 +948,11 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         fw_resolved = lang_ver
     else:
         fw_pkg = _FW_PACKAGE[fw_name]
-        fw_resolved = _resolve(fw_pkg, fw_major)
+        try:
+            fw_resolved = _resolve(fw_pkg, fw_major)
+        except NuGetLookupError as exc:
+            print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+            return False
         if fw_resolved is None:
             print(f"  [SKIP] {fw_name} {fw_major} not resolvable on NuGet", flush=True)
             if out.exists():
@@ -935,7 +963,11 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         lib_resolved = "built-in"
     else:
         lib_pkg = _lib_package(lib_name, lib_ver)
-        lib_resolved = _resolve(lib_pkg, lib_ver)
+        try:
+            lib_resolved = _resolve(lib_pkg, lib_ver)
+        except NuGetLookupError as exc:
+            print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+            return False
         if lib_resolved is None:
             print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on NuGet", flush=True)
             if out.exists():

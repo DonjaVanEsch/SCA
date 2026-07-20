@@ -25,6 +25,17 @@ LANGUAGE_ID   = "java"
 REGISTRY_FILE = "registry java.json"
 
 
+class MavenLookupError(Exception):
+    """Raised when a Maven Central metadata fetch fails for a network/rate-
+    limit reason (timeout, 429, ...) -- deliberately distinct from _resolve()
+    returning None for a coordinate/version that was actually checked and
+    confirmed absent. Conflating the two used to make write_context() treat
+    "Maven Central is rate-limiting us" identically to "this version doesn't
+    exist anymore" and delete every existing context it touched -- confirmed
+    live: a run during sustained 429s wiped every Java image context on
+    disk. Callers must not delete existing output on this exception."""
+
+
 def _parse(s: str) -> tuple:
     return tuple(int(p) for p in re.findall(r"\d+", s))
 
@@ -150,6 +161,10 @@ def _ver_key(v: str) -> tuple:
 
 
 def _fetch_maven_versions(group: str, artifact: str) -> list:
+    """Raises MavenLookupError on a network/rate-limit failure -- does NOT
+    cache that as "zero versions found", since a caller treating an empty
+    result as "confirmed gone" would delete existing output over what's
+    often just a transient 429."""
     cache_key = f"{group}:{artifact}"
     if cache_key in _MAVEN_VERSIONS:
         return _MAVEN_VERSIONS[cache_key]
@@ -157,7 +172,6 @@ def _fetch_maven_versions(group: str, artifact: str) -> list:
     group_path = group.replace(".", "/")
     safe_artifact = urllib.parse.quote(artifact, safe="")
     url = f"https://repo1.maven.org/maven2/{group_path}/{safe_artifact}/maven-metadata.xml"
-    versions = []
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -178,7 +192,7 @@ def _fetch_maven_versions(group: str, artifact: str) -> list:
             key=_ver_key,
         )
     except (URLError, ET.ParseError, OSError) as exc:
-        print(f"  [WARN] Maven Central lookup failed for {group}:{artifact}: {exc}", flush=True)
+        raise MavenLookupError(f"{group}:{artifact}: {exc}") from exc
 
     _MAVEN_VERSIONS[cache_key] = versions
     return versions
@@ -244,8 +258,11 @@ def prefetch(lang_data: dict) -> None:
 
     print("Fetching available versions from Maven Central ...")
     for group, artifact in sorted(coords):
-        versions = _fetch_maven_versions(group, artifact)
-        print(f"  {group}:{artifact}: {len(versions)} version(s) found")
+        try:
+            versions = _fetch_maven_versions(group, artifact)
+            print(f"  {group}:{artifact}: {len(versions)} version(s) found")
+        except MavenLookupError as exc:
+            print(f"  [WARN] {exc}")
     print()
 
 
@@ -1535,12 +1552,19 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     """Write pom.xml / src / Dockerfile for one image context.
 
     Returns False (and removes any stale directory) when a required Maven
-    coordinate cannot be resolved on Maven Central.
+    coordinate is confirmed absent from Maven Central. Returns False WITHOUT
+    touching any existing directory when the lookup itself failed (network/
+    rate-limit) -- those two cases used to be conflated, which deleted every
+    Java context on disk during a run that hit sustained 429s.
     """
     out = images_base / "java" / lang_ver / fw_name / fw_major / lib_name / lib_ver
 
     fw_group, fw_artifact = _framework_anchor(fw_name, fw_major)
-    fw_resolved = _resolve(fw_group, fw_artifact, fw_major)
+    try:
+        fw_resolved = _resolve(fw_group, fw_artifact, fw_major)
+    except MavenLookupError as exc:
+        print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+        return False
     if fw_resolved is None:
         print(f"  [SKIP] {fw_name} {fw_major} not resolvable on Maven Central", flush=True)
         if out.exists():
@@ -1550,7 +1574,11 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     lib_resolved = "built-in"
     lib_coord = _lib_coord(lib_name, lib_ver)
     if lib_coord and lib_ver != "builtin":
-        lib_resolved = _resolve(lib_coord[0], lib_coord[1], lib_ver)
+        try:
+            lib_resolved = _resolve(lib_coord[0], lib_coord[1], lib_ver)
+        except MavenLookupError as exc:
+            print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+            return False
         if lib_resolved is None:
             print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on Maven Central", flush=True)
             if out.exists():
