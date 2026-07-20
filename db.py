@@ -2193,6 +2193,18 @@ def get_client_images_by_ids(client_image_ids: list, host: str = "") -> list[dic
     return [dict(r) for r in rows]
 
 
+def get_ignored_client_images(host: str = "") -> list[dict]:
+    """Client-image counterpart to get_ignored_images() -- every client image
+    currently on the ignore list, in full detail."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM ({_client_status_sql()}) s WHERE ignored = 1 "
+            "ORDER BY language, http_client, http_client_version",
+            [host, host, host],
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_all_client_ids_for_filter(filters: dict, include_ignored: bool = True,
                                    host: str = "") -> list[int]:
     filters = filters or {}
@@ -2616,6 +2628,18 @@ def set_ignored(image_ids: list, ignored: bool, reason: str = "") -> None:
         conn.execute(
             f"UPDATE images SET ignored=?, ignore_reason=? WHERE id IN ({ph})",
             [int(ignored), reason] + list(image_ids),
+        )
+
+
+def set_client_ignored(client_image_ids: list, ignored: bool, reason: str = "") -> None:
+    """Client-image counterpart to set_ignored()."""
+    if not client_image_ids:
+        return
+    with _connect() as conn:
+        ph = ",".join("?" * len(client_image_ids))
+        conn.execute(
+            f"UPDATE client_images SET ignored=?, ignore_reason=? WHERE id IN ({ph})",
+            [int(ignored), reason] + list(client_image_ids),
         )
 
 

@@ -601,6 +601,14 @@ def get_ignored_images_route():
     return jsonify({"items": items})
 
 
+@app.route("/api/client-images/ignored")
+def get_ignored_client_images_route():
+    """Client-image counterpart to /api/images/ignored."""
+    items = db.get_ignored_client_images(host=_current_host())
+    _annotate_docker_exists(items)
+    return jsonify({"items": items})
+
+
 # ── Actions ───────────────────────────────────────────────────────────────────
 
 @app.route("/api/action", methods=["POST"])
@@ -790,6 +798,17 @@ def get_all_client_ids():
     include_ignored = request.args.get("include_ignored", "true").lower() == "true"
     ids = db.get_all_client_ids_for_filter(filters, include_ignored, host=_current_host())
     return jsonify({"ids": ids})
+
+
+@app.route("/api/client-images/by-ids")
+def get_client_images_by_ids_route():
+    """Return full details for the given client-image ids, independent of the
+    current table filters -- used by the client-mode "review selection" panel."""
+    ids_param = request.args.get("ids", "")
+    ids = [int(i) for i in ids_param.split(",") if i.strip().lstrip("-").isdigit()]
+    items = db.get_client_images_by_ids(ids, host=_current_host())
+    _annotate_docker_exists(items)
+    return jsonify({"items": items})
 
 
 @app.route("/api/client-fingerprints")
@@ -1063,6 +1082,16 @@ def set_ignore():
     reason    = data.get("reason", "")
     db.set_ignored(image_ids, ignored, reason)
     return jsonify({"ok": True, "count": len(image_ids)})
+
+
+@app.route("/api/client-ignore", methods=["POST"])
+def set_client_ignore():
+    data             = request.json or {}
+    client_image_ids = [int(i) for i in data.get("client_image_ids", [])]
+    ignored          = bool(data.get("ignored", True))
+    reason           = data.get("reason", "")
+    db.set_client_ignored(client_image_ids, ignored, reason)
+    return jsonify({"ok": True, "count": len(client_image_ids)})
 
 
 # ── SSE stream ────────────────────────────────────────────────────────────────

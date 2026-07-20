@@ -647,6 +647,15 @@
     background: var(--surface3)
   }
 
+  .sel-menu-item.disabled {
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  .sel-menu-item.disabled:hover {
+    background: none
+  }
+
   .sel-menu-sep {
     height: 1px;
     background: var(--border);
@@ -2408,21 +2417,17 @@
           <span class="docker-group-label">Selection</span>
           <div class="docker-group-inner">
             <span id="sel-count">0 selected</span>
-            <div class="sel-menu-wrap" id="review-wrap">
-              <button class="btn btn-ghost btn-flat btn-sm" id="btn-review-menu">📋 Review ▾</button>
-              <div class="sel-menu" id="review-menu">
-                <div class="sel-menu-item" id="mnu-review-selection"
-                  title="Review the full selection in a separate screen">Selection</div>
-                <div class="sel-menu-item ignore-feature" id="mnu-review-ignored" title="Review the ignore list">Ignore list</div>
-              </div>
-            </div>
+            <button class="btn btn-ghost btn-flat btn-sm" id="btn-review-selection"
+              title="Review the full selection in a separate screen">📋 Review</button>
+            <button class="btn btn-ghost btn-flat btn-sm ignore-feature" id="btn-review-ignored"
+              title="Review the ignore list">🗑 Ignore list</button>
             <div class="action-sep"></div>
             <div class="sel-menu-wrap">
               <button class="btn btn-ghost btn-flat btn-sm" id="btn-sel-menu">Select ▾</button>
               <div class="sel-menu" id="sel-menu">
                 <div class="sel-menu-item" id="mnu-sel-page">Current page</div>
-                <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
                 <div class="sel-menu-sep"></div>
+                <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
                 <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
                 <div class="sel-menu-sep"></div>
                 <div class="sel-menu-item" id="mnu-sel-not-built">Not built</div>
@@ -2569,12 +2574,17 @@
           <span class="docker-group-label">Selection</span>
           <div class="docker-group-inner">
             <span id="client-sel-count">0 selected</span>
+            <button class="btn btn-ghost btn-flat btn-sm" id="btn-client-review-selection"
+              title="Review the full selection in a separate screen">📋 Review</button>
+            <button class="btn btn-ghost btn-flat btn-sm ignore-feature" id="btn-client-review-ignored"
+              title="Review the ignore list">🗑 Ignore list</button>
+            <div class="action-sep"></div>
             <div class="sel-menu-wrap">
               <button class="btn btn-ghost btn-flat btn-sm" id="btn-client-sel-menu">Select ▾</button>
               <div class="sel-menu" id="client-sel-menu">
                 <div class="sel-menu-item" id="mnu-client-sel-page">Current page</div>
-                <div class="sel-menu-item" id="mnu-client-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
                 <div class="sel-menu-sep"></div>
+                <div class="sel-menu-item" id="mnu-client-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
                 <div class="sel-menu-item" id="mnu-client-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
               </div>
             </div>
@@ -3193,6 +3203,76 @@
   </div>
 </div>
 
+<!-- ── Client Selection review panel (Client mode's counterpart above) ───── -->
+<div id="client-sel-panel-overlay" class="review-overlay">
+  <div class="review-panel">
+    <div class="review-panel-header">
+      <h3>Selected client images — <span id="client-sel-panel-count">0</span></h3>
+      <input type="text" id="client-sel-panel-search" class="filter-input review-search"
+        placeholder="Search within selection…">
+      <button class="btn btn-ghost btn-sm" id="btn-close-client-sel-panel">✕</button>
+    </div>
+    <div class="review-body">
+      <table class="review-table">
+        <thead>
+          <tr>
+            <th class="cb-cell"></th>
+            <th>Language</th>
+            <th>Ver</th>
+            <th>Library</th>
+            <th>Lib Ver</th>
+            <th>Build</th>
+            <th>Test</th>
+            <th style="width:70px"></th>
+          </tr>
+        </thead>
+        <tbody id="client-sel-panel-tbody"></tbody>
+      </table>
+    </div>
+    <div class="review-panel-footer">
+      <span id="client-sel-panel-pending-note" class="review-pending-note">No pending changes</span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-client-sel-panel-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-client-sel-panel-apply" disabled>Confirm changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Client Ignore review panel ────────────────────────────────────────── -->
+<div id="client-ignore-panel-overlay" class="review-overlay">
+  <div class="review-panel">
+    <div class="review-panel-header">
+      <h3>Ignored client images — <span id="client-ignore-panel-count">0</span></h3>
+      <input type="text" id="client-ignore-panel-search" class="filter-input review-search"
+        placeholder="Search within ignore list…">
+      <button class="btn btn-ghost btn-sm" id="btn-close-client-ignore-panel">✕</button>
+    </div>
+    <div class="review-body">
+      <table class="review-table">
+        <thead>
+          <tr>
+            <th>Language</th>
+            <th>Ver</th>
+            <th>Library</th>
+            <th>Lib Ver</th>
+            <th>Build</th>
+            <th>Test</th>
+            <th>Reason</th>
+            <th style="width:90px"></th>
+          </tr>
+        </thead>
+        <tbody id="client-ignore-panel-tbody"></tbody>
+      </table>
+    </div>
+    <div class="review-panel-footer">
+      <span id="client-ignore-panel-pending-note" class="review-pending-note">No pending changes</span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-client-ignore-panel-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-client-ignore-panel-apply" disabled>Confirm changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── New versions panel ────────────────────────────────────────────────── -->
 <div id="updates-panel-overlay" class="review-overlay">
   <div class="review-panel updates-panel">
@@ -3306,6 +3386,25 @@
   }
 
   // ── Stats bar ─────────────────────────────────────────────────────────────
+  // Backs the Select-menu status quick-filters' disabled state -- global,
+  // unfiltered counts (same scope the stats bar itself shows), not a precise
+  // "how many match under the current filter panel" count, which would need
+  // its own round-trip just for a menu-hover nicety.
+  let _lastStats = null;
+
+  function _updateSelMenuDisabledState() {
+    if (!_lastStats) return;
+    const map = {
+      'not-built': _lastStats.not_built,
+      'build-failed': _lastStats.built_fail,
+      'not-tested': _lastStats.not_tested,
+      'test-failed': _lastStats.test_fail,
+    };
+    Object.entries(map).forEach(([s, count]) => {
+      document.getElementById(`mnu-sel-${s}`)?.classList.toggle('disabled', !count);
+    });
+  }
+
   async function loadStats() {
     try {
       const s = await api('/api/stats');
@@ -3317,6 +3416,8 @@
       document.getElementById('s-tested-fail').textContent = s.test_fail.toLocaleString();
       document.getElementById('s-not-tested').textContent = s.not_tested.toLocaleString();
       document.getElementById('s-ignored').textContent = s.ignored.toLocaleString();
+      _lastStats = s;
+      _updateSelMenuDisabledState();
     } catch { }
   }
 
@@ -4613,6 +4714,7 @@
 
     const ignoreBadge = r.ignored === 1
       ? '<span class="badge badge-ignored" title="Already on the ignore list">Ignored</span>'
+      : !_ignoreFeaturesEnabled ? ''
       : `<span class="badge ${p.ignore ? 'badge-fail' : 'badge-skip'} review-badge-toggle"
            onclick="selPanelToggle(${r.id},'ignore')"
            title="${p.ignore ? 'Click to undo' : 'Mark to ignore on confirm'}">${p.ignore ? 'Ignoring' : 'Ignore'}</span>`;
@@ -4820,6 +4922,245 @@
     closeIgnorePanel();
     loadImages(state.page);
     loadStats();
+  }
+
+  // ── Client Selection review panel (Client mode's counterpart above) ──────
+  let clientSelPanelItems = [];
+  let clientSelPanelPending = {}; // id -> {remove?: true, ignore?: true}
+
+  async function openClientSelectionPanel() {
+    if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
+    clientSelPanelPending = {};
+    document.getElementById('client-sel-panel-search').value = '';
+    document.getElementById('client-sel-panel-tbody').innerHTML =
+      '<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    document.getElementById('client-sel-panel-overlay').classList.add('open');
+    try {
+      const ids = [...clientState.selected];
+      const data = await api(`/api/client-images/by-ids?ids=${ids.join(',')}`);
+      clientSelPanelItems = data.items.sort((a, b) =>
+        `${a.language}${a.http_client}`.localeCompare(`${b.language}${b.http_client}`));
+      renderClientSelectionPanel();
+    } catch (e) {
+      document.getElementById('client-sel-panel-tbody').innerHTML =
+        `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+  }
+
+  function closeClientSelectionPanel() {
+    document.getElementById('client-sel-panel-overlay').classList.remove('open');
+    clientSelPanelPending = {};
+  }
+
+  function clientSelPanelRowHtml(r) {
+    const p = clientSelPanelPending[r.id] || {};
+    const cls = `${p.remove ? ' pending-out' : ''}${p.ignore ? ' pending-flag' : ''}`.trim();
+    const checked = !p.remove;
+
+    const ignoreBadge = r.ignored === 1
+      ? '<span class="badge badge-ignored" title="Already on the ignore list">Ignored</span>'
+      : !_ignoreFeaturesEnabled ? ''
+      : `<span class="badge ${p.ignore ? 'badge-fail' : 'badge-skip'} review-badge-toggle"
+           onclick="clientSelPanelToggle(${r.id},'ignore')"
+           title="${p.ignore ? 'Click to undo' : 'Mark to ignore on confirm'}">${p.ignore ? 'Ignoring' : 'Ignore'}</span>`;
+
+    return `<tr data-id="${r.id}" class="${cls}">
+      <td class="cb-cell">
+        <input type="checkbox" class="row-cb" ${checked ? 'checked' : ''}
+               onclick="clientSelPanelToggle(${r.id},'remove')" title="Uncheck to deselect on confirm">
+      </td>
+      <td>${escHtml(r.language)}</td>
+      <td class="mono-cell">${escHtml(r.lang_version)}</td>
+      <td>${escHtml(r.http_client)}</td>
+      <td class="mono-cell">${escHtml(r.http_client_version)}</td>
+      <td>${buildBadge(r.build_success)}</td>
+      <td>${testBadge(r.test_success)}</td>
+      <td>${ignoreBadge}</td>
+    </tr>`;
+  }
+
+  function renderClientSelectionPanel() {
+    const q = document.getElementById('client-sel-panel-search').value.trim().toLowerCase();
+    document.getElementById('client-sel-panel-count').textContent = clientSelPanelItems.length.toLocaleString();
+
+    const rows = !q ? clientSelPanelItems : clientSelPanelItems.filter(r =>
+      `${r.language} ${r.lang_version} ${r.http_client} ${r.http_client_version}`
+        .toLowerCase().includes(q));
+
+    const tbody = document.getElementById('client-sel-panel-tbody');
+    tbody.innerHTML = rows.length
+      ? rows.map(clientSelPanelRowHtml).join('')
+      : '<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--muted)">No matches.</td></tr>';
+
+    updateClientSelPanelFooter();
+  }
+
+  function clientSelPanelToggle(id, kind) {
+    const p = clientSelPanelPending[id] || (clientSelPanelPending[id] = {});
+    p[kind] = !p[kind];
+    if (!p.remove && !p.ignore) delete clientSelPanelPending[id];
+    renderClientSelectionPanel();
+  }
+
+  function updateClientSelPanelFooter() {
+    const n = Object.keys(clientSelPanelPending).length;
+    const note = document.getElementById('client-sel-panel-pending-note');
+    const apply = document.getElementById('btn-client-sel-panel-apply');
+    if (n === 0) {
+      note.textContent = 'No pending changes';
+      apply.disabled = true;
+      apply.textContent = 'Confirm changes';
+    } else {
+      note.textContent = `${n} pending change${n === 1 ? '' : 's'}`;
+      apply.disabled = false;
+      apply.textContent = `Confirm changes (${n})`;
+    }
+  }
+
+  async function applyClientSelectionPanelChanges() {
+    const removeIds = [], ignoreIds = [];
+    Object.entries(clientSelPanelPending).forEach(([id, p]) => {
+      id = Number(id);
+      if (p.remove) removeIds.push(id);
+      if (p.ignore) ignoreIds.push(id);
+    });
+    if (!removeIds.length && !ignoreIds.length) { closeClientSelectionPanel(); return; }
+
+    if (ignoreIds.length) {
+      const reason = prompt(`Reason for ignoring ${ignoreIds.length} client image(s) (optional):`, '');
+      if (reason === null) return; // cancelled, keep panel + pending state as-is
+      try {
+        const res = await api('/api/client-ignore', {
+          method: 'POST',
+          body: JSON.stringify({ client_image_ids: ignoreIds, ignored: true, reason }),
+        });
+        toast(`${res.count} client image(s) added to ignore list`, 'ok');
+      } catch (e) {
+        toast(`Error ignoring: ${e.message}`, 'err');
+        return;
+      }
+    }
+
+    removeIds.forEach(id => clientState.selected.delete(id));
+    ignoreIds.forEach(id => clientState.selected.delete(id)); // ignored client images drop out of the active selection too
+
+    document.querySelectorAll('#client-tbody tr[data-id]').forEach(row => {
+      const id = Number(row.dataset.id);
+      row.classList.toggle('selected', clientState.selected.has(id));
+      const cb = row.querySelector('.row-cb');
+      if (cb) cb.checked = clientState.selected.has(id);
+    });
+    updateClientActionBar();
+    closeClientSelectionPanel();
+    if (ignoreIds.length) { loadClientImages(clientState.page); loadClientStats(); }
+  }
+
+  // ── Client Ignore review panel ────────────────────────────────────────────
+  let clientIgnorePanelItems = [];
+  let clientIgnorePanelPending = {}; // id -> true (marked to unignore)
+
+  async function openClientIgnorePanel() {
+    clientIgnorePanelPending = {};
+    document.getElementById('client-ignore-panel-search').value = '';
+    document.getElementById('client-ignore-panel-tbody').innerHTML =
+      '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+    document.getElementById('client-ignore-panel-overlay').classList.add('open');
+    try {
+      const data = await api('/api/client-images/ignored');
+      clientIgnorePanelItems = data.items;
+      if (!clientIgnorePanelItems.length) {
+        document.getElementById('client-ignore-panel-tbody').innerHTML =
+          '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">Ignore list is empty.</td></tr>';
+        document.getElementById('client-ignore-panel-count').textContent = '0';
+        updateClientIgnorePanelFooter();
+        return;
+      }
+      renderClientIgnorePanel();
+    } catch (e) {
+      document.getElementById('client-ignore-panel-tbody').innerHTML =
+        `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+  }
+
+  function closeClientIgnorePanel() {
+    document.getElementById('client-ignore-panel-overlay').classList.remove('open');
+    clientIgnorePanelPending = {};
+  }
+
+  function clientIgnorePanelRowHtml(r) {
+    const pending = !!clientIgnorePanelPending[r.id];
+    const reason = r.ignore_reason ? escHtml(r.ignore_reason) : '<span style="color:var(--muted)">—</span>';
+    const badge = `<span class="badge ${pending ? 'badge-ok' : 'badge-ignored'} review-badge-toggle"
+        onclick="clientIgnorePanelToggle(${r.id})"
+        title="${pending ? 'Click to undo' : 'Mark to unignore on confirm'}">${pending ? 'Unignoring' : 'Unignore'}</span>`;
+
+    return `<tr data-id="${r.id}" class="${pending ? 'pending-out' : ''}">
+      <td>${escHtml(r.language)}</td>
+      <td class="mono-cell">${escHtml(r.lang_version)}</td>
+      <td>${escHtml(r.http_client)}</td>
+      <td class="mono-cell">${escHtml(r.http_client_version)}</td>
+      <td>${buildBadge(r.build_success)}</td>
+      <td>${testBadge(r.test_success)}</td>
+      <td>${reason}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }
+
+  function renderClientIgnorePanel() {
+    const q = document.getElementById('client-ignore-panel-search').value.trim().toLowerCase();
+    document.getElementById('client-ignore-panel-count').textContent = clientIgnorePanelItems.length.toLocaleString();
+
+    const rows = !q ? clientIgnorePanelItems : clientIgnorePanelItems.filter(r =>
+      `${r.language} ${r.lang_version} ${r.http_client} ${r.http_client_version} ${r.ignore_reason || ''}`
+        .toLowerCase().includes(q));
+
+    const tbody = document.getElementById('client-ignore-panel-tbody');
+    tbody.innerHTML = rows.length
+      ? rows.map(clientIgnorePanelRowHtml).join('')
+      : '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">No matches.</td></tr>';
+
+    updateClientIgnorePanelFooter();
+  }
+
+  function clientIgnorePanelToggle(id) {
+    if (clientIgnorePanelPending[id]) delete clientIgnorePanelPending[id];
+    else clientIgnorePanelPending[id] = true;
+    renderClientIgnorePanel();
+  }
+
+  function updateClientIgnorePanelFooter() {
+    const n = Object.keys(clientIgnorePanelPending).length;
+    const note = document.getElementById('client-ignore-panel-pending-note');
+    const apply = document.getElementById('btn-client-ignore-panel-apply');
+    if (n === 0) {
+      note.textContent = 'No pending changes';
+      apply.disabled = true;
+      apply.textContent = 'Confirm changes';
+    } else {
+      note.textContent = `${n} pending change${n === 1 ? '' : 's'}`;
+      apply.disabled = false;
+      apply.textContent = `Confirm changes (${n})`;
+    }
+  }
+
+  async function applyClientIgnorePanelChanges() {
+    const unignoreIds = Object.keys(clientIgnorePanelPending).map(Number);
+    if (!unignoreIds.length) { closeClientIgnorePanel(); return; }
+
+    try {
+      const res = await api('/api/client-ignore', {
+        method: 'POST',
+        body: JSON.stringify({ client_image_ids: unignoreIds, ignored: false, reason: '' }),
+      });
+      toast(`${res.count} client image(s) removed from ignore list`, 'ok');
+    } catch (e) {
+      toast(`Error unignoring: ${e.message}`, 'err');
+      return;
+    }
+
+    closeClientIgnorePanel();
+    loadClientImages(clientState.page);
+    loadClientStats();
   }
 
   // ── Host label helper ─────────────────────────────────────────────────────
@@ -6503,28 +6844,15 @@
     else deselectAll();
   });
 
-  // ── Review dropdown menu ────────────────────────────────────────────────────
-  const _reviewMenu = document.getElementById('review-menu');
-  document.getElementById('btn-review-menu').addEventListener('click', e => {
-    e.stopPropagation();
-    _reviewMenu.classList.toggle('open');
-  });
-  document.addEventListener('click', () => _reviewMenu.classList.remove('open'));
-  _reviewMenu.addEventListener('click', e => e.stopPropagation());
-
-  document.getElementById('mnu-review-selection').addEventListener('click', () => {
-    _reviewMenu.classList.remove('open');
-    openSelectionPanel();
-  });
-  document.getElementById('mnu-review-ignored').addEventListener('click', () => {
-    _reviewMenu.classList.remove('open');
-    openIgnorePanel();
-  });
+  // ── Review buttons ──────────────────────────────────────────────────────────
+  document.getElementById('btn-review-selection').addEventListener('click', openSelectionPanel);
+  document.getElementById('btn-review-ignored').addEventListener('click', openIgnorePanel);
 
   // ── Select dropdown menu ──────────────────────────────────────────────────
   const _selMenu = document.getElementById('sel-menu');
   document.getElementById('btn-sel-menu').addEventListener('click', e => {
     e.stopPropagation();
+    _updateSelMenuDisabledState();
     _selMenu.classList.toggle('open');
   });
   document.addEventListener('click', () => _selMenu.classList.remove('open'));
@@ -6544,7 +6872,8 @@
   });
 
   ['not-built', 'build-failed', 'not-tested', 'test-failed'].forEach(s => {
-    document.getElementById(`mnu-sel-${s}`).addEventListener('click', () => {
+    document.getElementById(`mnu-sel-${s}`).addEventListener('click', function () {
+      if (this.classList.contains('disabled')) return;
       _selMenu.classList.remove('open');
       selectByStatus(s.replace(/-/g, '_'));
     });
@@ -6592,6 +6921,25 @@
   document.getElementById('ignore-panel-search').addEventListener('input', debounce(renderIgnorePanel, 120));
   document.getElementById('ignore-panel-overlay').addEventListener('click', e => {
     if (e.target.id === 'ignore-panel-overlay') closeIgnorePanel();
+  });
+
+  document.getElementById('btn-client-review-selection').addEventListener('click', openClientSelectionPanel);
+  document.getElementById('btn-client-review-ignored').addEventListener('click', openClientIgnorePanel);
+
+  document.getElementById('btn-close-client-sel-panel').addEventListener('click', closeClientSelectionPanel);
+  document.getElementById('btn-client-sel-panel-cancel').addEventListener('click', closeClientSelectionPanel);
+  document.getElementById('btn-client-sel-panel-apply').addEventListener('click', applyClientSelectionPanelChanges);
+  document.getElementById('client-sel-panel-search').addEventListener('input', debounce(renderClientSelectionPanel, 120));
+  document.getElementById('client-sel-panel-overlay').addEventListener('click', e => {
+    if (e.target.id === 'client-sel-panel-overlay') closeClientSelectionPanel();
+  });
+
+  document.getElementById('btn-close-client-ignore-panel').addEventListener('click', closeClientIgnorePanel);
+  document.getElementById('btn-client-ignore-panel-cancel').addEventListener('click', closeClientIgnorePanel);
+  document.getElementById('btn-client-ignore-panel-apply').addEventListener('click', applyClientIgnorePanelChanges);
+  document.getElementById('client-ignore-panel-search').addEventListener('input', debounce(renderClientIgnorePanel, 120));
+  document.getElementById('client-ignore-panel-overlay').addEventListener('click', e => {
+    if (e.target.id === 'client-ignore-panel-overlay') closeClientIgnorePanel();
   });
 
   document.querySelectorAll('.ref-scope-btn').forEach(b =>
