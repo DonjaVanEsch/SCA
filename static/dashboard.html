@@ -15,16 +15,16 @@
     --text: #cdd5de;
     --muted: #5e6b7d;
     --muted2: #8b949e;
-    --accent: #1e7bd9;
-    --accent-h: #2b8fe8;
+    --accent: #5c7ca6;
+    --accent-h: #7093ba;
     --btn-text: #051220;
     --success: #3fb950;
     --danger: #f85149;
     --warning: #e3b341;
     --ignored-c: #4a5568;
     --row-h: #1a2030;
-    --sel-bg: #0d2040;
-    --sel-border: #1e5799;
+    --sel-bg: #16212c;
+    --sel-border: #3d5c7c;
     --radius: 5px;
     --radius-lg: 8px;
     --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
@@ -36,13 +36,14 @@
 
   /* Client-fingerprinting mode: a distinct color scheme, not just a text
      label -- re-themes every existing var(--accent)/--sel-*  use (buttons,
-     active tab, selection highlight, sort icons, ...) at the token level,
-     the same cyan used for "client-side" throughout the process diagram.
-     The base surface colors lean toward a deeper navy blue (not the same
-     blue-black as server mode, and deliberately not teal/turquoise -- that
-     read too close to the accent hue) so the base still feels distinct and
-     considered without competing with the cyan accent. Applied to <html>,
-     not <body>, so html's own `background: var(--bg)` (the true page root)
+     active tab, selection highlight, sort icons, ...) at the token level.
+     Forest Teal, chosen (2026-07-20) over an earlier brighter cyan that read
+     as too bright/loud -- still a clearly different hue from server mode's
+     slate blue, but muted enough to sit calmly across a whole page of chrome.
+     The base surface colors lean toward a deeper navy (not the same
+     blue-black as server mode) so the base still feels distinct and
+     considered without competing with the accent. Applied to <html>, not
+     <body>, so html's own `background: var(--bg)` (the true page root)
      picks the override up too. */
   html.client-mode {
     --bg: #0a121c;
@@ -50,10 +51,10 @@
     --surface2: #17222f;
     --surface3: #1b2735;
     --row-h: #16233a;
-    --accent: #2FB8C4;
-    --accent-h: #4DCBD6;
-    --sel-bg: #0d3236;
-    --sel-border: #1e7a82;
+    --accent: #2e7d6b;
+    --accent-h: #3f9683;
+    --sel-bg: #0f211c;
+    --sel-border: #1f5245;
   }
 
   /* ── Reset ──────────────────────────────────────────────────────────────── */
@@ -154,17 +155,17 @@
   }
 
   /* The actual "do the thing" primary action deliberately stays the same
-     blue as server mode's own Execute button -- the cyan re-theme is for
-     mode-identifying chrome (header border, badge, tab/selection
+     slate blue as server mode's own Execute button -- the teal re-theme is
+     for mode-identifying chrome (header border, badge, tab/selection
      highlight), not for the button that does the equivalent job either
      mode. */
   html.client-mode #btn-client-start {
-    background: #1e7bd9;
-    border-color: #1e7bd9;
+    background: #5c7ca6;
+    border-color: #5c7ca6;
   }
 
   html.client-mode #btn-client-start:hover {
-    background: #2b8fe8;
+    background: #7093ba;
   }
 
   /* Feature-gated elements (fingerprinting, host-scoping) are re-created on
