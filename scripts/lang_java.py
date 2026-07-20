@@ -104,6 +104,9 @@ LIB_META: dict = {
     "Tink": {
         "coord": ("com.google.crypto.tink", "tink"),
         "imports": ["com.google.crypto.tink.aead.AeadConfig"],
+        # Version-aware -- see _tink_touch_line(), AeadConfig.register()
+        # doesn't exist before 1.2.0. This default is only a fallback for
+        # any caller that doesn't thread a lib_ver through.
         "touch": "try { AeadConfig.register(); } catch (Exception e) { /* exercised, ignore init failure */ }",
     },
     "Conscrypt": {
@@ -862,9 +865,24 @@ def _sub(tpl: str, **kw) -> str:
     return tpl
 
 
-def make_main_java(fw_name: str, fw_major: str, lib_name: str) -> str:
+# AeadConfig.register() doesn't exist before Tink 1.2.0 -- confirmed live by
+# decompiling the real published jars: 1.0.0/1.1.0 only expose init()/
+# registerStandardKeyTypes(), 1.2.0 is the first to add register() (a
+# real "cannot find symbol" Micronaut/Tink 1.0-1.1 compile failure surfaced
+# this). registerStandardKeyTypes() already exists on every tracked version,
+# so it's the right pre-1.2 substitute, not a different codepath.
+_TINK_REGISTER_FROM = (1, 2)
+
+
+def _tink_touch_line(lib_ver: str) -> str:
+    method = "register" if _parse(lib_ver) >= _TINK_REGISTER_FROM else "registerStandardKeyTypes"
+    return f"try {{ AeadConfig.{method}(); }} catch (Exception e) {{ /* exercised, ignore init failure */ }}"
+
+
+def make_main_java(fw_name: str, fw_major: str, lib_name: str, lib_ver: str = "") -> str:
     meta = LIB_META[lib_name]
     imports = "\n".join(f"import {imp};" for imp in meta["imports"])
+    touch = _tink_touch_line(lib_ver) if lib_name == "Tink" and lib_ver else meta["touch"]
     if fw_name == "Helidon":
         tpl = _helidon_main_tpl(fw_major)
     elif fw_name == "Vert.x":
@@ -876,7 +894,7 @@ def make_main_java(fw_name: str, fw_major: str, lib_name: str) -> str:
     return _sub(
         tpl,
         LIB_IMPORTS      = imports,
-        LIB_TOUCH        = meta["touch"],
+        LIB_TOUCH        = touch,
         FW_NAME          = fw_name,
         LIB_NAME         = lib_name,
         VERSIONS_HELPER  = _VERSIONS_READ_HELPER,
@@ -1545,7 +1563,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     res_dir.mkdir(parents=True, exist_ok=True)
 
     (src_dir / "Main.java").write_text(
-        make_main_java(fw_name, fw_major, lib_name), encoding="utf-8"
+        make_main_java(fw_name, fw_major, lib_name, lib_ver), encoding="utf-8"
     )
     (res_dir / "versions.properties").write_text(
         _versions_properties(fw_resolved, lib_resolved), encoding="utf-8"
