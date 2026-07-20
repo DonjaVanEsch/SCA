@@ -157,12 +157,15 @@
      highlight), not for the button that does the equivalent job either
      mode. */
   html.client-mode #btn-client-start {
-    background: #5c7ca6;
+    background: transparent;
+    color: #5c7ca6;
     border-color: #5c7ca6;
   }
 
   html.client-mode #btn-client-start:hover {
-    background: #7093ba;
+    background: color-mix(in srgb, #5c7ca6 14%, transparent);
+    color: #7093ba;
+    border-color: #7093ba;
   }
 
   /* Feature-gated elements (fingerprinting, host-scoping) are re-created on
@@ -499,7 +502,7 @@
 
   .btn:disabled {
     opacity: .4;
-    cursor: not-allowed
+    cursor: default
   }
 
   #btn-settings {
