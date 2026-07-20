@@ -699,19 +699,22 @@
   }
 
   .act-check:has(input:checked) {
-    background: rgba(30, 123, 217, .12);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
     border-color: var(--accent);
     color: var(--text);
   }
 
   .act-check input[type=checkbox] {
     accent-color: var(--accent);
+  }
+
+  .act-check input[type=checkbox]:not(:disabled) {
     cursor: pointer
   }
 
   .act-check:has(input:disabled) {
     opacity: .4;
-    cursor: not-allowed
+    cursor: default
   }
 
   /* ── Table ──────────────────────────────────────────────────────────────── */
