@@ -5741,6 +5741,7 @@
   let _currentJobId = null;
   let _wasCancelled = false;
   let _timerInterval = null;
+  let _batchStart = null; // persists across chained (keepLogs=true) openLog() calls, so Build→Test→Fingerprint shows one continuous elapsed time instead of restarting per action
 
   function _fmtElapsed(ms) {
     const s = Math.floor(ms / 1000);
@@ -5760,10 +5761,12 @@
     const prevTime = elapsedEl.textContent;
 
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
-    const _runStart = Date.now();
-    elapsedEl.textContent = '0:00';
+    if (!keepLogs || _batchStart === null) {
+      _batchStart = Date.now();
+    }
+    elapsedEl.textContent = _fmtElapsed(Date.now() - _batchStart);
     _timerInterval = setInterval(() => {
-      elapsedEl.textContent = _fmtElapsed(Date.now() - _runStart);
+      elapsedEl.textContent = _fmtElapsed(Date.now() - _batchStart);
     }, 1000);
 
     const cancelBtn = document.getElementById('btn-cancel-job');
