@@ -90,7 +90,16 @@ function pkgVersion(name) {
 \ttry {
 \t\treturn require(name + "/package.json").version;
 \t} catch (e) {
-\t\treturn "unknown";
+\t\t// Some packages' own "exports" map doesn't list "./package.json" as a
+\t\t// reachable subpath (confirmed live: @noble/curves 2.x) -- the main
+\t\t// entry (".") is always reachable though, so derive the package root
+\t\t// from wherever that actually resolved to instead.
+\t\ttry {
+\t\t\tconst path = require("path");
+\t\t\treturn require(path.join(path.dirname(require.resolve(name)), "package.json")).version;
+\t\t} catch (e2) {
+\t\t\treturn "unknown";
+\t\t}
 \t}
 }
 """
@@ -467,13 +476,20 @@ __LIB_LOAD__
 
 
 def _noble_pq_sign_app(hc_ver: str = "") -> str:
+    # v0.6 swapped sign()'s argument order as part of the same rewrite that
+    # made the package ESM-only -- confirmed live against the real source:
+    # 0.1's ml-dsa.js has `sign: (secretKey, msg, random) => {...}`, 0.6's has
+    # `sign: (msg, secretKey, opts = {}) => {...}`. Same version boundary as
+    # _is_esm_only, so reuse it instead of a second threshold dict.
+    swapped = hc_ver and _is_esm_only("@noble/post-quantum", hc_ver)
+    sign_args = "messageBytes, keys.secretKey" if swapped else "keys.secretKey, messageBytes"
     body = """\
 function run(mod) {
 \ttry {
 \t\tconst mldsa = mod.ml_dsa65;
 \t\tconst keys = mldsa.keygen();
 \t\tconst messageBytes = Buffer.from(MESSAGE_, "utf8");
-\t\tconst signature = mldsa.sign(keys.secretKey, messageBytes);
+\t\tconst signature = mldsa.sign(SIGN_ARGS_);
 \t\tconst sigB64 = Buffer.from(signature).toString("base64");
 \t\tsendProbe("noble-pq-sign", pkgVersion("@noble/post-quantum"), "X-Signature", "ml-dsa-65=" + sigB64);
 \t} catch (err) {
@@ -482,7 +498,7 @@ function run(mod) {
 }
 
 __LIB_LOAD__
-""".replace("MESSAGE_", json.dumps(MESSAGE))
+""".replace("MESSAGE_", json.dumps(MESSAGE)).replace("SIGN_ARGS_", sign_args)
     if hc_ver and _is_esm_only("@noble/post-quantum", hc_ver):
         load = (
             'import("@noble/post-quantum/ml-dsa").catch(function () { return import("@noble/post-quantum/ml-dsa.js"); })\n'
