@@ -429,11 +429,17 @@ try {
 # churn on a DIFFERENT submodule) ─────────────────────────────────────────────
 
 def _noble_curves_sign_app(hc_ver: str = "") -> str:
+    # v2.0 renamed ed25519.utils.randomPrivateKey -> randomSecretKey as part
+    # of the same rewrite that made the package ESM-only (confirmed live:
+    # 1.0's utils only has randomPrivateKey, 2.0's only randomSecretKey) --
+    # same version boundary as _is_esm_only, so reuse it instead of a second
+    # threshold dict.
+    key_fn = "randomSecretKey" if hc_ver and _is_esm_only("@noble/curves", hc_ver) else "randomPrivateKey"
     body = """\
 function run(mod) {
 \ttry {
 \t\tconst ed25519 = mod.ed25519;
-\t\tconst privateKey = ed25519.utils.randomPrivateKey();
+\t\tconst privateKey = ed25519.utils.KEY_FN_();
 \t\tconst messageBytes = Buffer.from(MESSAGE_, "utf8");
 \t\tconst signature = ed25519.sign(messageBytes, privateKey);
 \t\tconst sigB64 = Buffer.from(signature).toString("base64");
@@ -444,7 +450,7 @@ function run(mod) {
 }
 
 __LIB_LOAD__
-""".replace("MESSAGE_", json.dumps(MESSAGE))
+""".replace("MESSAGE_", json.dumps(MESSAGE)).replace("KEY_FN_", key_fn)
     if hc_ver and _is_esm_only("@noble/curves", hc_ver):
         load = (
             'import("@noble/curves/ed25519").catch(function () { return import("@noble/curves/ed25519.js"); })\n'
