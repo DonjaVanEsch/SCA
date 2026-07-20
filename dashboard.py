@@ -1139,6 +1139,39 @@ def build_reports():
     return jsonify(db.get_build_reports(filters, page, per_page))
 
 
+# ── Client reports (Client mode's counterpart to the routes above) ───────────
+
+@app.route("/api/client-reports/test")
+def client_test_reports():
+    filters = {k: request.args.get(k, "") for k in (
+        "language", "version", "http_client", "http_client_version", "success", "run", "host",
+    )}
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(500, int(request.args.get("per_page", 100))))
+    return jsonify(db.get_client_test_reports(filters, page, per_page))
+
+
+@app.route("/api/client-reports/pending")
+def client_pending_reports():
+    """Pending is inherently host-scoped -- always the currently active host."""
+    filters = {k: request.args.get(k, "") for k in (
+        "language", "version", "http_client", "http_client_version",
+    )}
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(500, int(request.args.get("per_page", 100))))
+    return jsonify(db.get_client_pending_images(filters, page, per_page, host=_current_host()))
+
+
+@app.route("/api/client-reports/build")
+def client_build_reports():
+    filters = {k: request.args.get(k, "") for k in (
+        "language", "version", "http_client", "http_client_version", "success", "run", "host",
+    )}
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = max(1, min(500, int(request.args.get("per_page", 100))))
+    return jsonify(db.get_client_build_reports(filters, page, per_page))
+
+
 # ── Crypto Agility (C.A.M. Component 2) ───────────────────────────────────────
 
 @app.route("/api/crypto-agility")

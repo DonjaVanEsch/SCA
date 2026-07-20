@@ -1838,9 +1838,15 @@ _CLIENT_DETAIL_FILTER_MAP = [
 ]
 
 
-def _build_client_where(filters: dict) -> tuple[str, list]:
+def _build_client_where(filters: dict, exclude: frozenset = frozenset()) -> tuple[str, list]:
+    """exclude: same purpose as _build_where's -- "run" maps to "build_run",
+    a column that only exists in _client_status_sql()'s superset, not in the
+    bare client_image_details view the report queries join against
+    themselves (they handle "run" via their own `r.name` join instead)."""
     clauses, params = [], []
     for col, key in _CLIENT_DETAIL_FILTER_MAP:
+        if key in exclude:
+            continue
         frag, param = _wildcard_clause(col, filters.get(key, ""))
         if frag:
             clauses.append(frag)
@@ -2239,6 +2245,164 @@ def get_client_cascading_filter_options(active: dict) -> dict:
         "http_clients":         _vals("http_client",           {"language": lang, "version": ver}),
         "http_client_versions": _vals("http_client_version",   {"language": lang, "version": ver,
                                                                   "http_client": hc}),
+    }
+
+
+# ── Client reports (Client mode's counterpart to get_test_reports() /
+# get_build_reports() / get_pending_images()) ────────────────────────────────
+# client_test_results/client_build_results are upserted one row per
+# (client_image, host) -- not one row per run like the server-side tables --
+# so "run" here reflects whichever run most recently wrote that row, not a
+# full history of every batch. Same limitation _client_status_sql() already
+# lives with for the Client-images table itself.
+
+def get_client_test_reports(filters: dict | None = None,
+                            page: int = 1, per_page: int = 100) -> dict:
+    """Return paginated client test results joined with client-image metadata."""
+    filters   = filters or {}
+    where_sql, params = _build_client_where(filters, exclude=frozenset({"run"}))
+
+    success_val = filters.get("success", "")
+    if success_val not in ("", None):
+        connector = "AND" if where_sql else "WHERE"
+        where_sql = f"{where_sql} {connector} t.success = ?"
+        params.append(int(success_val))
+
+    run_val = filters.get("run", "")
+    run_filter = ""
+    if run_val:
+        connector = "AND" if where_sql else "WHERE"
+        run_filter = f"{connector} r.name = ?"
+        params.append(run_val)
+
+    host_val = filters.get("host", "")
+    host_filter = ""
+    if host_val not in ("", None):
+        connector = "AND" if (where_sql or run_filter) else "WHERE"
+        host_filter = f"{connector} t.host = ?"
+        params.append(host_val)
+
+    with _connect() as conn:
+        total = conn.execute(f"""
+            SELECT COUNT(*) FROM client_test_results t
+            JOIN client_image_details d ON d.id = t.client_image_id
+            LEFT JOIN runs r ON r.id = t.run_id
+            {where_sql} {run_filter} {host_filter}
+        """, params).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        rows = conn.execute(f"""
+            SELECT
+                t.id, t.success, t.error_msg, t.output, t.finished_at, t.host,
+                r.name AS run_name, r.status AS run_status,
+                d.language, d.lang_version, d.http_client, d.http_client_version,
+                d.image_tag
+            FROM client_test_results t
+            JOIN client_image_details d ON d.id = t.client_image_id
+            LEFT JOIN runs r ON r.id = t.run_id
+            {where_sql}
+            {run_filter}
+            {host_filter}
+            ORDER BY d.language, d.lang_version, d.http_client, d.http_client_version
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "items": [dict(r) for r in rows],
+    }
+
+
+def get_client_build_reports(filters: dict | None = None,
+                             page: int = 1, per_page: int = 100) -> dict:
+    """Return paginated client build results joined with client-image metadata."""
+    filters   = filters or {}
+    where_sql, params = _build_client_where(filters, exclude=frozenset({"run"}))
+
+    success_val = filters.get("success", "")
+    if success_val not in ("", None):
+        connector = "AND" if where_sql else "WHERE"
+        where_sql = f"{where_sql} {connector} b.success = ?"
+        params.append(int(success_val))
+
+    run_val = filters.get("run", "")
+    run_filter = ""
+    if run_val:
+        connector = "AND" if where_sql else "WHERE"
+        run_filter = f"{connector} r.name = ?"
+        params.append(run_val)
+
+    host_val = filters.get("host", "")
+    host_filter = ""
+    if host_val not in ("", None):
+        connector = "AND" if (where_sql or run_filter) else "WHERE"
+        host_filter = f"{connector} b.host = ?"
+        params.append(host_val)
+
+    with _connect() as conn:
+        total = conn.execute(f"""
+            SELECT COUNT(*) FROM client_build_results b
+            JOIN client_image_details d ON d.id = b.client_image_id
+            LEFT JOIN runs r ON r.id = b.run_id
+            {where_sql} {run_filter} {host_filter}
+        """, params).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        rows = conn.execute(f"""
+            SELECT
+                b.id, b.success, b.output, b.started_at, b.finished_at, b.host,
+                r.name AS run_name, r.status AS run_status,
+                d.language, d.lang_version, d.http_client, d.http_client_version,
+                d.image_tag
+            FROM client_build_results b
+            JOIN client_image_details d ON d.id = b.client_image_id
+            LEFT JOIN runs r ON r.id = b.run_id
+            {where_sql}
+            {run_filter}
+            {host_filter}
+            ORDER BY d.language, d.lang_version, d.http_client, d.http_client_version
+            LIMIT ? OFFSET ?
+        """, params + [per_page, offset]).fetchall()
+
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "items": [dict(r) for r in rows],
+    }
+
+
+def get_client_pending_images(filters: dict | None = None,
+                              page: int = 1, per_page: int = 100,
+                              host: str = "") -> dict:
+    """Return paginated non-ignored client images where build or test has no
+    result yet -- client-image counterpart to get_pending_images()."""
+    filters = filters or {}
+    where_sql, params = _build_client_where(filters, exclude=frozenset({"run"}))
+    connector = "AND" if where_sql else "WHERE"
+    where_sql = (f"{where_sql} {connector} "
+                 "(build_success IS NULL OR test_success IS NULL) AND ignored = 0")
+    status_sql = _client_status_sql()
+    with _connect() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM ({status_sql}) s {where_sql}",
+            [host, host, host] + params,
+        ).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        rows = conn.execute(f"""
+            SELECT id, image_tag, language, lang_version, http_client, http_client_version,
+                   build_success, test_success, synced_at
+            FROM ({status_sql}) s
+            {where_sql}
+            ORDER BY language, lang_version, http_client, http_client_version
+            LIMIT ? OFFSET ?
+        """, [host, host, host] + params + [per_page, offset]).fetchall()
+
+    return {
+        "total": total, "page": page, "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+        "items": [dict(r) for r in rows],
     }
 
 

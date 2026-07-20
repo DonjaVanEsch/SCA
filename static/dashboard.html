@@ -501,7 +501,8 @@
     color: #fff;
   }
 
-  #report-filter-panel {
+  #report-filter-panel,
+  #client-report-filter-panel {
     width: 220px;
     flex-shrink: 0;
     border-right: 1px solid var(--border);
@@ -513,7 +514,8 @@
     margin-bottom: var(--dock-h);
   }
 
-  #report-main-panel {
+  #report-main-panel,
+  #client-report-main-panel {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -1069,7 +1071,7 @@
     gap: 4px
   }
 
-  .sub-tab {
+  .sub-tab, .sub-tab-client {
     padding: 4px 12px;
     border-radius: var(--radius);
     font-size: 12px;
@@ -1078,13 +1080,13 @@
     transition: background .1s, color .1s;
   }
 
-  .sub-tab.active {
+  .sub-tab.active, .sub-tab-client.active {
     background: var(--surface3);
     color: var(--text);
     border-color: var(--border2)
   }
 
-  .sub-tab:hover:not(.active) {
+  .sub-tab:hover:not(.active), .sub-tab-client:hover:not(.active) {
     background: var(--surface2);
     color: var(--text)
   }
@@ -1177,7 +1179,8 @@
     text-decoration: underline;
   }
 
-  #report-table-wrap {
+  #report-table-wrap,
+  #client-report-table-wrap {
     flex: 1;
     overflow: auto;
     min-height: 0;
@@ -2289,6 +2292,7 @@
   </nav>
   <nav class="tabs" id="tabs-client" style="display:none">
     <button class="tab-btn active" data-tab="clients">Clients</button>
+    <button class="tab-btn" data-tab="client-reports">Reports</button>
     <button class="tab-btn" data-tab="reference">Reference</button>
   </nav>
   <div class="header-actions">
@@ -2770,6 +2774,103 @@
       </div>
     </div><!-- #report-main-panel -->
   </div><!-- #tab-reports -->
+
+  <!-- ── Client Reports tab (Client mode's counterpart to Reports) ─────── -->
+  <div id="tab-client-reports" class="tab-panel">
+
+    <aside id="client-report-filter-panel">
+      <div class="filter-section">
+        <span class="filter-label">Filters</span>
+        <div class="filter-group">
+          <div class="filter-row">
+            <label>Language</label>
+            <select class="filter-select" id="cf-report-lang">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lang version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="cf-report-ver" placeholder="e.g. 20 or 2x">
+          </div>
+          <div class="filter-row">
+            <label>Library</label>
+            <select class="filter-select" id="cf-report-hc">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Lib version <em style="color:var(--muted);font-size:10px">(wildcard ok)</em></label>
+            <input class="filter-input" id="cf-report-hcver" placeholder="e.g. 2.34.2 or 2.x">
+          </div>
+        </div>
+        <div class="filter-divider"></div>
+        <span class="filter-label" id="cf-report-options-label">Report options</span>
+        <div class="filter-group" id="cf-report-run-result-group">
+          <div class="filter-row">
+            <label>Batch</label>
+            <select class="filter-select" id="cf-report-run">
+              <option value="">All batches</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Host <em style="color:var(--muted);font-size:10px">(build/test reports only)</em></label>
+            <select class="filter-select" id="cf-report-host">
+              <option value="">All hosts</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Result</label>
+            <select class="filter-select" id="cf-report-result">
+              <option value="">All results</option>
+              <option value="1">Pass / OK</option>
+              <option value="0">Fail</option>
+            </select>
+          </div>
+        </div>
+        <div class="filter-actions">
+          <button class="btn btn-primary btn-sm" id="btn-load-client-reports" style="flex:1">Load</button>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-client-report-filter" style="flex:1">Clear</button>
+        </div>
+      </div>
+    </aside>
+
+    <div id="client-report-main-panel">
+      <div class="panel-header">
+        <h2>Reports</h2>
+        <div class="sub-tabs">
+          <button class="sub-tab-client active" data-client-report="test">Test results</button>
+          <button class="sub-tab-client" data-client-report="build">Build results</button>
+          <button class="sub-tab-client" data-client-report="pending">Pending</button>
+        </div>
+      </div>
+      <div id="client-report-table-wrap">
+        <table id="client-report-table" style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">
+              </th>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
+                Source</th>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
+                Detail</th>
+              <th
+                style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted2);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap">
+                Date</th>
+            </tr>
+          </thead>
+          <tbody id="client-report-tbody">
+            <tr>
+              <td colspan="4" style="padding:32px;text-align:center;color:var(--muted)">Select filters and click Load
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- #client-report-main-panel -->
+  </div><!-- #tab-client-reports -->
 
   <!-- ── Reference tab ───────────────────────────────────────────────── -->
   <div id="tab-reference" class="tab-panel">
@@ -3297,13 +3398,14 @@
       repopAll('rf-fw', opts.frameworks || []);
       repopAll('rf-lib', opts.libraries || []);
 
-      const hostSel = document.getElementById('rf-host');
-      if (hostSel) {
+      ['rf-host', 'cf-report-host'].forEach(id => {
+        const hostSel = document.getElementById(id);
+        if (!hostSel) return;
         const cur = hostSel.value;
         while (hostSel.options.length > 1) hostSel.remove(1);
         (opts.hosts || []).forEach(h => hostSel.appendChild(new Option(hostLabel(h), h)));
         hostSel.value = (opts.hosts || []).includes(cur) ? cur : '';
-      }
+      });
     } catch { }
 
     // Step 2: restore saved values (options now exist in the selects)
@@ -3713,6 +3815,8 @@
       }
       repopAll('cf-lang', opts.languages || []);
       repopAll('cf-hc', opts.http_clients || []);
+      repopAll('cf-report-lang', opts.languages || []);
+      repopAll('cf-report-hc', opts.http_clients || []);
     } catch { }
     // Step 2: restore saved values (options now exist in the selects)
     restoreClientFilters();
@@ -4299,7 +4403,7 @@
         api('/api/runs?scope=client'),
       ]);
       _populateRunSelects(['f-run', 'rf-run'], serverRuns);
-      _populateRunSelects(['cf-run'], clientRuns);
+      _populateRunSelects(['cf-run', 'cf-report-run'], clientRuns);
     } catch { }
   }
 
@@ -4726,7 +4830,8 @@
   // visible effect once whatever's currently on screen re-renders.
   function refreshCurrentView() {
     if (_dashboardMode === 'client') {
-      if (_clientView === 'fplog') loadClientFingerprintLog();
+      if (state.currentTab === 'client-reports') loadClientReports(clientReportState.page);
+      else if (_clientView === 'fplog') loadClientFingerprintLog();
       else loadClientImages(clientState.page || 1);
       return;
     }
@@ -5764,6 +5869,148 @@
     pg.appendChild(mkBtn('›', page + 1, false));
   }
 
+  // ── Client Reports (Client mode's counterpart to Reports above) ──────────
+  const clientReportState = { page: 1, perPage: 100, total: 0, pages: 1 };
+  let _clientReportType = 'test';
+
+  async function loadClientReports(page = 1) {
+    clientReportState.page = page;
+    const isPending = _clientReportType === 'pending';
+    const base = {
+      language: document.getElementById('cf-report-lang').value,
+      version: document.getElementById('cf-report-ver').value,
+      http_client: document.getElementById('cf-report-hc').value,
+      http_client_version: document.getElementById('cf-report-hcver').value,
+    };
+    const filters = isPending ? base : {
+      ...base,
+      run: document.getElementById('cf-report-run').value,
+      host: document.getElementById('cf-report-host').value,
+      success: document.getElementById('cf-report-result').value,
+    };
+    const params = filtersToParams(filters, { page, per_page: clientReportState.perPage });
+    const url = `/api/client-reports/${_clientReportType}?${params}`;
+    const tbody = document.getElementById('client-report-tbody');
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">Loading…</td></tr>';
+
+    try {
+      const data = await api(url);
+      clientReportState.total = data.total;
+      clientReportState.pages = data.pages;
+      renderClientReportPagination();
+
+      const rows = data.items;
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No results found</td></tr>';
+        return;
+      }
+
+      if (isPending) {
+        tbody.innerHTML = rows.map(r => {
+          const bOk = r.build_success === 1, bRun = r.build_success !== null;
+          const tOk = r.test_success === 1, tRun = r.test_success !== null;
+          const bDot = bRun
+            ? `<span class="success-dot ${bOk ? 'dot-ok' : 'dot-fail'}" title="Build: ${bOk ? 'OK' : 'failed'}"></span>`
+            : `<span class="success-dot" style="background:var(--border2)" title="Build: not run"></span>`;
+          const tDot = tRun
+            ? `<span class="success-dot ${tOk ? 'dot-ok' : 'dot-fail'}" title="Test: ${tOk ? 'OK' : 'failed'}"></span>`
+            : `<span class="success-dot" style="background:var(--border2)" title="Test: not run"></span>`;
+          const img = `<span style="font-family:var(--mono);font-size:11px">${escHtml(r.image_tag)}</span>`;
+          const missing = [
+            !bRun ? '<span style="color:var(--muted2)">Build: not run</span>' : (!bOk ? '<span style="color:var(--danger)">Build: failed</span>' : null),
+            !tRun ? '<span style="color:var(--muted2)">Test: not run</span>' : (!tOk ? '<span style="color:var(--danger)">Test: failed</span>' : null),
+          ].filter(Boolean).join('  ');
+          const dt = (r.synced_at || '').replace('T', ' ').slice(0, 16);
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 10px;width:40px;white-space:nowrap">${bDot} ${tDot}</td>
+            <td style="padding:6px 10px">${img}</td>
+            <td style="padding:6px 10px;font-size:11px">${missing}</td>
+            <td style="padding:6px 10px;font-size:11px;color:var(--muted2);white-space:nowrap;font-family:var(--mono)">${dt}</td>
+          </tr>`;
+        }).join('');
+        return;
+      }
+
+      tbody.innerHTML = rows.map(r => {
+        const ok = r.success === 1;
+        const dot = `<span class="success-dot ${ok ? 'dot-ok' : 'dot-fail'}"></span>`;
+        const img = `<span style="font-family:var(--mono);font-size:11px">${escHtml(r.image_tag)}</span>`;
+        let detail = '';
+
+        const rid = `crout-${r.id}`;
+        if (_clientReportType === 'test') {
+          detail = ok
+            ? '<span style="color:var(--success)">call ✓</span>'
+            : `<span style="color:var(--danger)">${escHtml(r.error_msg || 'failed')}</span>`;
+        } else {
+          detail = ok
+            ? '<span style="color:var(--success)">Build succeeded</span>'
+            : `<span style="color:var(--danger)">Build failed</span>`;
+        }
+
+        const dt = (r.finished_at || '').replace('T', ' ').slice(0, 16);
+        if (r.host) detail += ` <span style="font-size:10px;color:var(--accent);margin-left:6px" title="Docker host">🐳 ${escHtml(hostLabel(r.host))}</span>`;
+        if (r.run_name) detail += ` <span style="font-size:10px;color:var(--muted2);margin-left:6px">[${escHtml(r.run_name)}]</span>`;
+        if (r.run_status === 'interrupted') detail += ` <span style="font-size:10px;color:var(--warning);font-weight:600;margin-left:2px" title="This batch was cancelled by the user before all sources were processed">⚠ interrupted</span>`;
+        const hasOut = !ok && r.output;
+        const outRow = hasOut
+          ? `<tr id="${rid}" style="display:none;border-bottom:1px solid var(--border)">
+             <td></td>
+             <td colspan="3" style="padding:0 10px 10px">
+               <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+                 <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px"
+                         onclick="event.stopPropagation();copyOutput('${rid}-pre',this)">Copy</button>
+               </div>
+               <pre id="${rid}-pre" class="detail-output detail-output-err">${escHtml(r.output)}</pre>
+             </td>
+           </tr>`
+          : '';
+        const toggle = hasOut ? `style="cursor:pointer" onclick="const r=document.getElementById('${rid}');r.style.display=r.style.display==='none'?'':'none'"` : '';
+        return `<tr ${toggle} style="border-bottom:${hasOut ? 'none' : '1px solid var(--border)'}">
+        <td style="padding:6px 10px;width:20px">${dot}</td>
+        <td style="padding:6px 10px">${img}</td>
+        <td style="padding:6px 10px;font-size:11px">${detail}${hasOut ? ' <span style="color:var(--muted);font-size:10px">(click for details)</span>' : ''}</td>
+        <td style="padding:6px 10px;font-size:11px;color:var(--muted2);white-space:nowrap;font-family:var(--mono)">${dt}</td>
+      </tr>${outRow}`;
+      }).join('');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--danger)">Error: ${e.message}</td></tr>`;
+    }
+  }
+
+  function renderClientReportPagination() {
+    const { page, pages, total, perPage } = clientReportState;
+    const from = Math.min((page - 1) * perPage + 1, total);
+    const to = Math.min(page * perPage, total);
+    document.getElementById('pg-info').textContent =
+      total ? `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}` : '–';
+
+    const pg = document.getElementById('pg-buttons');
+    pg.innerHTML = '';
+
+    const mkBtn = (label, p, cur) => {
+      const b = document.createElement('button');
+      b.className = `pg-btn${cur ? ' current' : ''}`;
+      b.textContent = label;
+      b.disabled = cur || p < 1 || p > pages;
+      if (!b.disabled) b.onclick = () => loadClientReports(p);
+      return b;
+    };
+
+    pg.appendChild(mkBtn('‹', page - 1, false));
+    pageRange(page, pages).forEach(p => {
+      if (p === '…') {
+        const s = document.createElement('span');
+        s.textContent = '…';
+        s.style.cssText = 'padding:0 4px;color:var(--muted)';
+        pg.appendChild(s);
+      } else {
+        pg.appendChild(mkBtn(p, p, p === page));
+      }
+    });
+    pg.appendChild(mkBtn('›', page + 1, false));
+  }
+
   // ── Reference ─────────────────────────────────────────────────────────────
   function renderRefLangFilterBar(languages) {
     const bar = document.getElementById('ref-lang-filter-bar');
@@ -6083,9 +6330,10 @@
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
     document.getElementById('pagination').style.display =
-      (name === 'images' || name === 'reports' || (name === 'clients' && _clientView === 'images')) ? '' : 'none';
+      (name === 'images' || name === 'reports' || name === 'client-reports' || (name === 'clients' && _clientView === 'images')) ? '' : 'none';
     if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
     if (name === 'reports') renderReportPagination();
+    if (name === 'client-reports') renderClientReportPagination();
     if (name === 'reference') {
       setRefScope(_dashboardMode === 'client' ? 'client' : 'server');
       if (!document.querySelector('#ref-content .ref-card')) loadReference();
@@ -6152,6 +6400,24 @@
   document.getElementById('btn-clear-report-filter').addEventListener('click', () => {
     ['rf-lang', 'rf-fw', 'rf-lib', 'rf-run', 'rf-host', 'rf-result'].forEach(id => document.getElementById(id).value = '');
     ['rf-ver', 'rf-fwver', 'rf-libver'].forEach(id => document.getElementById(id).value = '');
+  });
+
+  document.querySelectorAll('.sub-tab-client').forEach(b =>
+    b.addEventListener('click', () => {
+      _clientReportType = b.dataset.clientReport;
+      document.querySelectorAll('.sub-tab-client').forEach(s => s.classList.toggle('active', s === b));
+      const isPending = _clientReportType === 'pending';
+      const grp = document.getElementById('cf-report-run-result-group');
+      const lbl = document.getElementById('cf-report-options-label');
+      if (grp) grp.style.display = isPending ? 'none' : '';
+      if (lbl) lbl.style.display = isPending ? 'none' : '';
+    }));
+
+  document.getElementById('btn-load-client-reports').addEventListener('click', () => loadClientReports(1));
+
+  document.getElementById('btn-clear-client-report-filter').addEventListener('click', () => {
+    ['cf-report-lang', 'cf-report-hc', 'cf-report-run', 'cf-report-host', 'cf-report-result'].forEach(id => document.getElementById(id).value = '');
+    ['cf-report-ver', 'cf-report-hcver'].forEach(id => document.getElementById(id).value = '');
   });
 
   document.getElementById('btn-clear-filter').addEventListener('click', async () => {
