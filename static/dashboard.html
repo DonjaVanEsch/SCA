@@ -180,6 +180,10 @@
     display: none !important;
   }
 
+  html.ignore-disabled .ignore-feature {
+    display: none !important;
+  }
+
   #header h1 {
     font-size: 15px;
     font-weight: 600;
@@ -2377,7 +2381,7 @@
           </div>
         </div>
         <div class="filter-divider"></div>
-        <label class="filter-check">
+        <label class="filter-check ignore-feature">
           <input type="checkbox" id="f-ignored" checked>
           Show ignored sources
         </label>
@@ -2385,7 +2389,7 @@
           <button class="btn btn-ghost btn-sm" id="btn-clear-filter" style="flex:1">Clear filters</button>
         </div>
       </div>
-      <div class="filter-section" style="margin-top:auto;padding-top:10px">
+      <div class="filter-section ignore-feature" style="margin-top:auto;padding-top:10px">
         <div class="filter-divider"></div>
         <span class="filter-label">Export</span>
         <div class="filter-actions">
@@ -2409,7 +2413,7 @@
               <div class="sel-menu" id="review-menu">
                 <div class="sel-menu-item" id="mnu-review-selection"
                   title="Review the full selection in a separate screen">Selection</div>
-                <div class="sel-menu-item" id="mnu-review-ignored" title="Review the ignore list">Ignore list</div>
+                <div class="sel-menu-item ignore-feature" id="mnu-review-ignored" title="Review the ignore list">Ignore list</div>
               </div>
             </div>
             <div class="action-sep"></div>
@@ -2426,7 +2430,7 @@
                 <div class="sel-menu-item" id="mnu-sel-not-tested">Not tested</div>
                 <div class="sel-menu-item" id="mnu-sel-test-failed">Test failed</div>
                 <div class="sel-menu-sep"></div>
-                <div class="sel-menu-item" id="mnu-ignore">Ignore</div>
+                <div class="sel-menu-item ignore-feature" id="mnu-ignore">Ignore</div>
               </div>
             </div>
             <div class="action-sep"></div>
@@ -4831,6 +4835,7 @@
   let _defaultWorkers = 4;
   let _fingerprintEnabled = false;
   let _hostScopeEnabled = false;
+  let _ignoreFeaturesEnabled = false;
   let _accessibilityMode = false;
 
   function applyFeatureVisibility() {
@@ -4839,6 +4844,7 @@
     // elements constantly; a class on <html> doesn't need to be re-applied).
     document.documentElement.classList.toggle('fingerprint-disabled', !_fingerprintEnabled);
     document.documentElement.classList.toggle('host-scope-disabled', !_hostScopeEnabled);
+    document.documentElement.classList.toggle('ignore-disabled', !_ignoreFeaturesEnabled);
   }
 
   async function refreshHostBadge() {
@@ -4848,6 +4854,7 @@
       _defaultWorkers = s.default_workers || 4;
       _fingerprintEnabled = !!s.fingerprint_enabled;
       _hostScopeEnabled = !!s.host_scope_enabled;
+      _ignoreFeaturesEnabled = !!s.ignore_features_enabled;
       _accessibilityMode = !!s.accessibility_mode;
       applyFeatureVisibility();
     } catch { }

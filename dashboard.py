@@ -47,6 +47,14 @@ FINGERPRINT_ENABLED = os.environ.get("PQC_ENABLE_FINGERPRINT", "false").strip().
 # fingerprinting, until it's needed again.
 HOST_SCOPE_ENABLED = os.environ.get("PQC_ENABLE_HOST_SCOPE", "false").strip().lower() in ("1", "true", "yes")
 
+# The manual per-source ignore workflow (Ignore/Ignore list/exports) predates
+# the DB-backed registry include/exclude override -- that now covers the same
+# "exclude this from the build matrix" need at the version level, so the UI
+# for the older per-image mechanism is hidden by default. The routes/logic
+# stay fully intact (UI-only gate, not a functional block like fingerprinting
+# above), since the feature itself isn't being removed, just hidden.
+IGNORE_FEATURES_ENABLED = os.environ.get("PQC_ENABLE_IGNORE_FEATURES", "false").strip().lower() in ("1", "true", "yes")
+
 
 def _load_settings() -> dict:
     if not SETTINGS_FILE.exists():
@@ -1004,6 +1012,7 @@ def get_settings():
     # Read-only, environment-controlled -- not persisted in the settings file.
     settings["fingerprint_enabled"] = FINGERPRINT_ENABLED
     settings["host_scope_enabled"] = HOST_SCOPE_ENABLED
+    settings["ignore_features_enabled"] = IGNORE_FEATURES_ENABLED
     return jsonify(settings)
 
 
