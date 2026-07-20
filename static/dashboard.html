@@ -2055,6 +2055,39 @@
     flex-shrink: 0;
   }
 
+  .accent-picker-wrap {
+    width: 220px;
+  }
+
+  .accent-picker-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 12px;
+    text-align: left;
+  }
+
+  .accent-picker-btn:hover {
+    background: var(--surface3);
+  }
+
+  .accent-picker-caret {
+    margin-left: auto;
+    color: var(--muted2);
+    font-size: 10px;
+  }
+
+  .sel-menu-item.accent-item {
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
   .settings-action-list {
     display: flex;
     flex-direction: column;
@@ -3029,20 +3062,27 @@
         </section>
 
         <section class="settings-section" data-settings-section="appearance">
-          <label class="settings-label" for="settings-server-accent">Server mode accent color</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <select id="settings-server-accent" class="filter-select settings-input" style="width:200px"></select>
-            <span id="settings-server-accent-swatch" class="accent-swatch"></span>
+          <label class="settings-label">Server mode accent color</label>
+          <div class="sel-menu-wrap accent-picker-wrap">
+            <button type="button" class="accent-picker-btn" id="settings-server-accent-btn">
+              <span class="accent-swatch" id="settings-server-accent-swatch"></span>
+              <span id="settings-server-accent-label"></span>
+              <span class="accent-picker-caret">▾</span>
+            </button>
+            <div class="sel-menu" id="settings-server-accent-menu"></div>
           </div>
           <p class="settings-hint">
             The accent color used for tabs, buttons, and highlights while in Server mode.
           </p>
 
-          <label class="settings-label" for="settings-client-accent" style="margin-top:20px">Client mode accent
-            color</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <select id="settings-client-accent" class="filter-select settings-input" style="width:200px"></select>
-            <span id="settings-client-accent-swatch" class="accent-swatch"></span>
+          <label class="settings-label" style="margin-top:20px">Client mode accent color</label>
+          <div class="sel-menu-wrap accent-picker-wrap">
+            <button type="button" class="accent-picker-btn" id="settings-client-accent-btn">
+              <span class="accent-swatch" id="settings-client-accent-swatch"></span>
+              <span id="settings-client-accent-label"></span>
+              <span class="accent-picker-caret">▾</span>
+            </button>
+            <div class="sel-menu" id="settings-client-accent-menu"></div>
           </div>
           <p class="settings-hint">
             The accent color used while in Client mode — kept separate from Server mode's so
@@ -5246,17 +5286,20 @@
   // ── Accent color palette (Settings > Appearance) ──────────────────────────
   // Named, not raw hex, in the settings themselves -- the color values live
   // only here, dashboard.py's _ACCENT_KEYS is just a whitelist of these keys.
+  // Order is deliberate (insertion order = dropdown order): blues first,
+  // then the blue-green/teal bridge colors, then greens, then the
+  // remaining non-blue/non-green options.
   const ACCENT_PALETTE = {
     slate_blue:       { label: 'Slate Blue',       accent: '#5c7ca6', accentH: '#7093ba', selBg: '#16212c', selBorder: '#3d5c7c' },
-    forest_teal:      { label: 'Forest Teal',      accent: '#2e7d6b', accentH: '#3f9683', selBg: '#0f211c', selBorder: '#1f5245' },
     indigo_dusk:      { label: 'Indigo Dusk',      accent: '#5a67d8', accentH: '#7280e0', selBg: '#181b30', selBorder: '#3d4590' },
-    muted_teal:       { label: 'Muted Teal',       accent: '#368f92', accentH: '#45a7ab', selBg: '#0f2325', selBorder: '#1f5153' },
-    deep_cyan:        { label: 'Deep Cyan',        accent: '#1f8a94', accentH: '#2aa3ae', selBg: '#0d2226', selBorder: '#17555c' },
     dusty_periwinkle: { label: 'Dusty Periwinkle', accent: '#7b87d6', accentH: '#949fe0', selBg: '#1c1f30', selBorder: '#454f8f' },
+    deep_cyan:        { label: 'Deep Cyan',        accent: '#1f8a94', accentH: '#2aa3ae', selBg: '#0d2226', selBorder: '#17555c' },
+    muted_teal:       { label: 'Muted Teal',       accent: '#368f92', accentH: '#45a7ab', selBg: '#0f2325', selBorder: '#1f5153' },
+    forest_teal:      { label: 'Forest Teal',      accent: '#2e7d6b', accentH: '#3f9683', selBg: '#0f211c', selBorder: '#1f5245' },
+    sage:             { label: 'Sage',             accent: '#6b8a5a', accentH: '#85a172', selBg: '#1a2216', selBorder: '#405230' },
     muted_plum:       { label: 'Muted Plum',       accent: '#8a6fa8', accentH: '#a389bd', selBg: '#211a28', selBorder: '#4f3f60' },
     muted_clay:       { label: 'Muted Clay',       accent: '#b5704f', accentH: '#c68a68', selBg: '#271a13', selBorder: '#6b4128' },
     muted_gold:       { label: 'Muted Gold',       accent: '#b8963a', accentH: '#c9ac5c', selBg: '#271f0d', selBorder: '#6b551f' },
-    sage:             { label: 'Sage',             accent: '#6b8a5a', accentH: '#85a172', selBg: '#1a2216', selBorder: '#405230' },
   };
   let _serverAccent = 'slate_blue';
   let _clientAccent = 'forest_teal';
@@ -5282,10 +5325,48 @@
     document.documentElement.style.zoom = _fontScale / 100;
   }
 
-  function _populateAccentSelect(selId) {
-    const sel = document.getElementById(selId);
-    if (!sel || sel.options.length) return; // already populated
-    Object.entries(ACCENT_PALETTE).forEach(([key, p]) => sel.appendChild(new Option(p.label, key)));
+  // Custom swatch-plus-label dropdown (a native <select> can't reliably
+  // show a color swatch inline with each option's text across browsers).
+  // `prefix` is the shared id stem, e.g. "settings-server-accent" for
+  // -btn/-menu/-label/-swatch/-picked.
+  function _renderAccentPicker(prefix, selectedKey) {
+    const menu = document.getElementById(`${prefix}-menu`);
+    if (menu.dataset.rendered !== '1') {
+      menu.innerHTML = Object.entries(ACCENT_PALETTE).map(([key, p]) => `
+        <div class="sel-menu-item accent-item" data-key="${key}">
+          <span class="accent-swatch" style="background:${p.accent}"></span>
+          <span>${p.label}</span>
+        </div>`).join('');
+      menu.dataset.rendered = '1';
+      menu.querySelectorAll('.accent-item').forEach(item => {
+        item.addEventListener('click', () => {
+          menu.dataset.picked = item.dataset.key;
+          menu.classList.remove('open');
+          _updateAccentPickerButton(prefix, item.dataset.key);
+        });
+      });
+      document.getElementById(`${prefix}-btn`).addEventListener('click', e => {
+        e.stopPropagation();
+        document.querySelectorAll('.accent-picker-wrap .sel-menu.open').forEach(m => {
+          if (m !== menu) m.classList.remove('open');
+        });
+        menu.classList.toggle('open');
+      });
+      document.addEventListener('click', () => menu.classList.remove('open'));
+      menu.addEventListener('click', e => e.stopPropagation());
+    }
+    menu.dataset.picked = selectedKey;
+    _updateAccentPickerButton(prefix, selectedKey);
+  }
+
+  function _updateAccentPickerButton(prefix, key) {
+    const p = ACCENT_PALETTE[key] || ACCENT_PALETTE.slate_blue;
+    document.getElementById(`${prefix}-swatch`).style.background = p.accent;
+    document.getElementById(`${prefix}-label`).textContent = p.label;
+  }
+
+  function _accentPickerValue(prefix) {
+    return document.getElementById(`${prefix}-menu`).dataset.picked;
   }
 
   function applyFeatureVisibility() {
@@ -5345,12 +5426,8 @@
       document.getElementById('settings-accessibility-mode').checked = !!s.accessibility_mode;
       document.getElementById('settings-fingerprint-target').value = s.fingerprint_target || '';
       updateFingerprintTargetPreview();
-      _populateAccentSelect('settings-server-accent');
-      _populateAccentSelect('settings-client-accent');
-      document.getElementById('settings-server-accent').value = s.server_accent || 'slate_blue';
-      document.getElementById('settings-client-accent').value = s.client_accent || 'forest_teal';
-      updateAccentSwatch('settings-server-accent', 'settings-server-accent-swatch');
-      updateAccentSwatch('settings-client-accent', 'settings-client-accent-swatch');
+      _renderAccentPicker('settings-server-accent', s.server_accent || 'slate_blue');
+      _renderAccentPicker('settings-client-accent', s.client_accent || 'forest_teal');
       document.getElementById('settings-font-scale').value = s.font_scale || 100;
     } catch (e) {
       toast(`Error loading settings: ${e.message}`, 'err');
@@ -5376,12 +5453,6 @@
       `raw-TLS clients      ->  https://${target}:9443/probe`;
   }
 
-  function updateAccentSwatch(selId, swatchId) {
-    const key = document.getElementById(selId).value;
-    const p = ACCENT_PALETTE[key];
-    if (p) document.getElementById(swatchId).style.background = p.accent;
-  }
-
   function closeSettingsPanel() {
     switchTab(_settingsReturnTab || 'images');
   }
@@ -5391,8 +5462,8 @@
     const default_workers = parseInt(document.getElementById('settings-default-workers').value) || 4;
     const accessibility_mode = document.getElementById('settings-accessibility-mode').checked;
     const fingerprint_target = document.getElementById('settings-fingerprint-target').value.trim();
-    const server_accent = document.getElementById('settings-server-accent').value;
-    const client_accent = document.getElementById('settings-client-accent').value;
+    const server_accent = _accentPickerValue('settings-server-accent');
+    const client_accent = _accentPickerValue('settings-client-accent');
     const font_scale = parseInt(document.getElementById('settings-font-scale').value) || 100;
     try {
       await api('/api/settings', {
@@ -7161,10 +7232,6 @@
   document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
   document.getElementById('btn-test-docker').addEventListener('click', testDockerConnection);
   document.getElementById('settings-fingerprint-target').addEventListener('input', updateFingerprintTargetPreview);
-  document.getElementById('settings-server-accent').addEventListener('change', () =>
-    updateAccentSwatch('settings-server-accent', 'settings-server-accent-swatch'));
-  document.getElementById('settings-client-accent').addEventListener('change', () =>
-    updateAccentSwatch('settings-client-accent', 'settings-client-accent-swatch'));
   document.querySelectorAll('.settings-nav-item').forEach(item => {
     item.addEventListener('click', () => switchSettingsTab(item.dataset.settingsTab));
   });
