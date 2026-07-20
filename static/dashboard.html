@@ -17,6 +17,8 @@
     --muted2: #8b949e;
     --accent: #5c7ca6;
     --accent-h: #7093ba;
+    --server-accent: #5c7ca6;
+    --server-accent-h: #7093ba;
     --btn-text: #051220;
     --success: #3fb950;
     --danger: #f85149;
@@ -151,21 +153,23 @@
     background: var(--sel-bg);
   }
 
-  /* The actual "do the thing" primary action deliberately stays the same
-     slate blue as server mode's own Execute button -- the teal re-theme is
-     for mode-identifying chrome (header border, badge, tab/selection
-     highlight), not for the button that does the equivalent job either
-     mode. */
+  /* The actual "do the thing" primary action deliberately stays whatever
+     color Server mode's own Execute button uses -- the accent re-theme
+     below is for mode-identifying chrome (header border, badge, tab/
+     selection highlight), not for the button that does the equivalent job
+     either mode. --server-accent/--server-accent-h always reflect the
+     Server-mode color choice regardless of which mode is active (unlike
+     --accent, which switches), set by applyAccentPalette(). */
   html.client-mode #btn-client-start {
     background: transparent;
-    color: #5c7ca6;
-    border-color: #5c7ca6;
+    color: var(--server-accent);
+    border-color: var(--server-accent);
   }
 
   html.client-mode #btn-client-start:hover {
-    background: color-mix(in srgb, #5c7ca6 14%, transparent);
-    color: #7093ba;
-    border-color: #7093ba;
+    background: color-mix(in srgb, var(--server-accent) 14%, transparent);
+    color: var(--server-accent-h);
+    border-color: var(--server-accent-h);
   }
 
   /* Feature-gated elements (fingerprinting, host-scoping) are re-created on
@@ -2042,6 +2046,15 @@
     width: 100%;
   }
 
+  .accent-swatch {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid var(--border2);
+    flex-shrink: 0;
+  }
+
   .settings-action-list {
     display: flex;
     flex-direction: column;
@@ -2971,6 +2984,7 @@
     <div class="review-body settings-body settings-body-tabbed">
       <nav class="settings-nav">
         <button class="settings-nav-item active" data-settings-tab="home">🏠 General</button>
+        <button class="settings-nav-item" data-settings-tab="appearance">🎨 Appearance</button>
         <button class="settings-nav-item" data-settings-tab="maintenance">🧹 Maintenance</button>
         <button class="settings-nav-item" data-settings-tab="registry">📝 Registry</button>
         <button class="settings-nav-item" data-settings-tab="accessibility">♿ Accessibility</button>
@@ -3012,6 +3026,28 @@
             the dashboard-managed <code>pqc-fingerprint-target</code> container.
           </p>
           <pre id="settings-fingerprint-preview" class="settings-test-output"></pre>
+        </section>
+
+        <section class="settings-section" data-settings-section="appearance">
+          <label class="settings-label" for="settings-server-accent">Server mode accent color</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <select id="settings-server-accent" class="filter-select settings-input" style="width:200px"></select>
+            <span id="settings-server-accent-swatch" class="accent-swatch"></span>
+          </div>
+          <p class="settings-hint">
+            The accent color used for tabs, buttons, and highlights while in Server mode.
+          </p>
+
+          <label class="settings-label" for="settings-client-accent" style="margin-top:20px">Client mode accent
+            color</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <select id="settings-client-accent" class="filter-select settings-input" style="width:200px"></select>
+            <span id="settings-client-accent-swatch" class="accent-swatch"></span>
+          </div>
+          <p class="settings-hint">
+            The accent color used while in Client mode — kept separate from Server mode's so
+            switching modes stays visually distinct.
+          </p>
         </section>
 
         <section class="settings-section" data-settings-section="maintenance">
@@ -3095,6 +3131,18 @@
             Applies to the Build/Test/Docker status indicators in the sources table.
             Off shows small colored dots; on shows a bordered circle with an explicit
             checkmark or cross for better visibility.
+          </p>
+
+          <label class="settings-label" for="settings-font-scale" style="margin-top:20px">Font size</label>
+          <select id="settings-font-scale" class="filter-select settings-input" style="width:160px">
+            <option value="90">Small</option>
+            <option value="100">Normal</option>
+            <option value="115">Large</option>
+            <option value="130">Larger</option>
+            <option value="150">Largest</option>
+          </select>
+          <p class="settings-hint">
+            Scales the entire dashboard's text and layout together, not just the font.
           </p>
         </section>
       </div>
@@ -4476,6 +4524,7 @@
     document.getElementById('mode-badge').textContent = isClient ? 'Client images' : 'Server images';
     document.getElementById('btn-mode-toggle').innerHTML =
       isClient ? '⇄ Switch to server images' : '⇄ Switch to client images';
+    applyAccentPalette();
     if (isClient && _clientView !== 'images') switchClientView('images');
     switchTab(isClient ? 'clients' : 'images');
     if (isClient) loadClientFilterOptions();
@@ -5194,6 +5243,51 @@
   let _ignoreFeaturesEnabled = false;
   let _accessibilityMode = false;
 
+  // ── Accent color palette (Settings > Appearance) ──────────────────────────
+  // Named, not raw hex, in the settings themselves -- the color values live
+  // only here, dashboard.py's _ACCENT_KEYS is just a whitelist of these keys.
+  const ACCENT_PALETTE = {
+    slate_blue:       { label: 'Slate Blue',       accent: '#5c7ca6', accentH: '#7093ba', selBg: '#16212c', selBorder: '#3d5c7c' },
+    forest_teal:      { label: 'Forest Teal',      accent: '#2e7d6b', accentH: '#3f9683', selBg: '#0f211c', selBorder: '#1f5245' },
+    indigo_dusk:      { label: 'Indigo Dusk',      accent: '#5a67d8', accentH: '#7280e0', selBg: '#181b30', selBorder: '#3d4590' },
+    muted_teal:       { label: 'Muted Teal',       accent: '#368f92', accentH: '#45a7ab', selBg: '#0f2325', selBorder: '#1f5153' },
+    deep_cyan:        { label: 'Deep Cyan',        accent: '#1f8a94', accentH: '#2aa3ae', selBg: '#0d2226', selBorder: '#17555c' },
+    dusty_periwinkle: { label: 'Dusty Periwinkle', accent: '#7b87d6', accentH: '#949fe0', selBg: '#1c1f30', selBorder: '#454f8f' },
+    muted_plum:       { label: 'Muted Plum',       accent: '#8a6fa8', accentH: '#a389bd', selBg: '#211a28', selBorder: '#4f3f60' },
+    muted_clay:       { label: 'Muted Clay',       accent: '#b5704f', accentH: '#c68a68', selBg: '#271a13', selBorder: '#6b4128' },
+    muted_gold:       { label: 'Muted Gold',       accent: '#b8963a', accentH: '#c9ac5c', selBg: '#271f0d', selBorder: '#6b551f' },
+    sage:             { label: 'Sage',             accent: '#6b8a5a', accentH: '#85a172', selBg: '#1a2216', selBorder: '#405230' },
+  };
+  let _serverAccent = 'slate_blue';
+  let _clientAccent = 'forest_teal';
+  let _fontScale = 100;
+
+  function applyAccentPalette() {
+    const key = _dashboardMode === 'client' ? _clientAccent : _serverAccent;
+    const p = ACCENT_PALETTE[key] || ACCENT_PALETTE.slate_blue;
+    const root = document.documentElement.style;
+    root.setProperty('--accent', p.accent);
+    root.setProperty('--accent-h', p.accentH);
+    root.setProperty('--sel-bg', p.selBg);
+    root.setProperty('--sel-border', p.selBorder);
+    // Always the Server-mode choice specifically, regardless of which mode
+    // is active -- #btn-client-start deliberately borrows this rather than
+    // following --accent's mode-dependent switch (see its own CSS comment).
+    const sp = ACCENT_PALETTE[_serverAccent] || ACCENT_PALETTE.slate_blue;
+    root.setProperty('--server-accent', sp.accent);
+    root.setProperty('--server-accent-h', sp.accentH);
+  }
+
+  function applyFontScale() {
+    document.documentElement.style.zoom = _fontScale / 100;
+  }
+
+  function _populateAccentSelect(selId) {
+    const sel = document.getElementById(selId);
+    if (!sel || sel.options.length) return; // already populated
+    Object.entries(ACCENT_PALETTE).forEach(([key, p]) => sel.appendChild(new Option(p.label, key)));
+  }
+
   function applyFeatureVisibility() {
     // Class-based, not per-element -- survives table re-renders (tbody
     // innerHTML replacement destroys and recreates .fingerprint-feature
@@ -5212,7 +5306,12 @@
       _hostScopeEnabled = !!s.host_scope_enabled;
       _ignoreFeaturesEnabled = !!s.ignore_features_enabled;
       _accessibilityMode = !!s.accessibility_mode;
+      _serverAccent = s.server_accent || 'slate_blue';
+      _clientAccent = s.client_accent || 'forest_teal';
+      _fontScale = s.font_scale || 100;
       applyFeatureVisibility();
+      applyAccentPalette();
+      applyFontScale();
     } catch { }
   }
 
@@ -5246,6 +5345,13 @@
       document.getElementById('settings-accessibility-mode').checked = !!s.accessibility_mode;
       document.getElementById('settings-fingerprint-target').value = s.fingerprint_target || '';
       updateFingerprintTargetPreview();
+      _populateAccentSelect('settings-server-accent');
+      _populateAccentSelect('settings-client-accent');
+      document.getElementById('settings-server-accent').value = s.server_accent || 'slate_blue';
+      document.getElementById('settings-client-accent').value = s.client_accent || 'forest_teal';
+      updateAccentSwatch('settings-server-accent', 'settings-server-accent-swatch');
+      updateAccentSwatch('settings-client-accent', 'settings-client-accent-swatch');
+      document.getElementById('settings-font-scale').value = s.font_scale || 100;
     } catch (e) {
       toast(`Error loading settings: ${e.message}`, 'err');
     }
@@ -5270,6 +5376,12 @@
       `raw-TLS clients      ->  https://${target}:9443/probe`;
   }
 
+  function updateAccentSwatch(selId, swatchId) {
+    const key = document.getElementById(selId).value;
+    const p = ACCENT_PALETTE[key];
+    if (p) document.getElementById(swatchId).style.background = p.accent;
+  }
+
   function closeSettingsPanel() {
     switchTab(_settingsReturnTab || 'images');
   }
@@ -5279,10 +5391,16 @@
     const default_workers = parseInt(document.getElementById('settings-default-workers').value) || 4;
     const accessibility_mode = document.getElementById('settings-accessibility-mode').checked;
     const fingerprint_target = document.getElementById('settings-fingerprint-target').value.trim();
+    const server_accent = document.getElementById('settings-server-accent').value;
+    const client_accent = document.getElementById('settings-client-accent').value;
+    const font_scale = parseInt(document.getElementById('settings-font-scale').value) || 100;
     try {
       await api('/api/settings', {
         method: 'POST',
-        body: JSON.stringify({ docker_host, default_workers, accessibility_mode, fingerprint_target }),
+        body: JSON.stringify({
+          docker_host, default_workers, accessibility_mode, fingerprint_target,
+          server_accent, client_accent, font_scale,
+        }),
       });
       toast('Settings saved', 'ok');
       closeSettingsPanel();
@@ -7043,6 +7161,10 @@
   document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
   document.getElementById('btn-test-docker').addEventListener('click', testDockerConnection);
   document.getElementById('settings-fingerprint-target').addEventListener('input', updateFingerprintTargetPreview);
+  document.getElementById('settings-server-accent').addEventListener('change', () =>
+    updateAccentSwatch('settings-server-accent', 'settings-server-accent-swatch'));
+  document.getElementById('settings-client-accent').addEventListener('change', () =>
+    updateAccentSwatch('settings-client-accent', 'settings-client-accent-swatch'));
   document.querySelectorAll('.settings-nav-item').forEach(item => {
     item.addEventListener('click', () => switchSettingsTab(item.dataset.settingsTab));
   });

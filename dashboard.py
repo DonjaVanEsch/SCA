@@ -34,7 +34,17 @@ app = Flask(__name__, static_folder=str(PROJECT_ROOT / "static"))
 
 SETTINGS_FILE = PROJECT_ROOT / "dashboard_settings.json"
 _DEFAULT_SETTINGS = {"docker_host": "", "default_workers": 4, "accessibility_mode": False,
-                     "fingerprint_target": ""}
+                     "fingerprint_target": "", "server_accent": "slate_blue",
+                     "client_accent": "forest_teal", "font_scale": 100}
+
+# Keys only -- the actual hex values live in one place, the frontend's
+# ACCENT_PALETTE, so this is just a whitelist to validate against rather
+# than a second copy of the color data.
+_ACCENT_KEYS = frozenset({
+    "slate_blue", "forest_teal", "indigo_dusk", "muted_teal", "deep_cyan",
+    "dusty_periwinkle", "muted_plum", "muted_clay", "muted_gold", "sage",
+})
+_FONT_SCALES = frozenset({90, 100, 115, 130, 150})
 
 # Fingerprinting is gated behind an environment flag -- capturing real network
 # traffic against a running container is invasive enough that it should stay
@@ -1055,6 +1065,22 @@ def set_settings():
         settings["accessibility_mode"] = bool(data["accessibility_mode"])
     if "fingerprint_target" in data:
         settings["fingerprint_target"] = str(data["fingerprint_target"]).strip()
+    if "server_accent" in data:
+        if data["server_accent"] not in _ACCENT_KEYS:
+            return jsonify({"error": f"server_accent must be one of {sorted(_ACCENT_KEYS)}"}), 400
+        settings["server_accent"] = data["server_accent"]
+    if "client_accent" in data:
+        if data["client_accent"] not in _ACCENT_KEYS:
+            return jsonify({"error": f"client_accent must be one of {sorted(_ACCENT_KEYS)}"}), 400
+        settings["client_accent"] = data["client_accent"]
+    if "font_scale" in data:
+        try:
+            font_scale = int(data["font_scale"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "font_scale must be a number"}), 400
+        if font_scale not in _FONT_SCALES:
+            return jsonify({"error": f"font_scale must be one of {sorted(_FONT_SCALES)}"}), 400
+        settings["font_scale"] = font_scale
     _save_settings(settings)
     _apply_docker_host(docker_host)
     return jsonify({"ok": True, "settings": settings})
