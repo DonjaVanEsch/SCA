@@ -184,6 +184,14 @@
     display: none !important;
   }
 
+  /* Select-menu status quick-filters (Not built/Build failed/Not tested/Test
+     failed) hidden unconditionally, unlike the flags above -- the
+     select-by-status implementation (selectByStatus(), the disabled-state
+     tracking) stays in the code, just not shown in the menu. */
+  .status-quick-filter {
+    display: none !important;
+  }
+
   #header h1 {
     font-size: 15px;
     font-weight: 600;
@@ -2395,7 +2403,7 @@
           Show ignored sources
         </label>
         <div class="filter-actions">
-          <button class="btn btn-ghost btn-sm" id="btn-clear-filter" style="flex:1">Clear filters</button>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-filter">Clear filters</button>
         </div>
       </div>
       <div class="filter-section ignore-feature" style="margin-top:auto;padding-top:10px">
@@ -2429,12 +2437,12 @@
                 <div class="sel-menu-sep"></div>
                 <div class="sel-menu-item" id="mnu-sel-all">All filtered <kbd>Ctrl+A</kbd></div>
                 <div class="sel-menu-item" id="mnu-desel-all">Deselect all <kbd>Ctrl+D</kbd></div>
-                <div class="sel-menu-sep"></div>
-                <div class="sel-menu-item" id="mnu-sel-not-built">Not built</div>
-                <div class="sel-menu-item" id="mnu-sel-build-failed">Build failed</div>
-                <div class="sel-menu-item" id="mnu-sel-not-tested">Not tested</div>
-                <div class="sel-menu-item" id="mnu-sel-test-failed">Test failed</div>
-                <div class="sel-menu-sep"></div>
+                <div class="sel-menu-sep status-quick-filter"></div>
+                <div class="sel-menu-item status-quick-filter" id="mnu-sel-not-built">Not built</div>
+                <div class="sel-menu-item status-quick-filter" id="mnu-sel-build-failed">Build failed</div>
+                <div class="sel-menu-item status-quick-filter" id="mnu-sel-not-tested">Not tested</div>
+                <div class="sel-menu-item status-quick-filter" id="mnu-sel-test-failed">Test failed</div>
+                <div class="sel-menu-sep ignore-feature"></div>
                 <div class="sel-menu-item ignore-feature" id="mnu-ignore">Ignore</div>
               </div>
             </div>
@@ -2563,7 +2571,7 @@
         </div>
         <div class="filter-divider"></div>
         <div class="filter-actions">
-          <button class="btn btn-ghost btn-sm" id="btn-clear-client-filter" style="flex:1">Clear filters</button>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-client-filter">Clear filters</button>
         </div>
       </div>
     </aside>
