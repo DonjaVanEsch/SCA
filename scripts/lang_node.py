@@ -23,6 +23,17 @@ LANGUAGE_ID   = "node"
 REGISTRY_FILE = "registry node.json"
 
 
+class NpmLookupError(Exception):
+    """Raised when an npm registry fetch fails for a network/rate-limit
+    reason -- deliberately distinct from _resolve() returning None for a
+    package/version actually checked and confirmed absent. Same bug class
+    as Java's MavenLookupError/dotnet's NuGetLookupError: conflating the
+    two used to make write_context() delete existing output on a transient
+    failure (confirmed live for Java: a run during sustained Maven Central
+    429s wiped every Java image context on disk). Callers must not delete
+    existing output on this exception."""
+
+
 def _parse(s: str) -> tuple:
     return tuple(int(p) for p in re.findall(r"\d+", s))
 
@@ -1071,6 +1082,8 @@ def _ver_key(v: str) -> tuple:
 
 
 def _fetch_releases(npm_name: str) -> list:
+    """Raises NpmLookupError on a network/rate-limit failure -- does NOT
+    cache that as "zero releases found" (see NpmLookupError's docstring)."""
     if npm_name in _NPM_RELEASES:
         return _NPM_RELEASES[npm_name]
 
@@ -1079,7 +1092,6 @@ def _fetch_releases(npm_name: str) -> list:
     # returns the full document (confirmed live), so `time` (a version ->
     # ISO-date map) rides along in the same response for free.
     url = f"https://registry.npmjs.org/{safe_name}?fields=versions"
-    releases = []
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
             data = json.loads(resp.read())
@@ -1092,7 +1104,7 @@ def _fetch_releases(npm_name: str) -> list:
             v: time_map[v][:10] for v in releases if v in time_map
         }
     except (URLError, KeyError, json.JSONDecodeError, OSError) as exc:
-        print(f"  [WARN] npm lookup failed for {npm_name}: {exc}", flush=True)
+        raise NpmLookupError(f"{npm_name}: {exc}") from exc
 
     _NPM_RELEASES[npm_name] = releases
     return releases
@@ -1101,7 +1113,10 @@ def _fetch_releases(npm_name: str) -> list:
 def _release_date(npm_name: str, version: str) -> str | None:
     """release_date for one already-known version, e.g. for a newly
     detected major -- reuses _fetch_releases()'s cache, no extra request."""
-    _fetch_releases(npm_name)
+    try:
+        _fetch_releases(npm_name)
+    except NpmLookupError:
+        return None
     return _NPM_RELEASE_DATES.get(npm_name, {}).get(version)
 
 
@@ -1139,8 +1154,11 @@ def prefetch(lang_data: dict) -> None:
 
     print("Fetching available versions from npm ...")
     for name in sorted(npm_names):
-        releases = _fetch_releases(name)
-        print(f"  {name}: {len(releases)} version(s) found")
+        try:
+            releases = _fetch_releases(name)
+            print(f"  {name}: {len(releases)} version(s) found")
+        except NpmLookupError as exc:
+            print(f"  [WARN] {exc}")
     print()
 
 
@@ -1152,11 +1170,17 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     Dockerfile, depending on the framework's kind) for one combination.
 
     Returns False (and removes any stale directory) when a required package
-    version cannot be resolved on the npm registry.
+    version is confirmed absent from the npm registry. Returns False WITHOUT
+    touching any existing directory when the lookup itself failed (network/
+    rate-limit) -- see NpmLookupError.
     """
     out = images_base / "node" / lang_ver / fw_name / fw_major / lib_name / lib_ver
 
-    fw_resolved = _resolve(_FW_MODULE[fw_name], fw_major)
+    try:
+        fw_resolved = _resolve(_FW_MODULE[fw_name], fw_major)
+    except NpmLookupError as exc:
+        print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+        return False
     if fw_resolved is None:
         print(f"  [SKIP] {fw_name} {fw_major} not resolvable on npm", flush=True)
         if out.exists():
@@ -1169,7 +1193,11 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     else:
         lib_npm = _lib_npm(lib_name)
         if lib_npm and lib_ver != "builtin":
-            lib_resolved = _resolve(lib_npm, lib_ver)
+            try:
+                lib_resolved = _resolve(lib_npm, lib_ver)
+            except NpmLookupError as exc:
+                print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+                return False
             if lib_resolved is None:
                 print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on npm", flush=True)
                 if out.exists():

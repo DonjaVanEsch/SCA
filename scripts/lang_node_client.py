@@ -33,7 +33,7 @@ from pathlib import Path
 
 from lang_node import (  # noqa: F401 (re-exported for callers)
     _resolve, _fetch_releases, _is_esm_only, _debian_archive_apt,
-    _liboqs_node_stage, _LIBOQS_NODE_VERSION,
+    _liboqs_node_stage, _LIBOQS_NODE_VERSION, NpmLookupError,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -623,7 +623,11 @@ def write_client_context(lang_ver: str, hc_name: str, hc_ver: str, out_base: Pat
     if hc_name == "liboqs-node-sign":
         version_resolved = _LIBOQS_NODE_VERSION
     elif npm and hc_ver != "builtin":
-        version_resolved = _resolve(npm, hc_ver)
+        try:
+            version_resolved = _resolve(npm, hc_ver)
+        except NpmLookupError as exc:
+            print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+            return False
         if version_resolved is None:
             print(f"  [SKIP] {hc_name} {hc_ver} not resolvable on npm", flush=True)
             if out.exists():

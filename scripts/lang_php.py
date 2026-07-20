@@ -22,6 +22,18 @@ LANGUAGE_ID   = "php"
 REGISTRY_FILE = "registry php.json"
 
 
+class PackagistLookupError(Exception):
+    """Raised when a Packagist fetch fails for a network/rate-limit reason
+    -- deliberately distinct from _resolve() returning None for a package/
+    version actually checked and confirmed absent. Same bug class as
+    Java's MavenLookupError/dotnet's NuGetLookupError/node's
+    NpmLookupError/python's PyPiLookupError: conflating the two used to
+    make write_context() delete existing output on a transient failure
+    (confirmed live for Java: a run during sustained Maven Central 429s
+    wiped every Java image context on disk). Callers must not delete
+    existing output on this exception."""
+
+
 # ── Packagist version resolution ────────────────────────────────────────────────
 # Packagist's 'p2' metadata API (repo.packagist.org/p2/{vendor}/{package}.json)
 # is the direct analog of Maven's maven-metadata.xml / NuGet's flatcontainer
@@ -54,11 +66,13 @@ _PACKAGIST_RELEASE_DATES: dict = {}
 
 
 def _fetch_packagist_versions(package: str) -> list:
+    """Raises PackagistLookupError on a network/rate-limit failure -- does
+    NOT cache that as "zero versions found" (see PackagistLookupError's
+    docstring)."""
     if package in _PACKAGIST_VERSIONS:
         return _PACKAGIST_VERSIONS[package]
 
     url = f"https://repo.packagist.org/p2/{package}.json"
-    versions = []
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -76,7 +90,7 @@ def _fetch_packagist_versions(package: str) -> list:
             v: t[:10] for v, t in stripped if v in versions and t
         }
     except (URLError, OSError, ValueError) as exc:
-        print(f"  [WARN] Packagist lookup failed for {package}: {exc}", flush=True)
+        raise PackagistLookupError(f"{package}: {exc}") from exc
 
     _PACKAGIST_VERSIONS[package] = versions
     return versions
@@ -86,7 +100,10 @@ def _release_date(package: str, version: str) -> str | None:
     """release_date for one already-known version, e.g. for a newly
     detected major -- reuses _fetch_packagist_versions()'s cache, no extra
     request."""
-    _fetch_packagist_versions(package)
+    try:
+        _fetch_packagist_versions(package)
+    except PackagistLookupError:
+        return None
     return _PACKAGIST_RELEASE_DATES.get(package, {}).get(version)
 
 
@@ -228,8 +245,11 @@ def prefetch(lang_data: dict) -> None:
 
     print("Fetching available versions from Packagist ...")
     for pkg in sorted(packages):
-        versions = _fetch_packagist_versions(pkg)
-        print(f"  {pkg}: {len(versions)} version(s) found")
+        try:
+            versions = _fetch_packagist_versions(pkg)
+            print(f"  {pkg}: {len(versions)} version(s) found")
+        except PackagistLookupError as exc:
+            print(f"  [WARN] {exc}")
     print()
 
 
@@ -697,7 +717,11 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         return False
 
     fw_pkg = _FW_PACKAGE[fw_name]
-    fw_resolved = _resolve(fw_pkg, fw_major)
+    try:
+        fw_resolved = _resolve(fw_pkg, fw_major)
+    except PackagistLookupError as exc:
+        print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+        return False
     if fw_resolved is None:
         print(f"  [SKIP] {fw_name} {fw_major} not resolvable on Packagist", flush=True)
         if out.exists():
@@ -708,7 +732,11 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         lib_resolved = "built-in"
     else:
         lib_pkg = _lib_package(lib_name)
-        lib_resolved = _resolve(lib_pkg, lib_ver)
+        try:
+            lib_resolved = _resolve(lib_pkg, lib_ver)
+        except PackagistLookupError as exc:
+            print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+            return False
         if lib_resolved is None:
             print(f"  [SKIP] {lib_name} {lib_ver} not resolvable on Packagist", flush=True)
             if out.exists():

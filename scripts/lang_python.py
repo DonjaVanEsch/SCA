@@ -22,6 +22,17 @@ LANGUAGE_ID   = "python"
 REGISTRY_FILE = "registry python.json"
 
 
+class PyPiLookupError(Exception):
+    """Raised when a PyPI fetch fails for a network/rate-limit reason --
+    deliberately distinct from _resolve() returning None for a package/
+    version actually checked and confirmed absent. Same bug class as
+    Java's MavenLookupError/dotnet's NuGetLookupError/node's
+    NpmLookupError: conflating the two used to make write_context() delete
+    existing output on a transient failure (confirmed live for Java: a run
+    during sustained Maven Central 429s wiped every Java image context on
+    disk). Callers must not delete existing output on this exception."""
+
+
 def _parse(s: str) -> tuple:
     return tuple(int(p) for p in re.findall(r"\d+", s))
 
@@ -606,6 +617,8 @@ def _ver_key(v: str) -> tuple:
 
 
 def _fetch_releases(pip_name: str) -> list:
+    """Raises PyPiLookupError on a network/rate-limit failure -- does NOT
+    cache that as "zero releases found" (see PyPiLookupError's docstring)."""
     if pip_name in _PYPI_RELEASES:
         return _PYPI_RELEASES[pip_name]
 
@@ -629,8 +642,7 @@ def _fetch_releases(pip_name: str) -> list:
                 dates[v] = min(times)[:10]
         _PYPI_RELEASE_DATES[pip_name] = dates
     except (URLError, KeyError, json.JSONDecodeError, OSError) as exc:
-        print(f"  [WARN] PyPI lookup failed for {pip_name}: {exc}", flush=True)
-        releases = []
+        raise PyPiLookupError(f"{pip_name}: {exc}") from exc
 
     _PYPI_RELEASES[pip_name] = releases
     return releases
@@ -639,7 +651,10 @@ def _fetch_releases(pip_name: str) -> list:
 def _release_date(pip_name: str, version: str) -> str | None:
     """release_date for one already-known version, e.g. for a newly
     detected major -- reuses _fetch_releases()'s cache, no extra request."""
-    _fetch_releases(pip_name)
+    try:
+        _fetch_releases(pip_name)
+    except PyPiLookupError:
+        return None
     return _PYPI_RELEASE_DATES.get(pip_name, {}).get(version)
 
 
@@ -688,8 +703,11 @@ def prefetch(lang_data: dict) -> None:
     }
     print("Fetching available versions from PyPI ...")
     for name in sorted(pip_names):
-        releases = _fetch_releases(name)
-        print(f"  {name}: {len(releases)} releases found")
+        try:
+            releases = _fetch_releases(name)
+            print(f"  {name}: {len(releases)} releases found")
+        except PyPiLookupError as exc:
+            print(f"  [WARN] {exc}")
     print()
 
 
@@ -698,11 +716,17 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     """Write app.py / requirements.txt / Dockerfile for one image context.
 
     Returns False (and removes any stale directory) when the library version
-    does not exist on PyPI.
+    is confirmed absent from PyPI. Returns False WITHOUT touching any
+    existing directory when the lookup itself failed (network/rate-limit) --
+    see PyPiLookupError.
     """
     out = images_base / "python" / lang_ver / fw_name / fw_major / lib_name / lib_ver
 
-    req = make_requirements(fw_name, fw_major, lib_name, lib_ver)
+    try:
+        req = make_requirements(fw_name, fw_major, lib_name, lib_ver)
+    except PyPiLookupError as exc:
+        print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+        return False
     if req is None:
         if out.exists():
             shutil.rmtree(out)

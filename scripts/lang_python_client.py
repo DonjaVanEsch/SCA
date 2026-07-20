@@ -35,7 +35,7 @@ from pathlib import Path
 
 from lang_python import (  # noqa: F401 (re-exported for callers)
     _resolve, _fetch_releases, _LIBOQS_PYTHON_STAGE, _needs_legacy_openssl, _parse,
-    LIB_VERSION_EXTRA,
+    LIB_VERSION_EXTRA, PyPiLookupError,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -600,7 +600,11 @@ def make_requirements(hc_name: str, hc_ver: str) -> str | None:
     meta = _CLIENT_META[hc_name]
     lines = []
     if meta["pip"] is not None:
-        exact = _resolve(meta["pip"], hc_ver)
+        try:
+            exact = _resolve(meta["pip"], hc_ver)
+        except PyPiLookupError as exc:
+            print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
+            return None
         if exact is None:
             return None
         lines.append(f"{meta['pip']}=={exact}")
