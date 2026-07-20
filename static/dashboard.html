@@ -135,6 +135,9 @@
     background: var(--surface);
   }
 
+  /* Accent-colored in both modes via the token itself -- server's own slate
+     blue, client's own forest teal -- rather than a neutral gray default
+     that only client mode broke out of. */
   .mode-badge {
     font-family: var(--mono);
     font-size: 10.5px;
@@ -143,14 +146,8 @@
     text-transform: uppercase;
     padding: 2px 8px;
     border-radius: 10px;
-    border: 1px solid var(--border2);
-    color: var(--muted2);
-    background: var(--surface2);
-  }
-
-  html.client-mode .mode-badge {
+    border: 1px solid var(--accent);
     color: var(--accent);
-    border-color: var(--accent);
     background: var(--sel-bg);
   }
 
@@ -264,8 +261,8 @@
   }
 
   .tab-btn.active {
-    background: var(--surface3);
-    color: var(--text);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
     font-weight: 500
   }
 
@@ -425,25 +422,27 @@
   }
 
   .btn-primary {
-    background: var(--accent);
-    color: var(--btn-text);
+    background: transparent;
+    color: var(--accent);
     border-color: var(--accent)
   }
 
   .btn-primary:hover {
-    background: var(--accent-h)
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-h);
+    border-color: var(--accent-h);
   }
 
   .btn-ghost {
-    background: var(--accent);
-    color: var(--btn-text);
+    background: transparent;
+    color: var(--accent);
     border-color: var(--accent)
   }
 
   .btn-ghost:hover {
-    background: var(--accent-h);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
     border-color: var(--accent-h);
-    color: var(--btn-text)
+    color: var(--accent-h)
   }
 
   /* Review, Select, Stop All, Generate-batch-name, and per-row Detail
