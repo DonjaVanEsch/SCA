@@ -1377,15 +1377,16 @@
     border-color: var(--muted2);
   }
 
-  /* Included versions use the same amber "draft" color as the Crypto Agility
-     badges (.badge-warn) -- with so many versions included by default, a
-     blue that also doubled as the accent/interactive color made nearly the
-     whole grid light up blue. Fixed, not accent-linked, same reasoning as
-     the comment this replaced: "included" is a data fact, not a mode style. */
+  /* Included versions use the same amber hue as the Crypto Agility "draft"
+     badge (.badge-warn), toned down: .badge-warn's solid dark background
+     reads fine for the handful of draft badges over there, but tiled across
+     nearly every version badge in this grid it was too bright/loud, so this
+     uses a softer text color and a translucent tint instead of a solid fill
+     -- same technique the previous (blue) version of this rule used. */
   .ref-ver.active {
-    border-color: #e3b341;
-    color: #e3b341;
-    background: #2d2008
+    border-color: #b8902e;
+    color: #c9a227;
+    background: rgba(227, 179, 65, .08)
   }
 
   .ref-item {
