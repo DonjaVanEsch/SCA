@@ -2451,18 +2451,49 @@ def save_client_test_result(client_image_id: int, success: bool,
 
 
 def get_client_stats(host: str = "") -> dict:
+    """Same shape as get_stats(), plus the client-only 'fingerprinted'
+    count -- client_build_results/client_test_results are upserted one row
+    per (client_image, host) rather than one row per run, so unlike
+    get_stats()'s test_ok/test_fail (which need a GROUP BY/HAVING over
+    every historical run), a plain WHERE success=1/0 already reflects
+    current state directly."""
     with _connect() as conn:
         total = conn.execute("SELECT COUNT(*) FROM client_images").fetchone()[0]
+        ignored = conn.execute(
+            "SELECT COUNT(*) FROM client_images WHERE ignored=1"
+        ).fetchone()[0]
         built = conn.execute(
             "SELECT COUNT(*) FROM client_build_results WHERE host=? AND success=1", (host,)
+        ).fetchone()[0]
+        built_f = conn.execute(
+            "SELECT COUNT(*) FROM client_build_results WHERE host=? AND success=0", (host,)
         ).fetchone()[0]
         tested = conn.execute(
             "SELECT COUNT(*) FROM client_test_results WHERE host=? AND success=1", (host,)
         ).fetchone()[0]
+        tested_f = conn.execute(
+            "SELECT COUNT(*) FROM client_test_results WHERE host=? AND success=0", (host,)
+        ).fetchone()[0]
+        not_built = conn.execute(
+            """SELECT COUNT(*) FROM client_images
+               WHERE ignored=0 AND id NOT IN
+                   (SELECT client_image_id FROM client_build_results WHERE host=?)""", (host,)
+        ).fetchone()[0]
+        not_tested = conn.execute(
+            """SELECT COUNT(*) FROM client_images
+               WHERE ignored=0 AND id NOT IN
+                   (SELECT client_image_id FROM client_test_results WHERE host=?)""", (host,)
+        ).fetchone()[0]
         fingerprinted = conn.execute(
             "SELECT COUNT(DISTINCT client_image_id) FROM client_fingerprints WHERE host=?", (host,)
         ).fetchone()[0]
-    return {"total": total, "built": built, "tested": tested, "fingerprinted": fingerprinted}
+    return {
+        "total": total, "ignored": ignored,
+        "built_ok": built, "built_fail": built_f,
+        "test_ok": tested, "test_fail": tested_f,
+        "not_built": not_built, "not_tested": not_tested,
+        "fingerprinted": fingerprinted,
+    }
 
 
 _STATUS_CLAUSES = {

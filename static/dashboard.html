@@ -2276,13 +2276,33 @@
   </div>
   <div class="stats-bar" id="client-stats-bar" style="display:none">
     <span class="stat"><b id="cs-total">–</b> client images</span>
-    <span class="stat-sep">·</span>
-    <span class="stat"><b id="cs-built" style="color:var(--success)">–</b> built</span>
-    <span class="stat-sep">·</span>
-    <span class="stat"><b id="cs-tested" style="color:var(--success)">–</b> tested</span>
-    <span class="stat-sep fingerprint-feature">·</span>
-    <span class="stat fingerprint-feature"><b id="cs-fingerprinted" style="color:var(--accent)">–</b>
-      fingerprinted</span>
+
+    <span class="stat-group">
+      <span class="stat-group-label">Build</span>
+      <span class="stat"><b id="cs-built" style="color:var(--success)">–</b> OK</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="cs-built-fail" style="color:var(--danger)">–</b> failed</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="cs-not-built" style="color:var(--muted2)">–</b> not built</span>
+    </span>
+
+    <span class="stat-group">
+      <span class="stat-group-label">Test</span>
+      <span class="stat"><b id="cs-tested" style="color:var(--accent)">–</b> OK</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="cs-tested-fail" style="color:var(--danger)">–</b> failed</span>
+    </span>
+
+    <span class="stat-group">
+      <span class="stat"><b id="cs-not-tested" style="color:var(--muted2)">–</b> not tested</span>
+      <span class="stat-sep">·</span>
+      <span class="stat"><b id="cs-ignored" style="color:var(--muted2)">–</b> ignored</span>
+    </span>
+
+    <span class="stat-group fingerprint-feature">
+      <span class="stat fingerprint-feature"><b id="cs-fingerprinted" style="color:var(--accent)">–</b>
+        fingerprinted</span>
+    </span>
   </div>
   <nav class="tabs" id="tabs-server">
     <button class="tab-btn active" data-tab="images">Sources</button>
@@ -2291,7 +2311,7 @@
     <button class="tab-btn" data-tab="agility">Crypto Agility</button>
   </nav>
   <nav class="tabs" id="tabs-client" style="display:none">
-    <button class="tab-btn active" data-tab="clients">Clients</button>
+    <button class="tab-btn active" data-tab="clients">Sources</button>
     <button class="tab-btn" data-tab="client-reports">Reports</button>
     <button class="tab-btn" data-tab="reference">Reference</button>
   </nav>
@@ -3876,8 +3896,13 @@
     try {
       const s = await api('/api/client-stats');
       document.getElementById('cs-total').textContent = s.total.toLocaleString();
-      document.getElementById('cs-built').textContent = s.built.toLocaleString();
-      document.getElementById('cs-tested').textContent = s.tested.toLocaleString();
+      document.getElementById('cs-built').textContent = s.built_ok.toLocaleString();
+      document.getElementById('cs-built-fail').textContent = s.built_fail.toLocaleString();
+      document.getElementById('cs-not-built').textContent = s.not_built.toLocaleString();
+      document.getElementById('cs-tested').textContent = s.test_ok.toLocaleString();
+      document.getElementById('cs-tested-fail').textContent = s.test_fail.toLocaleString();
+      document.getElementById('cs-not-tested').textContent = s.not_tested.toLocaleString();
+      document.getElementById('cs-ignored').textContent = s.ignored.toLocaleString();
       document.getElementById('cs-fingerprinted').textContent = s.fingerprinted.toLocaleString();
     } catch { }
   }
