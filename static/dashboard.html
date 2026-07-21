@@ -626,6 +626,20 @@
     cursor: pointer
   }
 
+  .no-cache-warn {
+    color: var(--warning);
+    font-size: 11px;
+  }
+
+  .opt-label-nocache:has(input:checked) {
+    color: var(--warning);
+    font-weight: 600;
+  }
+
+  .opt-label-nocache:has(input:checked) input[type=checkbox] {
+    accent-color: var(--warning);
+  }
+
   .sel-menu-wrap {
     position: relative
   }
@@ -2533,8 +2547,9 @@
               title="Fingerprint: capture network traffic (1 successful + 1 failed call) against the running container. Combines with Test into a single container start when both are checked.">
               <input type="checkbox" id="act-fingerprint" disabled> 🫆</label>
             <div class="action-sep"></div>
-            <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox"
-                id="opt-no-cache"> no-cache</label>
+            <label class="opt-label opt-label-nocache"
+              title="Rebuild without Docker layer cache -- this also wipes the shared Maven/npm/pip/Composer/NuGet package caches, so heavy use can bring back registry rate-limiting (e.g. Maven Central 429s). Only use this to recover from a suspected stale/corrupted build cache, not for routine retesting.">
+              <input type="checkbox" id="opt-no-cache"> no-cache <span class="no-cache-warn">⚠</span></label>
             <label class="opt-label" title="Skip sources that are already built"><input type="checkbox"
                 id="opt-skip-existing"> skip-existing</label>
             <div class="action-sep"></div>
@@ -2683,8 +2698,9 @@
               title="Run the client once against the persistent fingerprint-target app and capture the real network traffic">
               <input type="checkbox" id="act-client-fingerprint" disabled> 🫆 Fingerprint</label>
             <div class="action-sep"></div>
-            <label class="opt-label" title="Rebuild without Docker layer cache"><input type="checkbox"
-                id="client-opt-no-cache"> no-cache</label>
+            <label class="opt-label opt-label-nocache"
+              title="Rebuild without Docker layer cache -- this also wipes the shared Maven/npm/pip/Composer/NuGet package caches, so heavy use can bring back registry rate-limiting (e.g. Maven Central 429s). Only use this to recover from a suspected stale/corrupted build cache, not for routine retesting.">
+              <input type="checkbox" id="client-opt-no-cache"> no-cache <span class="no-cache-warn">⚠</span></label>
             <label class="opt-label" title="Skip clients that are already built"><input type="checkbox"
                 id="client-opt-skip-existing"> skip-existing</label>
             <div class="action-sep"></div>
