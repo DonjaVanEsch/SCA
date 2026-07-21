@@ -4542,6 +4542,7 @@
       ['Library', row.http_client],
       ['Lib version', row.http_client_version],
       ['Build', row.build_success === 1 ? '✓ OK' : row.build_success === 0 ? '✗ FAIL' : '—'],
+      ['Built at', row.built_at || '—'],
       ['Test', row.test_success === 1 ? '✓ PASS' : row.test_success === 0 ? '✗ FAIL' : '—'],
     ]);
     if (row.build_success === 0 && row.build_output) {
@@ -6176,6 +6177,7 @@
       ['Image tag', imgData.image_tag],
       ['Context path', imgData.context_path],
       ['Build', imgData.build_success === 1 ? '✓ OK' : imgData.build_success === 0 ? '✗ FAIL' : '—'],
+      ['Built at', imgData.built_at || '—'],
       ['Last test', imgData.test_success === 1 ? '✓ PASS' : imgData.test_success === 0 ? '✗ FAIL' : '—'],
       ['Tested at', imgData.tested_at || '—'],
       ['Ignored', imgData.ignored ? `Yes — ${imgData.ignore_reason || 'no reason'}` : 'No'],
