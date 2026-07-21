@@ -492,17 +492,126 @@ def _stale_cache_hint(output: str, expected_library: str) -> str | None:
     return None
 
 
+# ── Build cache warm-up ───────────────────────────────────────────────────────
+# 2026-07-21: after a build-cache prune (or on a fresh host), the shared
+# --mount=type=cache package-manager caches are empty, so the first build of
+# every combo hits the registry for real. Building the full matrix at normal
+# concurrency right after a wipe recreates the exact rate-limit-by-
+# concurrency problem the cache mounts exist to prevent. Rather than making
+# the user remember to warm the cache manually, _do_build()/_do_client_build()
+# below detect a cold cache for any language in the batch and automatically
+# build one representative combo per shared-dependency group SEQUENTIALLY
+# first (workers=1) -- cheap enough to not matter, and it populates the
+# expensive shared tree (framework parent POM/starter, or equivalent) before
+# the real batch runs in parallel.
+
+_LANGUAGE_CACHE_ID = {
+    "java":   "maven-cache",
+    "node":   "npm-cache",
+    "python": "pip-cache",
+    "php":    "composer-cache",
+    "dotnet": "nuget-cache",
+}
+
+
+def _cache_mount_status(languages) -> dict:
+    """Returns {language: is_cold} for each language in `languages` that has
+    a known --mount=type=cache id (see _LANGUAGE_CACHE_ID). "Cold" means
+    that language's cache mount has no entry at all in BuildKit's own cache
+    store right now -- queried directly via `docker buildx du`, not a flag
+    tracked separately, so it can't drift if the cache was cleared some
+    other way (e.g. a raw `docker builder prune` run outside this dashboard).
+    """
+    wanted = {lang: cid for lang, cid in _LANGUAGE_CACHE_ID.items() if lang in languages}
+    if not wanted:
+        return {}
+
+    present = set()
+    try:
+        r = subprocess.run(
+            ["docker", "buildx", "du", "--format", "{{json .}}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("Type") != "exec.cachemount":
+                continue
+            m = re.search(r'with id "([^"]+)"', rec.get("Description", ""))
+            if m:
+                present.add(m.group(1))
+    except (subprocess.SubprocessError, OSError):
+        # Can't ask Docker right now -- don't wedge a build behind a warm-up
+        # it might not even need over a transient CLI hiccup.
+        return {lang: False for lang in wanted}
+
+    return {lang: (cid not in present) for lang, cid in wanted.items()}
+
+
+def _pick_warmup_representatives(entries, cold_languages):
+    """One entry per shared-dependency group, restricted to `cold_languages`.
+
+    Server-side entries group by (language, framework, fw_ver) -- the
+    framework major is what determines the parent-POM/starter dependency
+    tree, not the crypto library, so one build per group is enough to warm
+    the expensive shared part. Client-side entries (no "framework" key)
+    group by (language, http_client) instead.
+    """
+    seen = set()
+    picked = []
+    for e in entries:
+        if e["language"] not in cold_languages:
+            continue
+        if "framework" in e:
+            key = (e["language"], e["framework"], e.get("fw_ver", ""))
+        else:
+            key = (e["language"], e.get("http_client", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        picked.append(e)
+    return picked
+
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
-              save_fn=None, stop_event=None, workers=4):
+              save_fn=None, stop_event=None, workers=4, _warmup_checked=False):
     """Build a Docker image for every entry.
 
     save_fn(entry, result_dict) is called immediately after each image completes.
     stop_event (threading.Event) can be set externally to cancel the loop early.
     workers controls how many docker build processes run in parallel.
+    _warmup_checked is internal (set True on the recursive warm-up call below
+    to avoid infinite recursion) -- callers should never pass it.
     Returns {tag: {"success": bool, "output": str, "elapsed": float, "skipped": bool}}.
     """
+    if not _warmup_checked and not no_cache and entries:
+        languages = {e["language"] for e in entries}
+        cold = {lang for lang, is_cold in _cache_mount_status(languages).items() if is_cold}
+        if cold:
+            warmup_entries = _pick_warmup_representatives(entries, cold)
+            if warmup_entries:
+                log_fn(
+                    f"\n⚠ Cold build cache detected for: {', '.join(sorted(cold))} -- "
+                    f"warming with {len(warmup_entries)} representative combo(s) "
+                    f"sequentially first (avoids a registry rate-limit burst) ...\n"
+                )
+                _do_build(
+                    warmup_entries, no_cache=False, skip_existing=False,
+                    log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
+                    workers=1, _warmup_checked=True,
+                )
+                if stop_event is not None and stop_event.is_set():
+                    return {}
+                log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
+
     n = len(entries)
     pad = len(str(n))
     workers, cap_note = _capped_workers(entries, workers)
@@ -1190,13 +1299,34 @@ def _client_image_tag(e):
 
 
 def _do_client_build(entries, no_cache=False, skip_existing=False, log_fn=print,
-                     save_fn=None, stop_event=None, workers=4):
+                     save_fn=None, stop_event=None, workers=4, _warmup_checked=False):
     """Build a Docker image for every client-image entry. Same shape as
     _do_build(), just using _client_image_tag() instead of _image_tag().
 
     save_fn(entry, result_dict) is called immediately after each image completes.
+    _warmup_checked is internal, see _do_build()'s docstring.
     Returns {tag: {"success": bool, "output": str, "elapsed": float, "skipped": bool}}.
     """
+    if not _warmup_checked and not no_cache and entries:
+        languages = {e["language"] for e in entries}
+        cold = {lang for lang, is_cold in _cache_mount_status(languages).items() if is_cold}
+        if cold:
+            warmup_entries = _pick_warmup_representatives(entries, cold)
+            if warmup_entries:
+                log_fn(
+                    f"\n⚠ Cold build cache detected for: {', '.join(sorted(cold))} -- "
+                    f"warming with {len(warmup_entries)} representative combo(s) "
+                    f"sequentially first (avoids a registry rate-limit burst) ...\n"
+                )
+                _do_client_build(
+                    warmup_entries, no_cache=False, skip_existing=False,
+                    log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
+                    workers=1, _warmup_checked=True,
+                )
+                if stop_event is not None and stop_event.is_set():
+                    return {}
+                log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
+
     n = len(entries)
     pad = len(str(n))
     workers, cap_note = _capped_workers(entries, workers)
