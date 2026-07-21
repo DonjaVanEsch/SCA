@@ -14,6 +14,7 @@ Required exports:
 import json
 import re
 import shutil
+import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -160,6 +161,15 @@ def _ver_key(v: str) -> tuple:
         return (0,)
 
 
+# Deliberately throttles OUR OWN metadata lookups (not the mvn/docker-build
+# traffic, which this script doesn't control) -- confirmed live (2026-07-20)
+# that repeated coordinate fetches during a rate-limited window can keep
+# retrying every combo that shares the failed coordinate, since a failure
+# is never cached as "confirmed gone" (see MavenLookupError). Only applies
+# before a genuine new network request, never on a cache hit.
+_MAVEN_FETCH_DELAY = 1.0
+
+
 def _fetch_maven_versions(group: str, artifact: str) -> list:
     """Raises MavenLookupError on a network/rate-limit failure -- does NOT
     cache that as "zero versions found", since a caller treating an empty
@@ -169,6 +179,7 @@ def _fetch_maven_versions(group: str, artifact: str) -> list:
     if cache_key in _MAVEN_VERSIONS:
         return _MAVEN_VERSIONS[cache_key]
 
+    time.sleep(_MAVEN_FETCH_DELAY)
     group_path = group.replace(".", "/")
     safe_artifact = urllib.parse.quote(artifact, safe="")
     url = f"https://repo1.maven.org/maven2/{group_path}/{safe_artifact}/maven-metadata.xml"

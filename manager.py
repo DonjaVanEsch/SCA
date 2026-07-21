@@ -231,6 +231,36 @@ def _print_summary(entries):
     print("Add filters (--version, --framework, --library ...) to list individual contexts.")
 
 
+# ── Per-language worker caps ──────────────────────────────────────────────────
+# Some languages' own build step hits a shared upstream package registry much
+# harder per-image than others (a `mvn package` inside every Java build does
+# its own full dependency resolution against Maven Central, independent of
+# every other concurrent build -- there's no shared cache between builds).
+# Confirmed live (2026-07-20): a batch with the configured default_workers
+# (8) triggered a sustained, IP-wide Maven Central rate-limit (HTTP 429 on
+# EVERY coordinate) that was still in effect over an hour later. Capping
+# applies regardless of what default_workers is set to -- the configured
+# value can stay high for other languages, Java just never exceeds this.
+_LANGUAGE_WORKER_CAP = {
+    "java": 4,
+}
+
+
+def _capped_workers(entries: list, requested: int) -> tuple[int, str]:
+    """Returns (effective_workers, note) -- note is "" when no cap applied,
+    otherwise a short explanation to fold into the existing parallel-count
+    log line so the cap is visible, not silent."""
+    langs = {e.get("language") for e in entries if e.get("language")}
+    caps = [_LANGUAGE_WORKER_CAP[l] for l in langs if l in _LANGUAGE_WORKER_CAP]
+    if not caps:
+        return requested, ""
+    cap = min(caps)
+    if requested <= cap:
+        return requested, ""
+    capped_langs = ", ".join(sorted(l for l in langs if l in _LANGUAGE_WORKER_CAP))
+    return cap, f"capped to {cap} for {capped_langs} (requested {requested})"
+
+
 # ── Docker helpers ────────────────────────────────────────────────────────────
 
 def _image_tag(e):
@@ -467,8 +497,9 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
     """
     n = len(entries)
     pad = len(str(n))
+    workers, cap_note = _capped_workers(entries, workers)
     note = "  (--no-cache)" if no_cache else ""
-    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    parallel_note = f"  ({workers} parallel{', ' + cap_note if cap_note else ''})" if (workers > 1 or cap_note) else ""
     log_fn(f"\nBuilding {n:,} image(s){note}{parallel_note} ...\n")
 
     results: dict = {}
@@ -1105,8 +1136,9 @@ def _do_client_build(entries, no_cache=False, skip_existing=False, log_fn=print,
     """
     n = len(entries)
     pad = len(str(n))
+    workers, cap_note = _capped_workers(entries, workers)
     note = "  (--no-cache)" if no_cache else ""
-    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    parallel_note = f"  ({workers} parallel{', ' + cap_note if cap_note else ''})" if (workers > 1 or cap_note) else ""
     log_fn(f"\nBuilding {n:,} client image(s){note}{parallel_note} ...\n")
 
     results: dict = {}
@@ -1429,7 +1461,8 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
                     save_fn(e, None)
             return {}
 
-    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    workers, cap_note = _capped_workers(entries, workers)
+    parallel_note = f"  ({workers} parallel{', ' + cap_note if cap_note else ''})" if (workers > 1 or cap_note) else ""
     log_fn(f"Testing {n:,} client image(s) against {target_container}{parallel_note} ...\n")
 
     results: dict = {}
@@ -1638,7 +1671,8 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
     """
     n   = len(entries)
     pad = len(str(n))
-    parallel_note = f"  ({workers} parallel)" if workers > 1 else ""
+    workers, cap_note = _capped_workers(entries, workers)
+    parallel_note = f"  ({workers} parallel{', ' + cap_note if cap_note else ''})" if (workers > 1 or cap_note) else ""
     log_fn(f"\nTesting {n:,} image(s){parallel_note} ...\n")
     results = {}
     _lock = threading.Lock()
