@@ -980,6 +980,31 @@ def docker_cleanup():
     return jsonify({"job_id": job_id})
 
 
+@app.route("/api/prune-build-cache", methods=["POST"])
+def prune_build_cache():
+    """Remove Docker's ENTIRE build cache, including the shared package-manager
+    caches (Maven/npm/pip/Composer/NuGet). Deliberately separate from
+    /api/docker-cleanup, which never touches build cache -- see
+    manager._do_build_cache_prune's docstring. Body: {"dry_run": false}"""
+    data    = request.json or {}
+    dry_run = bool(data.get("dry_run", False))
+    job_id, q = _new_job(f"prune-build-cache-{'dry-run' if dry_run else 'live'}")
+
+    def run():
+        try:
+            manager._do_build_cache_prune(
+                dry_run=dry_run,
+                log_fn=lambda msg="": q.put(str(msg)),
+            )
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
 @app.route("/api/remove-orphans", methods=["POST"])
 def remove_orphans():
     """Remove Docker images tagged 'pqc-*' with no context in the current

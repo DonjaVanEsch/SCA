@@ -2136,6 +2136,14 @@
     border-radius: 3px;
   }
 
+  .settings-hint-warn {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
+    border-left: 3px solid var(--warning);
+    padding: 6px 10px;
+    border-radius: 3px;
+  }
+
   .settings-test-row {
     display: flex;
     align-items: center;
@@ -3126,7 +3134,23 @@
             <button class="btn btn-ghost btn-sm" id="mnu-cleanup-dry">Dry run (preview)</button>
           </div>
           <p class="settings-hint">
-            Removes unused Docker containers, images, build cache, and (full) volumes.
+            Removes unused Docker containers, images, and (full) volumes. Never touches
+            build cache, including the shared package-manager caches below -- see
+            "Build cache" for that.
+          </p>
+
+          <div class="settings-action-group-label" style="margin-top:16px">Build cache <span
+              class="no-cache-warn" style="font-size:11px">⚠</span></div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-buildcache-prune">Prune build cache</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-buildcache-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint settings-hint-warn">
+            Removes Docker's ENTIRE build cache, including the shared Maven/npm/pip/
+            Composer/NuGet caches every build reuses. This brings back registry
+            rate-limiting risk (e.g. Maven Central 429s) on the next big batch -- only
+            use this for genuine disk pressure or a suspected corrupt cache entry, not
+            as routine maintenance.
           </p>
 
           <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
@@ -7489,6 +7513,36 @@
   });
   document.getElementById('mnu-cleanup-dry').addEventListener('click', () => {
     dockerCleanup(false, true);
+  });
+
+  // ── Build cache prune ────────────────────────────────────────────────────
+  // Deliberately separate from Docker cleanup above: this is the only action
+  // that touches the shared Maven/npm/pip/Composer/NuGet cache mounts, and
+  // wiping them brings back registry rate-limiting risk -- never bundle this
+  // into routine cleanup.
+  async function pruneBuildCache(dryRun) {
+    const label = dryRun ? 'Build cache — dry run' : 'Pruning build cache';
+    try {
+      const r = await api('/api/prune-build-cache', {
+        method: 'POST',
+        body: JSON.stringify({ dry_run: dryRun }),
+      });
+      openLog(label, r.job_id, 'prune-build-cache');
+    } catch (e) {
+      toast(`Build cache prune failed: ${e.message}`, 'err');
+    }
+  }
+
+  document.getElementById('mnu-buildcache-prune').addEventListener('click', () => {
+    if (!confirm(
+      'This removes the ENTIRE build cache, including the shared Maven/npm/pip/' +
+      'Composer/NuGet package caches every build reuses. Registry rate-limiting ' +
+      '(e.g. Maven Central 429s) can return on the next big batch. Continue?'
+    )) return;
+    pruneBuildCache(false);
+  });
+  document.getElementById('mnu-buildcache-dry').addEventListener('click', () => {
+    pruneBuildCache(true);
   });
 
   // ── Orphaned image cleanup ───────────────────────────────────────────────

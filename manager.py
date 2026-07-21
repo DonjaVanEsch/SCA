@@ -25,10 +25,18 @@ Actions:
   -y, --yes                 Skip confirmation prompt for large sets
 
 Docker cleanup (independent of image filters):
-      --cleanup             Remove stopped containers, dangling images, build cache,
-                            and unused networks.
+      --cleanup             Remove stopped containers, dangling images, and unused
+                            networks. Never touches build cache -- see
+                            --prune-build-cache below.
       --cleanup-full        Same as --cleanup, plus all unused images and volumes.
       --cleanup-dry-run     Preview what would be removed (no changes made).
+      --prune-build-cache   Remove Docker's ENTIRE build cache, including the shared
+                            Maven/npm/pip/Composer/NuGet package caches. Kept
+                            separate from --cleanup on purpose: this brings back
+                            registry rate-limiting risk (e.g. Maven Central 429s).
+                            Only use for disk pressure or a suspected corrupt entry.
+      --prune-build-cache-dry-run
+                            Preview current build cache disk usage (no changes made).
 
 Filters:
   -L, --language LANG       Filter by language            (e.g. python)
@@ -799,11 +807,14 @@ def _do_docker_cleanup(full=False, dry_run=False, log_fn=print):
             log_fn(f"  {line}")
         log_fn("  OK" if r.returncode == 0 else "  FAILED")
 
-    section("Removing build cache")
-    r = run("docker", "builder", "prune", "-af")
-    for line in (r.stdout or r.stderr or "").strip().splitlines():
-        log_fn(f"  {line}")
-    log_fn("  OK" if r.returncode == 0 else "  FAILED")
+    # Deliberately NOT `docker builder prune` here (2026-07-21): that would
+    # also wipe the shared --mount=type=cache package-manager caches (Maven/
+    # npm/pip/Composer/NuGet) that make every combo's build reuse overlapping
+    # dependencies instead of re-hitting the registry -- which is exactly
+    # what was driving Maven Central's sustained rate-limiting before those
+    # mounts existed. Neither Normal nor Full cleanup touches build cache at
+    # all anymore; see _do_build_cache_prune() for the deliberately separate,
+    # explicitly-opt-in action that does.
 
     section("Removing unused networks")
     r = run("docker", "network", "prune", "-f")
@@ -824,6 +835,58 @@ def _do_docker_cleanup(full=False, dry_run=False, log_fn=print):
         log_fn(line)
 
     log_fn("\nCleanup complete.")
+
+
+def _do_build_cache_prune(dry_run=False, log_fn=print):
+    """Remove Docker's ENTIRE build cache -- including the shared
+    --mount=type=cache package-manager caches (maven-cache/npm-cache/
+    pip-cache/composer-cache/nuget-cache) that let every combo's build reuse
+    overlapping dependencies instead of re-hitting the registry.
+
+    Deliberately its OWN action, never run as part of _do_docker_cleanup()
+    (Normal/Full): wiping these brings back exactly the Maven Central
+    rate-limiting they exist to prevent (see this project's own
+    generator-safety notes). Only reach for this when disk usage from the
+    caches is genuinely a problem, or a specific cache entry is suspected
+    corrupt -- not as routine maintenance.
+    """
+    def run(*cmd):
+        return subprocess.run(
+            list(cmd), capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+
+    def section(title):
+        bar = "─" * max(0, 52 - len(title))
+        log_fn(f"\n── {title} {bar}")
+
+    section("Disk usage (before)")
+    r = run("docker", "system", "df")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(line)
+
+    if dry_run:
+        log_fn(
+            "\n[DRY RUN] No changes will be made. This would remove the ENTIRE "
+            "build cache above, including the shared Maven/npm/pip/Composer/"
+            "NuGet package caches -- expect renewed registry rate-limiting "
+            "risk (e.g. Maven Central 429s) on the next big Java batch after "
+            "a real run of this.\n"
+        )
+        return
+
+    section("Removing build cache (including shared package-manager caches)")
+    r = run("docker", "builder", "prune", "-af")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(f"  {line}")
+    log_fn("  OK" if r.returncode == 0 else "  FAILED")
+
+    section("Disk usage (after)")
+    r = run("docker", "system", "df")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(line)
+
+    log_fn("\nBuild cache prune complete.")
 
 
 def _collect_client_tags(images_base=None) -> set:
@@ -1977,7 +2040,8 @@ examples:
     actions.add_argument(
         "--cleanup",
         action="store_true",
-        help="Remove stopped containers, dangling images, build cache, and unused networks",
+        help="Remove stopped containers, dangling images, and unused networks "
+             "(never touches build cache -- see --prune-build-cache)",
     )
     actions.add_argument(
         "--cleanup-full",
@@ -1990,6 +2054,22 @@ examples:
         action="store_true",
         dest="cleanup_dry_run",
         help="Show what would be removed by --cleanup (no changes made)",
+    )
+    actions.add_argument(
+        "--prune-build-cache",
+        action="store_true",
+        dest="prune_build_cache",
+        help="Remove Docker's ENTIRE build cache, including the shared Maven/"
+             "npm/pip/Composer/NuGet package caches -- separate from "
+             "--cleanup on purpose, since this brings back registry "
+             "rate-limiting risk. Only use for disk pressure or a suspected "
+             "corrupt cache entry.",
+    )
+    actions.add_argument(
+        "--prune-build-cache-dry-run",
+        action="store_true",
+        dest="prune_build_cache_dry_run",
+        help="Show current build cache disk usage without removing anything",
     )
     actions.add_argument(
         "--remove-orphans",
@@ -2047,6 +2127,7 @@ def main():
 
     if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all
             or args.cleanup or args.cleanup_full or args.cleanup_dry_run
+            or args.prune_build_cache or args.prune_build_cache_dry_run
             or args.remove_orphans or args.remove_orphans_dry_run):
         parser.print_help()
         sys.exit(0)
@@ -2055,6 +2136,12 @@ def main():
     if args.cleanup or args.cleanup_full or args.cleanup_dry_run:
         _require_docker()
         _do_docker_cleanup(full=args.cleanup_full, dry_run=args.cleanup_dry_run)
+        if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
+            sys.exit(0)
+
+    if args.prune_build_cache or args.prune_build_cache_dry_run:
+        _require_docker()
+        _do_build_cache_prune(dry_run=args.prune_build_cache_dry_run)
         if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
             sys.exit(0)
 
