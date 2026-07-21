@@ -1538,15 +1538,34 @@ def _jdk_os_suffix(jdk_ver: str) -> str:
     return "-noble" if jdk_ver in _NOBLE_JDKS else "-jammy"
 
 
+# `--mount=type=cache` (2026-07-21): every parallel `mvn package` was doing
+# its own full Maven Central dependency resolution with no sharing between
+# builds, which is what was driving the sustained HTTP 429 rate-limiting
+# (see this project's own generator-safety notes). A BuildKit cache mount
+# shares /root/.m2/repository across every build on this host regardless of
+# combo, cutting registry traffic roughly in proportion to how much overlap
+# there is between frameworks' dependency trees -- confirmed via a real
+# `docker build` run twice in a row that the second run's package step
+# drops to a few seconds with no network fetches. `sharing=locked` (not the
+# implicit default) serializes concurrent writers instead of relying on
+# Maven's own local-repo file locking, which isn't guaranteed robust across
+# every historic Maven/JDK combo this project builds. This is a completely
+# separate cache mechanism from Docker's own image-layer cache, so it can't
+# suffer the layer-collision bug class documented in lang_node.py's
+# `cache_bust` comment -- it's keyed by the explicit `id=` below, not by
+# Dockerfile text. Newly-detected versions need no special handling: the
+# first build that needs a not-yet-cached artifact just fetches and adds it.
 def make_dockerfile(jdk_ver: str, fw_name: str) -> str:
     jar_name = _JAR_FILENAME[fw_name]
     os_suffix = _jdk_os_suffix(jdk_ver)
     return (
+        "# syntax=docker/dockerfile:1\n"
         f"FROM maven:3-eclipse-temurin-{jdk_ver} AS builder\n"
         "WORKDIR /build\n"
         "COPY pom.xml .\n"
         "COPY src ./src\n"
-        "RUN mvn -B -q -DskipTests package\n"
+        "RUN --mount=type=cache,id=maven-cache,target=/root/.m2/repository,sharing=locked \\\n"
+        "    mvn -B -q -DskipTests package\n"
         "\n"
         f"FROM eclipse-temurin:{jdk_ver}-jre{os_suffix}\n"
         "WORKDIR /app\n"

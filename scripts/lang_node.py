@@ -820,7 +820,8 @@ def _liboqs_node_stage(apt_sources: str, apt_flag: str, allow_unauth: str) -> st
         "    python3 make g++ git cmake ninja-build ca-certificates libssl-dev pkg-config \\\n"
         "    && rm -rf /var/lib/apt/lists/*\n"
         "ENV PYTHON=python3\n"
-        f"RUN git clone --recurse-submodules --depth 1 --branch {_LIBOQS_TAG} \\\n"
+        "RUN --mount=type=cache,id=npm-cache,target=/root/.npm,sharing=locked \\\n"
+        f"    git clone --recurse-submodules --depth 1 --branch {_LIBOQS_TAG} \\\n"
         "    https://github.com/TapuCosmo/liboqs-node /opt/liboqs-node \\\n"
         "    && find /opt/liboqs-node/deps/liboqs -type f \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) \\\n"
         "       -exec sed -i 's/-Werror//g' {} \\; \\\n"
@@ -887,6 +888,15 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
     lib_npm = _lib_npm(lib_name)
     cache_bust = f'ARG PQC_LIB_ID="{lib_npm or lib_name}@{lib_ver}"\n'
 
+    # `--mount=type=cache` on every `npm install`/scaffold RUN below (2026-07-21):
+    # shares /root/.npm across every Node build on this host, cutting registry
+    # traffic for overlapping dependencies. Keyed by its explicit `id=`, this is
+    # a wholly separate cache mechanism from Docker's own image-layer cache, so
+    # it structurally cannot suffer the layer-collision bug the `cache_bust` ARG
+    # above works around -- no interaction between the two fixes.
+    syntax_directive = "# syntax=docker/dockerfile:1\n"
+    npm_cache_mount = "--mount=type=cache,id=npm-cache,target=/root/.npm,sharing=locked"
+
     apt_block = ""
     if sys_deps:
         deps_line = " ".join(sys_deps)
@@ -917,6 +927,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
 
     if kind == "typescript":
         return (
+            syntax_directive +
             f"FROM node:{node_ver}-slim AS builder\n"
             "WORKDIR /app\n"
             f"{cache_bust}"
@@ -939,7 +950,8 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             # bypass already used for AdonisJS's bcrypt peer conflict) is
             # the correct fix rather than trying to chase down a real
             # version for a package release that doesn't exist.
-            "RUN npm install --no-audit --no-fund --legacy-peer-deps\n"
+            f"RUN {npm_cache_mount} \\\n"
+            "    npm install --no-audit --no-fund --legacy-peer-deps\n"
             "COPY app.ts .\n"
             "RUN npx tsc\n"
             # `npm prune` re-resolves the dependency tree on its own and does
@@ -948,7 +960,8 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             # real docker build failure on Node 18/npm 10 hitting the exact
             # same ETARGET on @nestjs/microservices@^1.0.0 as the install
             # step above, just one command later. Needs the same flag again.
-            "RUN npm prune --omit=dev --legacy-peer-deps\n"
+            f"RUN {npm_cache_mount} \\\n"
+            "    npm prune --omit=dev --legacy-peer-deps\n"
             "\n"
             f"FROM node:{node_ver}-slim\n"
             "WORKDIR /app\n"
@@ -994,7 +1007,8 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
         # is the correct bypass -- the same class of fix as Composer's
         # `--no-security-blocking` elsewhere in this project.
         npm_install_line = (
-            f"RUN npm install --no-audit --no-fund --legacy-peer-deps {lib_npm}@{lib_ver}\n"
+            f"RUN {npm_cache_mount} \\\n"
+            f"    npm install --no-audit --no-fund --legacy-peer-deps {lib_npm}@{lib_ver}\n"
             if lib_npm else ""
         )
         scaffold_deps = " ".join(["git", *sys_deps])
@@ -1019,6 +1033,7 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
         # flagged as a follow-up needing its own per-major verification
         # pass, not silently done here alongside the safer conversions.
         return (
+            syntax_directive +
             f"FROM node:{node_ver}-slim\n"
             "WORKDIR /app\n"
             f"{apt_sources}"
@@ -1026,7 +1041,8 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
             f"    {scaffold_deps} \\\n"
             "    && rm -rf /var/lib/apt/lists/*\n"
             f"{liboqs_stage}"
-            "RUN npx --yes create-adonisjs@latest . --kit=api\n"
+            f"RUN {npm_cache_mount} \\\n"
+            "    npx --yes create-adonisjs@latest . --kit=api\n"
             f"{cache_bust}"
             f"{npm_install_line}"
             "COPY routes.ts start/routes.ts\n"
@@ -1037,14 +1053,17 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
 
     if _needs_multi_stage(kind, apt_block, lib_name):
         return (
+            syntax_directive +
             f"FROM node:{node_ver}-slim AS builder\n"
             "WORKDIR /app\n"
             f"{cache_bust}"
             f"{apt_block}"
             f"{liboqs_stage}"
             "COPY package.json .\n"
-            "RUN npm install --no-audit --no-fund\n"
-            "RUN npm prune --omit=dev\n"
+            f"RUN {npm_cache_mount} \\\n"
+            "    npm install --no-audit --no-fund\n"
+            f"RUN {npm_cache_mount} \\\n"
+            "    npm prune --omit=dev\n"
             "\n"
             f"FROM node:{node_ver}-slim\n"
             "WORKDIR /app\n"
@@ -1057,11 +1076,13 @@ def make_dockerfile(node_ver: str, fw_name: str, lib_name: str, lib_ver: str = "
         )
 
     return (
+        syntax_directive +
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
         f"{cache_bust}"
         "COPY package.json .\n"
-        "RUN npm install --no-audit --no-fund\n"
+        f"RUN {npm_cache_mount} \\\n"
+        "    npm install --no-audit --no-fund\n"
         "COPY app.js .\n"
         "EXPOSE 8000\n"
         'CMD ["node", "app.js"]\n'

@@ -644,10 +644,12 @@ def make_client_dockerfile(python_ver: str, hc_name: str, hc_ver: str = "") -> s
 
     install_block = (
         "COPY requirements.txt .\n"
-        "RUN pip install --no-cache-dir -r requirements.txt\n\n"
+        "RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip,sharing=locked \\\n"
+        "    pip install -r requirements.txt\n\n"
         if has_deps else ""
     )
     return f"""\
+# syntax=docker/dockerfile:1
 FROM {base_image}
 
 WORKDIR /app
@@ -668,6 +670,7 @@ def _make_liboqs_client_dockerfile(python_ver: str) -> str:
     enough -- no PYTHONPATH wiring needed (same reasoning as lang_python.py's
     own multi-stage Dockerfiles)."""
     return f"""\
+# syntax=docker/dockerfile:1
 FROM python:{python_ver}-slim AS builder
 
 WORKDIR /app
@@ -677,7 +680,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 
 {_LIBOQS_PYTHON_STAGE}
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip,sharing=locked \\
+    pip install --user -r requirements.txt
 
 FROM python:{python_ver}-slim
 

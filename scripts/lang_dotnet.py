@@ -897,17 +897,39 @@ def _image_tag_suffix(lang_ver: str, lib_name: str) -> str:
     return ""
 
 
+# `--mount=type=cache` (2026-07-21): shares /root/.nuget/packages (confirmed
+# via a real container run of the SDK image's own
+# `dotnet nuget locals global-packages --list`) across every .NET build on
+# this host. Same rationale/mechanism as the Maven/npm/pip/Composer mounts
+# elsewhere in this project's generators -- see lang_java.py's
+# make_dockerfile comment for the full reasoning.
+#
+# Unlike node_modules/vendor/site-packages, `dotnet publish` doesn't copy
+# NuGet packages out of the global packages folder during `restore` -- it
+# reads the actual package files straight out of /root/.nuget/packages at
+# PUBLISH time (restore only writes obj/project.assets.json, a manifest of
+# WHERE to find them). A cache mount's contents are only visible to the RUN
+# instruction that declares it; splitting restore and publish across two
+# separate RUNs (the original template) would unmount the cache after
+# restore and leave publish looking at an empty packages folder. Both
+# commands are merged into one `RUN --mount=...` below for this reason --
+# not a stylistic simplification, a correctness requirement specific to how
+# NuGet's global cache differs from npm's/pip's/Composer's.
+_NUGET_CACHE_MOUNT = "--mount=type=cache,id=nuget-cache,target=/root/.nuget/packages,sharing=locked"
+
+
 def make_dockerfile(lang_ver: str, lib_name: str) -> str:
     sdk_repo = _sdk_repo(lang_ver)
     suffix = _image_tag_suffix(lang_ver, lib_name)
 
     if lang_ver in _NO_ASPNET_SPLIT:
         return (
+            "# syntax=docker/dockerfile:1\n"
             f"FROM mcr.microsoft.com/{sdk_repo}:{lang_ver}{suffix}\n"
             "WORKDIR /src\n"
             "COPY . .\n"
-            "RUN dotnet restore\n"
-            "RUN dotnet publish -c Release -o /app\n"
+            f"RUN {_NUGET_CACHE_MOUNT} \\\n"
+            "    dotnet restore && dotnet publish -c Release -o /app\n"
             "WORKDIR /app\n"
             "EXPOSE 8000\n"
             "ENV ASPNETCORE_URLS=http://+:8000\n"
@@ -916,11 +938,12 @@ def make_dockerfile(lang_ver: str, lib_name: str) -> str:
 
     aspnet_repo = _aspnet_repo(lang_ver)
     return (
+        "# syntax=docker/dockerfile:1\n"
         f"FROM mcr.microsoft.com/{sdk_repo}:{lang_ver}{suffix} AS builder\n"
         "WORKDIR /src\n"
         "COPY . .\n"
-        "RUN dotnet restore\n"
-        "RUN dotnet publish -c Release -o /app\n"
+        f"RUN {_NUGET_CACHE_MOUNT} \\\n"
+        "    dotnet restore && dotnet publish -c Release -o /app\n"
         "\n"
         f"FROM mcr.microsoft.com/{aspnet_repo}:{lang_ver}{suffix}\n"
         "WORKDIR /app\n"

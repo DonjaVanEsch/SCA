@@ -575,7 +575,16 @@ def make_dockerfile(python_ver: str, lib_name: str, lib_ver: str) -> str:
             "    && rm -rf /var/lib/apt/lists/*\n"
         )
 
+    # `--mount=type=cache` (2026-07-21) replaces the earlier `--no-cache-dir`
+    # everywhere below: shares /root/.cache/pip across every Python build on
+    # this host instead of discarding it, cutting PyPI traffic for versions
+    # sharing overlapping transitive deps (wheel, cffi, setuptools itself,
+    # etc.) -- see this project's own generator-safety notes for the
+    # Maven-side rate-limit incident this mitigates the same way. Keyed by
+    # its own `id=`, this is a separate cache mechanism from Docker's
+    # image-layer cache and covers newly-detected versions automatically.
     return f"""\
+# syntax=docker/dockerfile:1
 FROM {base_image} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \\
@@ -585,9 +594,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user --upgrade pip wheel cffi pycparser \\
-    && (python -c "import setuptools" 2>/dev/null || pip install --no-cache-dir --user "setuptools<81") \\
-    && pip install --no-cache-dir --no-build-isolation --user -r requirements.txt
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip,sharing=locked \\
+    pip install --user --upgrade pip wheel cffi pycparser \\
+    && (python -c "import setuptools" 2>/dev/null || pip install --user "setuptools<81") \\
+    && pip install --no-build-isolation --user -r requirements.txt
 
 FROM {base_image}
 {runtime_apt}{liboqs_copy}

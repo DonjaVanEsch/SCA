@@ -569,6 +569,16 @@ def make_composer_json(fw_name: str, fw_major: str, fw_resolved: str,
 # tool for package extraction when the extension isn't present, which is
 # lighter-weight and avoids a compile step entirely.
 
+# `--mount=type=cache` (2026-07-21): shares /root/.composer/cache (Composer's
+# real default when the phar is copied into a plain php:cli image with none
+# of the composer:X image's own env vars carried over -- confirmed via a
+# real container run, NOT the composer image's own /tmp override) across
+# every PHP build on this host. Same rationale/mechanism as the Maven/npm/
+# pip mounts elsewhere in this project's generators -- see lang_java.py's
+# make_dockerfile comment for the full reasoning.
+_COMPOSER_CACHE_MOUNT = "--mount=type=cache,id=composer-cache,target=/root/.composer/cache,sharing=locked"
+
+
 def make_dockerfile(php_ver: str, lib_name: str) -> str:
     composer_tag = _composer_tag(php_ver)
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(php_ver)
@@ -616,6 +626,7 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
         # here, so this stays single-stage. See the "php-liboqs" branch
         # below for the one PHP combo that genuinely benefits.
         return (
+            "# syntax=docker/dockerfile:1\n"
             f"FROM composer:{composer_tag} AS composer\n"
             "\n"
             f"FROM php:{php_ver}-cli\n"
@@ -627,7 +638,8 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
             "WORKDIR /app\n"
             "ENV COMPOSER_ALLOW_SUPERUSER=1\n"
             "COPY composer.json .\n"
-            f"RUN composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
+            f"RUN {_COMPOSER_CACHE_MOUNT} \\\n"
+            f"    composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
             "COPY index.php versions.php ./\n"
             "EXPOSE 8000\n"
             'CMD ["php", "-d", "display_errors=0", "-d", "log_errors=1", '
@@ -652,6 +664,7 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
     # `docker run` that `php:{ver}-cli` already ships libssl/libcrypto
     # (liboqs.so's own runtime dependency) out of the box.
     return (
+        "# syntax=docker/dockerfile:1\n"
         f"FROM composer:{composer_tag} AS composer\n"
         "\n"
         f"FROM php:{php_ver}-cli AS builder\n"
@@ -665,7 +678,8 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
         "WORKDIR /app\n"
         "ENV COMPOSER_ALLOW_SUPERUSER=1\n"
         "COPY composer.json .\n"
-        f"RUN composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
+        f"RUN {_COMPOSER_CACHE_MOUNT} \\\n"
+        f"    composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
         "\n"
         f"FROM php:{php_ver}-cli\n"
         "COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\n"

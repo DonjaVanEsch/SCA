@@ -548,6 +548,7 @@ def make_client_package_json(npm: str | None, version_resolved: str | None) -> s
 def _make_liboqs_client_dockerfile(node_ver: str, cache_bust: str) -> str:
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(node_ver)
     return (
+        "# syntax=docker/dockerfile:1\n"
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
         f"{cache_bust}"
@@ -592,10 +593,14 @@ def make_client_dockerfile(node_ver: str, hc_name: str, hc_ver: str = "") -> str
             apt_block += "ENV PYTHON=python3\n"
 
     install_block = (
-        "COPY package.json .\nRUN npm install --no-audit --no-fund\n" if has_deps else ""
+        "COPY package.json .\n"
+        "RUN --mount=type=cache,id=npm-cache,target=/root/.npm,sharing=locked \\\n"
+        "    npm install --no-audit --no-fund\n"
+        if has_deps else ""
     )
 
     return (
+        "# syntax=docker/dockerfile:1\n"
         f"FROM node:{node_ver}-slim\n"
         "WORKDIR /app\n"
         f"{cache_bust}"
