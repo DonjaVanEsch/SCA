@@ -554,28 +554,50 @@ def _cache_mount_status(languages) -> dict:
     return {lang: (cid not in present) for lang, cid in wanted.items()}
 
 
-def _pick_warmup_representatives(entries, cold_languages):
-    """One entry per shared-dependency group, restricted to `cold_languages`.
+def _pick_warmup_representatives(entries, cold_languages, image_tag_fn):
+    """One entry per shared-dependency group that needs warming.
 
     Server-side entries group by (language, framework, fw_ver) -- the
     framework major is what determines the parent-POM/starter dependency
     tree, not the crypto library, so one build per group is enough to warm
     the expensive shared part. Client-side entries (no "framework" key)
     group by (language, http_client) instead.
+
+    A group needs warming if EITHER its whole language's cache mount is
+    cold (`cold_languages`), OR -- the finer-grained case -- no entry in
+    that specific group has ever been built before on this host at all.
+    The second check matters because the cache mount is one shared blob
+    per language, not partitioned per framework: once ANY framework has
+    populated e.g. maven-cache, the language no longer reads as "cold"
+    even though a DIFFERENT framework's dependency tree (a brand new
+    parent POM/BOM never fetched before) is still completely unwarmed --
+    confirmed as a real gap, not hypothetical: re-testing Helidon after
+    Spring Boot/Quarkus had already warmed maven-cache would otherwise
+    skip the warm-up entirely and hit Maven Central concurrently for
+    Helidon's own (never-before-fetched) dependency tree.
     """
-    seen = set()
-    picked = []
+    existing_repos = list_existing_image_repos()
+    # None means Docker couldn't be reached -- treat as "assume already
+    # built" so a transient CLI hiccup never forces an unneeded warm-up,
+    # same fallback philosophy as _cache_mount_status().
+
+    groups = {}
     for e in entries:
-        if e["language"] not in cold_languages:
-            continue
         if "framework" in e:
             key = (e["language"], e["framework"], e.get("fw_ver", ""))
         else:
             key = (e["language"], e.get("http_client", ""))
-        if key in seen:
-            continue
-        seen.add(key)
-        picked.append(e)
+        groups.setdefault(key, []).append(e)
+
+    picked = []
+    for (language, *_rest), group_entries in groups.items():
+        lang_cold = language in cold_languages
+        group_never_built = (
+            existing_repos is not None
+            and not any(image_tag_fn(ge) in existing_repos for ge in group_entries)
+        )
+        if lang_cold or group_never_built:
+            picked.append(group_entries[0])
     return picked
 
 
@@ -595,22 +617,24 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
     if not _warmup_checked and not no_cache and entries:
         languages = {e["language"] for e in entries}
         cold = {lang for lang, is_cold in _cache_mount_status(languages).items() if is_cold}
-        if cold:
-            warmup_entries = _pick_warmup_representatives(entries, cold)
-            if warmup_entries:
-                log_fn(
-                    f"\n⚠ Cold build cache detected for: {', '.join(sorted(cold))} -- "
-                    f"warming with {len(warmup_entries)} representative combo(s) "
-                    f"sequentially first (avoids a registry rate-limit burst) ...\n"
-                )
-                _do_build(
-                    warmup_entries, no_cache=False, skip_existing=False,
-                    log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
-                    workers=1, _warmup_checked=True,
-                )
-                if stop_event is not None and stop_event.is_set():
-                    return {}
-                log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
+        warmup_entries = _pick_warmup_representatives(entries, cold, _image_tag)
+        if warmup_entries:
+            note = (
+                f"cold cache for {', '.join(sorted(cold))}" if cold
+                else "never-built-before framework group(s) in an otherwise warm cache"
+            )
+            log_fn(
+                f"\n⚠ {note} -- warming with {len(warmup_entries)} representative "
+                f"combo(s) sequentially first (avoids a registry rate-limit burst) ...\n"
+            )
+            _do_build(
+                warmup_entries, no_cache=False, skip_existing=False,
+                log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
+                workers=1, _warmup_checked=True,
+            )
+            if stop_event is not None and stop_event.is_set():
+                return {}
+            log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
 
     n = len(entries)
     pad = len(str(n))
@@ -1310,22 +1334,24 @@ def _do_client_build(entries, no_cache=False, skip_existing=False, log_fn=print,
     if not _warmup_checked and not no_cache and entries:
         languages = {e["language"] for e in entries}
         cold = {lang for lang, is_cold in _cache_mount_status(languages).items() if is_cold}
-        if cold:
-            warmup_entries = _pick_warmup_representatives(entries, cold)
-            if warmup_entries:
-                log_fn(
-                    f"\n⚠ Cold build cache detected for: {', '.join(sorted(cold))} -- "
-                    f"warming with {len(warmup_entries)} representative combo(s) "
-                    f"sequentially first (avoids a registry rate-limit burst) ...\n"
-                )
-                _do_client_build(
-                    warmup_entries, no_cache=False, skip_existing=False,
-                    log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
-                    workers=1, _warmup_checked=True,
-                )
-                if stop_event is not None and stop_event.is_set():
-                    return {}
-                log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
+        warmup_entries = _pick_warmup_representatives(entries, cold, _client_image_tag)
+        if warmup_entries:
+            note = (
+                f"cold cache for {', '.join(sorted(cold))}" if cold
+                else "never-built-before group(s) in an otherwise warm cache"
+            )
+            log_fn(
+                f"\n⚠ {note} -- warming with {len(warmup_entries)} representative "
+                f"combo(s) sequentially first (avoids a registry rate-limit burst) ...\n"
+            )
+            _do_client_build(
+                warmup_entries, no_cache=False, skip_existing=False,
+                log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
+                workers=1, _warmup_checked=True,
+            )
+            if stop_event is not None and stop_event.is_set():
+                return {}
+            log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
 
     n = len(entries)
     pad = len(str(n))
