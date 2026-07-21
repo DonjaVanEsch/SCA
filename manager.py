@@ -545,7 +545,12 @@ def _cache_mount_status(languages) -> dict:
                 continue
             m = re.search(r'with id "([^"]+)"', rec.get("Description", ""))
             if m:
-                present.add(m.group(1))
+                # BuildKit reports the id with a leading "/" (confirmed via
+                # a real `docker buildx du` -- e.g. "/maven-cache") even
+                # though our Dockerfiles declare it without one; strip it so
+                # this actually matches _LANGUAGE_CACHE_ID's plain names
+                # instead of silently reporting every language as cold.
+                present.add(m.group(1).lstrip("/"))
     except (subprocess.SubprocessError, OSError):
         # Can't ask Docker right now -- don't wedge a build behind a warm-up
         # it might not even need over a transient CLI hiccup.
