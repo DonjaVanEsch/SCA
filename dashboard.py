@@ -990,6 +990,32 @@ def docker_cleanup():
     return jsonify({"job_id": job_id})
 
 
+@app.route("/api/prune-layer-cache", methods=["POST"])
+def prune_layer_cache():
+    """Remove ordinary build-layer cache only (BuildKit type "regular") --
+    the safe, recommended way to reclaim disk space. Never touches the
+    shared package-manager caches (Maven/npm/pip/Composer/NuGet), so no
+    registry rate-limiting risk -- see manager._do_layer_cache_prune's
+    docstring. Body: {"dry_run": false}"""
+    data    = request.json or {}
+    dry_run = bool(data.get("dry_run", False))
+    job_id, q = _new_job(f"prune-layer-cache-{'dry-run' if dry_run else 'live'}")
+
+    def run():
+        try:
+            manager._do_layer_cache_prune(
+                dry_run=dry_run,
+                log_fn=lambda msg="": q.put(str(msg)),
+            )
+        except Exception as exc:
+            q.put(f"ERROR: {exc}")
+        finally:
+            _finish_job(job_id)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
 @app.route("/api/prune-build-cache", methods=["POST"])
 def prune_build_cache():
     """Remove Docker's ENTIRE build cache, including the shared package-manager

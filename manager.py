@@ -27,9 +27,16 @@ Actions:
 Docker cleanup (independent of image filters):
       --cleanup             Remove stopped containers, dangling images, and unused
                             networks. Never touches build cache -- see
-                            --prune-build-cache below.
+                            --prune-layer-cache / --prune-build-cache below.
       --cleanup-full        Same as --cleanup, plus all unused images and volumes.
       --cleanup-dry-run     Preview what would be removed (no changes made).
+      --prune-layer-cache   Remove ordinary build-layer cache only (safe, recommended
+                            way to reclaim disk space) -- never touches the shared
+                            Maven/npm/pip/Composer/NuGet package caches, no registry
+                            rate-limiting risk. Usually the overwhelming majority of
+                            build cache disk usage.
+      --prune-layer-cache-dry-run
+                            Preview current disk usage (no changes made).
       --prune-build-cache   Remove Docker's ENTIRE build cache, including the shared
                             Maven/npm/pip/Composer/NuGet package caches. Kept
                             separate from --cleanup on purpose: this brings back
@@ -982,6 +989,59 @@ def _do_docker_cleanup(full=False, dry_run=False, log_fn=print):
         log_fn(line)
 
     log_fn("\nCleanup complete.")
+
+
+def _do_layer_cache_prune(dry_run=False, log_fn=print):
+    """Remove ordinary Docker build-layer cache (BuildKit cache type
+    "regular") -- every COPY/RUN instruction across every combo ever built
+    gets its own cached layer, and with thousands of image contexts this
+    grows unbounded, typically dwarfing the actual package-manager caches
+    many times over (confirmed live on this project's own server: 340GB of
+    "regular" layers vs. 0.15GB of "exec.cachemount" package caches at the
+    time this was added). This is the SAFE, recommended way to reclaim that
+    disk space: `docker builder prune --filter type=regular` only touches
+    ordinary layers, never the --mount=type=cache package-manager caches
+    (maven-cache/npm-cache/pip-cache/composer-cache/nuget-cache) or the
+    build-context snapshots -- unlike _do_build_cache_prune() below, this
+    does NOT bring back registry rate-limiting risk and can be run
+    routinely whenever disk space is tight.
+    """
+    def run(*cmd):
+        return subprocess.run(
+            list(cmd), capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+
+    def section(title):
+        bar = "─" * max(0, 52 - len(title))
+        log_fn(f"\n── {title} {bar}")
+
+    section("Disk usage (before)")
+    r = run("docker", "system", "df")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(line)
+
+    if dry_run:
+        log_fn(
+            "\n[DRY RUN] No changes will be made. This would remove only "
+            "ordinary build-layer cache (BuildKit type \"regular\") -- the "
+            "shared Maven/npm/pip/Composer/NuGet package caches are "
+            "untouched by this filter, no registry rate-limiting risk.\n"
+        )
+        return
+
+    section("Removing ordinary layer cache (package-manager caches untouched)")
+    r = run("docker", "builder", "prune", "-f", "--filter", "type=regular")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(f"  {line}")
+    log_fn("  OK" if r.returncode == 0 else "  FAILED")
+
+    section("Disk usage (after)")
+    r = run("docker", "system", "df")
+    for line in (r.stdout or r.stderr or "").strip().splitlines():
+        log_fn(line)
+
+    log_fn("\nLayer cache prune complete.")
 
 
 def _do_build_cache_prune(dry_run=False, log_fn=print):
@@ -2226,6 +2286,22 @@ examples:
         help="Show what would be removed by --cleanup (no changes made)",
     )
     actions.add_argument(
+        "--prune-layer-cache",
+        action="store_true",
+        dest="prune_layer_cache",
+        help="Remove ordinary build-layer cache only (BuildKit type "
+             "\"regular\") -- safe, recommended way to reclaim disk space; "
+             "never touches the shared Maven/npm/pip/Composer/NuGet package "
+             "caches, so no registry rate-limiting risk. Usually the "
+             "overwhelming majority of build cache disk usage.",
+    )
+    actions.add_argument(
+        "--prune-layer-cache-dry-run",
+        action="store_true",
+        dest="prune_layer_cache_dry_run",
+        help="Show current disk usage without removing anything",
+    )
+    actions.add_argument(
         "--prune-build-cache",
         action="store_true",
         dest="prune_build_cache",
@@ -2297,6 +2373,7 @@ def main():
 
     if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all
             or args.cleanup or args.cleanup_full or args.cleanup_dry_run
+            or args.prune_layer_cache or args.prune_layer_cache_dry_run
             or args.prune_build_cache or args.prune_build_cache_dry_run
             or args.remove_orphans or args.remove_orphans_dry_run):
         parser.print_help()
@@ -2306,6 +2383,12 @@ def main():
     if args.cleanup or args.cleanup_full or args.cleanup_dry_run:
         _require_docker()
         _do_docker_cleanup(full=args.cleanup_full, dry_run=args.cleanup_dry_run)
+        if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
+            sys.exit(0)
+
+    if args.prune_layer_cache or args.prune_layer_cache_dry_run:
+        _require_docker()
+        _do_layer_cache_prune(dry_run=args.prune_layer_cache_dry_run)
         if not (args.list or args.build or args.run or args.test or args.remove or args.stop or args.stop_all):
             sys.exit(0)
 

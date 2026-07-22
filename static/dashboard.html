@@ -3155,6 +3155,19 @@
             "Build cache" for that.
           </p>
 
+          <div class="settings-action-group-label" style="margin-top:16px">Reclaim disk space</div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-layercache-prune">Reclaim layer cache</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-layercache-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint">
+            Safe to use whenever disk space is tight. Removes only ordinary build-layer
+            cache -- every COPY/RUN instruction across every combo ever built keeps its
+            own cached layer, and this is usually by far the largest share of disk
+            usage. Never touches the shared Maven/npm/pip/Composer/NuGet caches below,
+            so it carries no registry rate-limiting risk.
+          </p>
+
           <div class="settings-action-group-label" style="margin-top:16px">Build cache <span
               class="no-cache-warn" style="font-size:11px">⚠</span></div>
           <div class="settings-action-list">
@@ -3166,7 +3179,8 @@
             Composer/NuGet caches every build reuses. This brings back registry
             rate-limiting risk (e.g. Maven Central 429s) on the next big batch -- only
             use this for genuine disk pressure or a suspected corrupt cache entry, not
-            as routine maintenance.
+            as routine maintenance. For ordinary disk cleanup, use "Reclaim disk space"
+            above instead.
           </p>
 
           <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
@@ -7567,6 +7581,30 @@
   });
   document.getElementById('mnu-cleanup-dry').addEventListener('click', () => {
     dockerCleanup(false, true);
+  });
+
+  // ── Layer cache reclaim ───────────────────────────────────────────────────
+  // Safe: only removes ordinary build-layer cache (BuildKit type "regular"),
+  // never the shared Maven/npm/pip/Composer/NuGet cache mounts -- no confirm
+  // dialog needed, unlike the full build-cache prune below.
+  async function pruneLayerCache(dryRun) {
+    const label = dryRun ? 'Layer cache — dry run' : 'Reclaiming layer cache';
+    try {
+      const r = await api('/api/prune-layer-cache', {
+        method: 'POST',
+        body: JSON.stringify({ dry_run: dryRun }),
+      });
+      openLog(label, r.job_id, 'prune-layer-cache');
+    } catch (e) {
+      toast(`Layer cache reclaim failed: ${e.message}`, 'err');
+    }
+  }
+
+  document.getElementById('mnu-layercache-prune').addEventListener('click', () => {
+    pruneLayerCache(false);
+  });
+  document.getElementById('mnu-layercache-dry').addEventListener('click', () => {
+    pruneLayerCache(true);
   });
 
   // ── Build cache prune ────────────────────────────────────────────────────
