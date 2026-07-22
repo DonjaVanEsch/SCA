@@ -1768,9 +1768,9 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
             return
 
         tag = _client_image_tag(e)
+        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
         if not _image_exists(tag):
-            log_fn(f"[{i:{pad}}/{n}] {tag}")
             log_fn(f"         SKIP  (not built)")
             with _lock:
                 skipped += 1
@@ -1780,22 +1780,37 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
 
         client_container = f"{tag}-test"
         target_url = _client_target_url(e.get("http_client", ""), target_override)
-        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        rc, out, err = _run_client_container(tag, client_container, _FP_TARGET_NETWORK, target_url)
-        finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        subprocess.run(["docker", "rm", "-f", client_container], capture_output=True)
 
-        status_code = None
-        try:
-            status_code = json.loads(out).get("status_code")
-        except (json.JSONDecodeError, AttributeError):
-            pass
-        success = rc == 0 and status_code == 200
-        result = {"success": success, "output": out, "error": err if rc != 0 else "",
-                  "started_at": started, "finished_at": finished}
+        def _attempt():
+            started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            rc, out, err = _run_client_container(tag, client_container, _FP_TARGET_NETWORK, target_url)
+            finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            subprocess.run(["docker", "rm", "-f", client_container], capture_output=True)
 
-        log_fn(f"[{i:{pad}}/{n}] {tag}")
-        log_fn(f"         {'PASS' if success else 'FAIL'}  status={status_code}")
+            status_code = None
+            try:
+                status_code = json.loads(out).get("status_code")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+            success = rc == 0 and status_code == 200
+            return {"success": success, "output": out, "error": err if rc != 0 else "",
+                    "started_at": started, "finished_at": finished}, status_code
+
+        result, status_code = _attempt()
+
+        # One automatic retry on failure -- see _do_test()'s identical
+        # comment for the reasoning (a rare shared build-cache race under
+        # heavy concurrency, confirmed real for server images, not assumed
+        # to also affect client images but cheap enough to guard here too).
+        if not result["success"] and not (stop_event is not None and stop_event.is_set()):
+            log_fn(f"         ⚠ failed -- retrying once with a fresh rebuild ...")
+            _do_client_build([e], no_cache=True, skip_existing=False, log_fn=log_fn,
+                             stop_event=stop_event, workers=1)
+            result, status_code = _attempt()
+            log_fn(f"         PASS on retry" if result["success"]
+                   else f"         FAIL on retry too -- likely a real issue, not a flake")
+        else:
+            log_fn(f"         {'PASS' if result['success'] else 'FAIL'}  status={status_code}")
 
         with _lock:
             results[tag] = result
@@ -1998,94 +2013,141 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                      "version_data": None, "output": ""})
             return
 
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-
-        proc = subprocess.run(
-            ["docker", "run", "-d", "--name", name, "-p", "0:8000", tag],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        if proc.returncode != 0:
-            log_fn(f"         FAIL  (container did not start)")
-            for line in proc.stderr.strip().splitlines()[-3:]:
-                log_fn(f"         | {line}")
+        def _attempt():
+            """One container start + endpoint check. Returns (result_dict,
+            port) -- does NOT remove the container on a successful result
+            (the caller needs it left running for fingerprint capture), and
+            does NOT capture fingerprints itself (only done once, on
+            whichever attempt is actually kept)."""
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-            _finish({"success": False, "root_ok": False,
-                     "version_ok": False, "error": "container start failed",
-                     "version_data": None, "output": proc.stderr.strip()})
-            return
 
-        port        = _get_host_port(name)
-        root_ok     = False
-        version_ok  = False
-        version_data = None
-        fail_reason  = ""
-        last_err     = None
+            proc = subprocess.run(
+                ["docker", "run", "-d", "--name", name, "-p", "0:8000", tag],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            if proc.returncode != 0:
+                log_fn(f"         FAIL  (container did not start)")
+                for line in proc.stderr.strip().splitlines()[-3:]:
+                    log_fn(f"         | {line}")
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+                return {"success": False, "root_ok": False,
+                        "version_ok": False, "error": "container start failed",
+                        "version_data": None, "output": proc.stderr.strip()}, None
 
-        if port == "?":
-            # Container may have exited immediately; check its state
-            state = subprocess.run(
-                ["docker", "inspect", "--format", "{{.State.Status}}", name],
-                capture_output=True, text=True,
-            ).stdout.strip()
+            port        = _get_host_port(name)
+            root_ok     = False
+            version_ok  = False
+            version_data = None
+            fail_reason  = ""
+            last_err     = None
+
+            if port == "?":
+                # Container may have exited immediately; check its state
+                state = subprocess.run(
+                    ["docker", "inspect", "--format", "{{.State.Status}}", name],
+                    capture_output=True, text=True,
+                ).stdout.strip()
+                logs = subprocess.run(
+                    ["docker", "logs", name],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                )
+                output_text = (logs.stdout + logs.stderr).strip()
+                log_fn(f"         FAIL  (port not assigned, container state: {state})")
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+                return {"success": False, "root_ok": False,
+                        "version_ok": False, "error": f"port not assigned ({state})",
+                        "version_data": None, "output": output_text}, None
+
+            for path, check in [("/",        lambda d: d.get("message") == "Hello World"),
+                                 ("/version", lambda d: isinstance(d, dict) and len(d) > 0)]:
+                passed = False
+                last_data = None
+                for _ in range(20):
+                    try:
+                        with urllib.request.urlopen(
+                            f"http://{_docker_target_host()}:{port}{path}", timeout=2
+                        ) as r:
+                            last_data = json.loads(r.read().decode())
+                            if check(last_data):
+                                passed = True
+                        break
+                    except Exception as exc:
+                        last_err = exc
+                        time.sleep(0.5)
+
+                if path == "/":
+                    root_ok = passed
+                else:
+                    version_ok   = passed
+                    version_data = last_data
+
+                if not passed:
+                    fail_reason = path
+                    break
+
             logs = subprocess.run(
                 ["docker", "logs", name],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             output_text = (logs.stdout + logs.stderr).strip()
-            log_fn(f"         FAIL  (port not assigned, container state: {state})")
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-            _finish({"success": False, "root_ok": False,
-                     "version_ok": False, "error": f"port not assigned ({state})",
-                     "version_data": None, "output": output_text})
-            return
 
-        for path, check in [("/",        lambda d: d.get("message") == "Hello World"),
-                             ("/version", lambda d: isinstance(d, dict) and len(d) > 0)]:
-            passed = False
-            last_data = None
-            for _ in range(20):
-                try:
-                    with urllib.request.urlopen(
-                        f"http://{_docker_target_host()}:{port}{path}", timeout=2
-                    ) as r:
-                        last_data = json.loads(r.read().decode())
-                        if check(last_data):
-                            passed = True
-                    break
-                except Exception as exc:
-                    last_err = exc
-                    time.sleep(0.5)
+            cache_hint = None
+            if not (root_ok and version_ok):
+                state = subprocess.run(
+                    ["docker", "inspect", "--format", "{{.State.Status}}", name],
+                    capture_output=True, text=True,
+                ).stdout.strip()
+                log_fn(f"         container state: {state}  last-err: {last_err}")
+                for line in output_text.splitlines()[:30]:
+                    log_fn(f"         | {line}")
+                cache_hint = _stale_cache_hint(output_text, e.get("library", ""))
+                if cache_hint:
+                    log_fn(f"         ⚠ {cache_hint}")
 
-            if path == "/":
-                root_ok = passed
+            ok = root_ok and version_ok
+            if ok:
+                log_fn(f"         PASS")
             else:
-                version_ok   = passed
-                version_data = last_data
+                log_fn(f"         FAIL  ({fail_reason} did not respond correctly)")
 
-            if not passed:
-                fail_reason = path
-                break
-
-        logs = subprocess.run(
-            ["docker", "logs", name],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        output_text = (logs.stdout + logs.stderr).strip()
-
-        cache_hint = None
-        if not (root_ok and version_ok):
-            state = subprocess.run(
-                ["docker", "inspect", "--format", "{{.State.Status}}", name],
-                capture_output=True, text=True,
-            ).stdout.strip()
-            log_fn(f"         container state: {state}  last-err: {last_err}")
-            for line in output_text.splitlines()[:30]:
-                log_fn(f"         | {line}")
-            cache_hint = _stale_cache_hint(output_text, e.get("library", ""))
+            error_text = fail_reason if not ok else ""
             if cache_hint:
-                log_fn(f"         ⚠ {cache_hint}")
+                error_text = f"{error_text} -- {cache_hint}" if error_text else cache_hint
 
-        if fingerprint:
+            return {
+                "success":      ok,
+                "root_ok":      root_ok,
+                "version_ok":   version_ok,
+                "error":        error_text,
+                "version_data": version_data,
+                "output":       output_text,
+            }, port
+
+        result, port = _attempt()
+
+        # One automatic retry on failure (2026-07-22): a build succeeding
+        # but its test failing with a symptom that doesn't match this
+        # combo's own dependencies -- confirmed as a real, reproduced case
+        # (a Slim 2 image crashing with "Class 'Slim\Slim' not found", a
+        # class Slim 2.6.3 genuinely has; the exact same context built and
+        # ran correctly standalone) -- is the signature of a rare shared
+        # package-cache race under heavy build concurrency, not a real
+        # incompatibility. Manually rebuilding + retesting always fixed it
+        # (confirmed twice by the user); this automates exactly that
+        # instead of requiring a human to notice and redo it by hand.
+        # no_cache=True forces genuine fresh execution on the retry rather
+        # than potentially replaying whatever got cached the first time.
+        if not result["success"] and not (stop_event is not None and stop_event.is_set()):
+            log_fn(f"         ⚠ failed -- retrying once with a fresh rebuild "
+                   f"(shared build caches can occasionally race under heavy "
+                   f"concurrency; a clean rebuild usually resolves it) ...")
+            _do_build([e], no_cache=True, skip_existing=False, log_fn=log_fn,
+                      stop_event=stop_event, workers=1)
+            result, port = _attempt()
+            log_fn(f"         PASS on retry" if result["success"]
+                   else f"         FAIL on retry too -- likely a real issue, not a flake")
+
+        if fingerprint and result["success"]:
             fp_records = _capture_fingerprint(name, _docker_target_host(), port)
             log_fn(f"         FINGERPRINT  success={fp_records['success']['status_code']}  "
                    f"failure={fp_records['failure']['status_code']}  "
@@ -2095,25 +2157,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                 save_fingerprint_fn(e, fp_records)
 
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-
-        ok = root_ok and version_ok
-        if ok:
-            log_fn(f"         PASS")
-        else:
-            log_fn(f"         FAIL  ({fail_reason} did not respond correctly)")
-
-        error_text = fail_reason if not ok else ""
-        if cache_hint:
-            error_text = f"{error_text} -- {cache_hint}" if error_text else cache_hint
-
-        _finish({
-            "success":      ok,
-            "root_ok":      root_ok,
-            "version_ok":   version_ok,
-            "error":        error_text,
-            "version_data": version_data,
-            "output":       output_text,
-        })
+        _finish(result)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(_test_one, i, e): (i, e)
