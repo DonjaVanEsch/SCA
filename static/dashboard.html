@@ -988,9 +988,15 @@
     border: 1px solid var(--border2);
   }
 
+  /* Narrower than the old 24px: these columns only ever hold a small
+     status dot, so the fixed width itself (not the 1px padding) was the
+     real source of the visible gap between two adjacent narrow columns
+     (Build+Test, Present+Running) -- centering an 8px dot in a much wider
+     column left several px of empty space on each side that padding alone
+     couldn't close. */
   #img-table th.col-narrow,
   #client-table th.col-narrow {
-    width: 24px;
+    width: 16px;
     padding-left: 1px;
     padding-right: 1px;
     text-align: center;
