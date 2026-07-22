@@ -749,12 +749,21 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
-def _do_run(entries, build_results=None, log_fn=print):
+def _do_run(entries, build_results=None, log_fn=print, display_host=None):
     """Start a detached container for every entry.
 
     build_results: dict {tag: result_dict} from _do_build; entries whose build
     failed are automatically skipped.  Pass None to run without a preceding
     build step (images must already exist in that case).
+
+    display_host overrides _docker_target_host() for the printed URL only --
+    _docker_target_host() says "localhost" whenever Docker is local to *this
+    process*, which is correct for the CLI but wrong when the caller is a
+    dashboard.py request from a browser on a different machine (that
+    "localhost" would resolve to the browser's own machine, not the
+    server). dashboard.py resolves the right host from the request and
+    passes it in; plain CLI usage leaves this None and keeps the old
+    behavior.
     """
     n   = len(entries)
     pad = len(str(n))
@@ -806,7 +815,7 @@ def _do_run(entries, build_results=None, log_fn=print):
             log_fn(f"         FAILED  (port not assigned, container state: {state})")
             failed.append(name)
             continue
-        url  = f"http://{_docker_target_host()}:{port}"
+        url  = f"http://{display_host or _docker_target_host()}:{port}"
         log_fn(f"         {url}")
         started.append((name, url))
 

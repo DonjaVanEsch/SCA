@@ -125,6 +125,27 @@ def _finish_job(job_id: str) -> None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _resolve_display_host() -> str:
+    """The host to show the user in any "reach this container at ..." URL.
+
+    manager._docker_target_host() says "localhost" when Docker is local to
+    *this process* -- correct for the CLI, but dashboard.py's caller is a
+    browser that may be on a different machine (e.g. dashboard.py + Docker
+    both run on a Linux box, opened from a Windows browser at
+    http://<server-ip>:5050). In that case "localhost" would resolve to the
+    browser's own machine, not the server, so fall back to whatever
+    hostname the browser actually used to reach us. Must be called from
+    within a real request context (reads `request.host`) -- capture the
+    result into a plain variable before handing off to a background thread.
+    """
+    target_host = manager._docker_target_host()
+    if target_host == "localhost":
+        browser_host = request.host.split(":")[0]
+        if browser_host not in ("localhost", "127.0.0.1"):
+            target_host = browser_host
+    return target_host
+
+
 def _annotate_docker_exists(items: list[dict]) -> list[dict]:
     """Add `docker_exists` / `running` / `run_url` to each row.
 
@@ -134,25 +155,11 @@ def _annotate_docker_exists(items: list[dict]) -> list[dict]:
     couldn't be reached, so presence is unknown.
 
     running / run_url: whether a container for this image is currently
-    running, and if so, the URL to reach it -- resolved through the same
-    host logic manager.py uses for its own "Launch" log output, so this is
-    never "localhost" when the active Docker engine is remote (SSH).
-
-    manager._docker_target_host() says "localhost" when Docker is local to
-    *this process* -- correct for the CLI, but dashboard.py's caller is a
-    browser that may be on a different machine (e.g. dashboard.py + Docker
-    both run on a Linux box, opened from a Windows browser at
-    http://<server-ip>:5050). In that case "localhost" would resolve to the
-    browser's own machine, not the server, so fall back to whatever
-    hostname the browser actually used to reach us.
+    running, and if so, the URL to reach it -- see _resolve_display_host().
     """
     existing = manager.list_existing_image_repos()
     running  = manager.list_running_containers()
-    target_host = manager._docker_target_host()
-    if target_host == "localhost":
-        browser_host = request.host.split(":")[0]
-        if browser_host not in ("localhost", "127.0.0.1"):
-            target_host = browser_host
+    target_host = _resolve_display_host()
     for item in items:
         item["docker_exists"] = None if existing is None else item.get("image_tag") in existing
         port = running.get(item.get("image_tag")) if running else None
@@ -656,6 +663,9 @@ def action():
 
     entries = _entries_from_db_rows(rows)
     job_id, q = _new_job(action_str)
+    # Captured here, in the real request context -- the background thread
+    # below has no `request` to read the browser's own host from.
+    display_host = _resolve_display_host()
 
     log_lines = []
 
@@ -722,7 +732,7 @@ def action():
                 )
 
             elif action_str == "run_container":
-                manager._do_run(entries, log_fn=log)
+                manager._do_run(entries, log_fn=log, display_host=display_host)
 
             elif action_str == "remove":
                 manager._do_remove(entries, log_fn=log)
