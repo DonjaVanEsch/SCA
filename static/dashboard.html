@@ -4609,6 +4609,14 @@
       ['Built at', row.built_at || '—'],
       ['Test', row.test_success === 1 ? '✓ PASS' : row.test_success === 0 ? '✗ FAIL' : '—'],
     ]);
+    if (row.http_client_notes) {
+      body.innerHTML += `
+    <div class="detail-row">
+      <span class="detail-key">Lib notes</span>
+      <span class="ref-item-note">${row.http_client_notes}</span>
+    </div>`;
+      setupNoteToggles(body);
+    }
     if (row.build_success === 0 && row.build_output) {
       body.innerHTML += `<div class="detail-row" style="border-bottom:none">${outputPanelHtml(`cbout-${id}`, row.build_output, true)}</div>`;
     }
@@ -6258,17 +6266,20 @@
       <span class="detail-val">${v}</span>
     </div>`).join('');
 
-    // Add notes
+    // Add notes -- clamped to a few lines with a show more/less toggle
+    // (setupNoteToggles(), same treatment as the Reference tab) since these
+    // can run long and the drawer is already dense.
     if (imgData.fw_notes) body.innerHTML += `
     <div class="detail-row">
       <span class="detail-key">FW notes</span>
-      <span class="detail-note">${imgData.fw_notes}</span>
+      <span class="ref-item-note">${imgData.fw_notes}</span>
     </div>`;
     if (imgData.lib_notes) body.innerHTML += `
     <div class="detail-row">
       <span class="detail-key">Lib notes</span>
-      <span class="detail-note">${imgData.lib_notes}</span>
+      <span class="ref-item-note">${imgData.lib_notes}</span>
     </div>`;
+    setupNoteToggles(body);
 
     // Build / Test / Fingerprint output -- grouped into subtabs, one tab per
     // section that actually has data (the drawer is already dense; a flat

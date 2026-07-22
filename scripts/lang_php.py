@@ -579,9 +579,28 @@ def make_composer_json(fw_name: str, fw_major: str, fw_resolved: str,
 _COMPOSER_CACHE_MOUNT = "--mount=type=cache,id=composer-cache,target=/root/.composer/cache,sharing=locked"
 
 
-def make_dockerfile(php_ver: str, lib_name: str) -> str:
+def make_dockerfile(php_ver: str, lib_name: str, fw_name: str = "", fw_major: str = "",
+                    lib_ver: str = "") -> str:
     composer_tag = _composer_tag(php_ver)
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(php_ver)
+
+    # Cache-key diversifier (2026-07-22): unlike lang_node.py's own version of
+    # this fix, this Dockerfile template never varied by framework/framework-
+    # major/library-version at all -- only php_ver and lib_name -- so EVERY
+    # combo sharing those two (any framework, any major, e.g. Slim/2 and
+    # Laravel/9 on the same PHP version) produced a byte-identical Dockerfile.
+    # Confirmed as the real cause of a live user-reported bug, not just a
+    # theoretical risk: a Slim/2 image crashed at runtime with "Class
+    # 'Slim\\Slim' not found" even though its own composer.json/index.php on
+    # disk were independently verified correct and built/ran fine in
+    # isolation -- exactly the signature of a DIFFERENT combo's build output
+    # (e.g. an actual Slim 1.x install, which has no such namespace) being
+    # served from BuildKit's cache under concurrent parallel builds, the same
+    # bug class already fixed for Node via its own `cache_bust` ARG. `ARG`
+    # (baked directly into the generated Dockerfile text) forces a distinct
+    # cache lineage per combo, making a collision structurally impossible
+    # instead of merely unlikely.
+    cache_bust = f'ARG PQC_COMBO_ID="{fw_name}-{fw_major}-{lib_name}@{lib_ver}"\n'
 
     liboqs_stage = ""
     liboqs_copy = ""
@@ -637,6 +656,7 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
             "COPY --from=composer /usr/bin/composer /usr/local/bin/composer\n"
             "WORKDIR /app\n"
             "ENV COMPOSER_ALLOW_SUPERUSER=1\n"
+            f"{cache_bust}"
             "COPY composer.json .\n"
             f"RUN {_COMPOSER_CACHE_MOUNT} \\\n"
             f"    composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
@@ -677,6 +697,7 @@ def make_dockerfile(php_ver: str, lib_name: str) -> str:
         "COPY --from=composer /usr/bin/composer /usr/local/bin/composer\n"
         "WORKDIR /app\n"
         "ENV COMPOSER_ALLOW_SUPERUSER=1\n"
+        f"{cache_bust}"
         "COPY composer.json .\n"
         f"RUN {_COMPOSER_CACHE_MOUNT} \\\n"
         f"    composer install --no-dev --no-interaction --prefer-dist{security_flag}\n"
@@ -780,5 +801,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     (out / "composer.json").write_text(
         make_composer_json(fw_name, fw_major, fw_resolved, lib_name, lib_resolved), encoding="utf-8"
     )
-    (out / "Dockerfile").write_text(make_dockerfile(lang_ver, lib_name), encoding="utf-8")
+    (out / "Dockerfile").write_text(
+        make_dockerfile(lang_ver, lib_name, fw_name=fw_name, fw_major=fw_major, lib_ver=lib_resolved),
+        encoding="utf-8",
+    )
     return True
