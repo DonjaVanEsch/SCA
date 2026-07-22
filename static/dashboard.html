@@ -4615,7 +4615,6 @@
       <span class="detail-key">Lib notes</span>
       <span class="ref-item-note">${row.http_client_notes}</span>
     </div>`;
-      setupNoteToggles(body);
     }
     if (row.build_success === 0 && row.build_output) {
       body.innerHTML += `<div class="detail-row" style="border-bottom:none">${outputPanelHtml(`cbout-${id}`, row.build_output, true)}</div>`;
@@ -4624,6 +4623,9 @@
       const testText = row.test_output || `(no output captured)\n\nReason: ${row.test_error}`;
       body.innerHTML += `<div class="detail-row" style="border-bottom:none">${outputPanelHtml(`ctout-${id}`, testText, true)}</div>`;
     }
+    // Wired up here, after every body.innerHTML += above -- see openDetail()'s
+    // identical comment for why the toggle must come last.
+    setupNoteToggles(body);
     document.getElementById('detail-drawer').classList.add('open');
 
     if (!_fingerprintEnabled) return;
@@ -6279,7 +6281,6 @@
       <span class="detail-key">Lib notes</span>
       <span class="ref-item-note">${imgData.lib_notes}</span>
     </div>`;
-    setupNoteToggles(body);
 
     // Build / Test / Fingerprint output -- grouped into subtabs, one tab per
     // section that actually has data (the drawer is already dense; a flat
@@ -6318,6 +6319,13 @@
       </div>
     </div>`;
     }
+
+    // Wired up here, after every body.innerHTML += above -- each of those
+    // reserializes and reparses the whole body, which would otherwise strip
+    // any addEventListener already attached (the button text survives, the
+    // click handler doesn't -- confirmed as the real cause of "Show more"
+    // visibly appearing but doing nothing on click).
+    setupNoteToggles(body);
 
     document.getElementById('detail-drawer').classList.add('open');
   }
