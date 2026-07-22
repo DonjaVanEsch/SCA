@@ -1591,6 +1591,16 @@
     color: var(--danger)
   }
 
+  #log-body .log-link {
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  #log-body .log-link:hover {
+    text-decoration: none;
+  }
+
   #log-body .log-done {
     color: var(--accent);
     font-weight: 600
@@ -3750,6 +3760,16 @@
 
   function escHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Escapes first, then wraps any http(s):// URL in a clickable link -- used
+  // for streamed log lines (e.g. the "Launch" action's own printed
+  // container URLs), which arrive as plain text with no markup of their own.
+  function linkifyLog(s) {
+    return escHtml(s).replace(
+      /(https?:\/\/[^\s<]+)/g,
+      '<a href="$1" target="_blank" rel="noopener" class="log-link">$1</a>'
+    );
   }
 
   // ── "Show more/less" for clamped note text ──────────────────────────────
@@ -6099,7 +6119,7 @@
         document.getElementById('log-status').textContent = 'Lost';
         const div = document.createElement('div');
         div.className = 'log-err';
-        div.textContent = line;
+        div.innerHTML = linkifyLog(line);
         body.appendChild(div);
         if (onDone) onDone(true);
         return;
@@ -6120,7 +6140,7 @@
       if (line.includes('PASS') || line.includes('OK  ')) passCount++;
       if (line.includes('FAIL') || line.includes('FAILED')) failCount++;
 
-      div.textContent = line;
+      div.innerHTML = linkifyLog(line);
       body.appendChild(div);
       body.scrollTop = body.scrollHeight;
     };
@@ -6355,7 +6375,7 @@
       const text = data.log_text || '(no saved log for this run)';
       text.split('\n').forEach(line => {
         const div = document.createElement('div');
-        div.textContent = line;
+        div.innerHTML = linkifyLog(line);
         body.appendChild(div);
       });
       dot.className = data.status === 'interrupted' ? 'done-warn'
