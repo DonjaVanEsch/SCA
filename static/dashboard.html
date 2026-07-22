@@ -3260,8 +3260,7 @@
   </div>
   <div id="log-console">
     <div id="log-header">
-      <div style="width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 1.5s infinite"
-        id="log-dot"></div>
+      <div style="width:8px;height:8px;border-radius:50%" id="log-dot" class="running"></div>
       <span id="log-title">Job output</span>
       <span id="log-progress"></span>
       <span id="log-elapsed" style="font-size:11px;font-family:var(--mono);color:var(--muted2)"></span>
@@ -3499,6 +3498,17 @@
     50% {
       opacity: .3
     }
+  }
+
+  /* background/animation live here, not in the element's inline style --
+     an inline style attribute always wins over ANY stylesheet rule
+     regardless of selector specificity, so toggling className alone could
+     never actually change the look while the old hardcoded inline
+     background/animation were still present. That was the real bug behind
+     the dot never visually leaving its pulsing state. */
+  #log-dot.running {
+    background: var(--success);
+    animation: pulse 1.5s infinite;
   }
 
   /* Standard traffic-light convention: solid (no pulse) once a job settles,
@@ -6059,7 +6069,7 @@
     } else {
       body.innerHTML = '';
     }
-    dot.className = '';
+    dot.className = 'running';
     con.classList.add('open');
     con.classList.remove('collapsed');
     document.getElementById('btn-collapse-log').textContent = '▼';
@@ -6378,7 +6388,8 @@
         div.innerHTML = linkifyLog(line);
         body.appendChild(div);
       });
-      dot.className = data.status === 'interrupted' ? 'done-warn'
+      dot.className = data.status === 'running' ? 'running'
+        : data.status === 'interrupted' ? 'done-warn'
         : ((data.build_failed > 0 || data.test_failed > 0) ? 'done-fail' : 'done-ok');
       con.classList.add('open');
       con.classList.remove('collapsed');
