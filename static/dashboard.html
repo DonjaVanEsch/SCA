@@ -3485,8 +3485,22 @@
     }
   }
 
-  #log-dot.done {
-    background: var(--muted);
+  /* Standard traffic-light convention: solid (no pulse) once a job settles,
+     colored by outcome rather than a single flat "done" gray -- green =
+     all passed, amber = interrupted/uncertain (e.g. lost SSE connection),
+     red = at least one failure or a hard error. */
+  #log-dot.done-ok {
+    background: var(--success);
+    animation: none
+  }
+
+  #log-dot.done-warn {
+    background: var(--warning);
+    animation: none
+  }
+
+  #log-dot.done-fail {
+    background: var(--danger);
     animation: none
   }
 </style>
@@ -6045,7 +6059,7 @@
         _es.close(); _es = null;
         _currentJobId = null;
         localStorage.removeItem('pqc-active-job');
-        dot.className = 'done';
+        dot.className = _wasCancelled ? 'done-warn' : (failCount > 0 ? 'done-fail' : 'done-ok');
         cancelBtn.style.display = 'none';
         if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
         if (_wasCancelled) {
@@ -6073,7 +6087,7 @@
         _es.close(); _es = null;
         _currentJobId = null;
         localStorage.removeItem('pqc-active-job');
-        dot.className = 'done';
+        dot.className = 'done-fail';
         cancelBtn.style.display = 'none';
         if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
         document.getElementById('log-status').textContent = 'Lost';
@@ -6107,7 +6121,7 @@
 
     _es.onerror = () => {
       if (_es) { _es.close(); _es = null; }
-      dot.className = 'done';
+      dot.className = 'done-warn';
       if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
       document.getElementById('log-status').textContent = 'Connection lost';
     };
@@ -6338,7 +6352,8 @@
         div.textContent = line;
         body.appendChild(div);
       });
-      dot.className = 'done';
+      dot.className = data.status === 'interrupted' ? 'done-warn'
+        : ((data.build_failed > 0 || data.test_failed > 0) ? 'done-fail' : 'done-ok');
       con.classList.add('open');
       con.classList.remove('collapsed');
       document.getElementById('btn-collapse-log').textContent = '▼';
