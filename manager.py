@@ -1768,9 +1768,9 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
             return
 
         tag = _client_image_tag(e)
-        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
         if not _image_exists(tag):
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
             log_fn(f"         SKIP  (not built)")
             with _lock:
                 skipped += 1
@@ -1782,6 +1782,14 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
         target_url = _client_target_url(e.get("http_client", ""), target_override)
 
         def _attempt():
+            """Runs the client container once. The "[i/n] tag" header is
+            logged here, right where the result becomes known, not at
+            _test_one's entry -- with several workers running concurrently,
+            logging it up front means every worker's header appears in the
+            same instant while all of them are still mid-run, and the
+            actual pass/fail lines trickle in later in a different order,
+            making it impossible to tell which result belongs to which
+            image."""
             started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             rc, out, err = _run_client_container(tag, client_container, _FP_TARGET_NETWORK, target_url)
             finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1793,6 +1801,7 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
             except (json.JSONDecodeError, AttributeError):
                 pass
             success = rc == 0 and status_code == 200
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
             return {"success": success, "output": out, "error": err if rc != 0 else "",
                     "started_at": started, "finished_at": finished}, status_code
 
@@ -1991,7 +2000,6 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
 
         tag  = _image_tag(e)
         name = tag
-        log_fn(f"[{i:{pad}}/{n}] {tag}")
 
         def _finish(result):
             with _lock:
@@ -2000,6 +2008,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                     save_fn(e, result)
 
         if build_results is not None and not build_results.get(tag, {}).get("success"):
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
             log_fn(f"         SKIP  (build failed)")
             _finish({"success": False, "root_ok": False,
                      "version_ok": False, "error": "build failed",
@@ -2007,6 +2016,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             return
 
         if not _image_exists(tag):
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
             log_fn(f"         SKIP  (not built)")
             _finish({"success": False, "root_ok": False,
                      "version_ok": False, "error": "image not found",
@@ -2018,7 +2028,19 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             port) -- does NOT remove the container on a successful result
             (the caller needs it left running for fingerprint capture), and
             does NOT capture fingerprints itself (only done once, on
-            whichever attempt is actually kept)."""
+            whichever attempt is actually kept).
+
+            The "[i/n] tag" header is logged here, right where each result
+            actually becomes known, NOT at _test_one's entry -- with
+            several workers running concurrently, logging it up front (as
+            this used to) means every worker prints its header in the first
+            instant while all of them are still mid-run, and the actual
+            pass/fail lines only trickle in seconds later in a different
+            order, making it impossible to tell which result belongs to
+            which image. Logging it beside the result instead keeps each
+            image's header and outcome adjacent in the log regardless of
+            how the workers interleave.
+            """
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
             proc = subprocess.run(
@@ -2026,6 +2048,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             if proc.returncode != 0:
+                log_fn(f"[{i:{pad}}/{n}] {tag}")
                 log_fn(f"         FAIL  (container did not start)")
                 for line in proc.stderr.strip().splitlines()[-3:]:
                     log_fn(f"         | {line}")
@@ -2052,6 +2075,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
                     capture_output=True, text=True, encoding="utf-8", errors="replace",
                 )
                 output_text = (logs.stdout + logs.stderr).strip()
+                log_fn(f"[{i:{pad}}/{n}] {tag}")
                 log_fn(f"         FAIL  (port not assigned, container state: {state})")
                 subprocess.run(["docker", "rm", "-f", name], capture_output=True)
                 return {"success": False, "root_ok": False,
@@ -2091,6 +2115,7 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
             )
             output_text = (logs.stdout + logs.stderr).strip()
 
+            log_fn(f"[{i:{pad}}/{n}] {tag}")
             cache_hint = None
             if not (root_ok and version_ok):
                 state = subprocess.run(
