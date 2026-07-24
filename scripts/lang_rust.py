@@ -605,6 +605,7 @@ _CARGO_GIT_CACHE_MOUNT = "--mount=type=cache,id=cargo-git-cache,target=/usr/loca
 # edge cases elsewhere (Slim-2, CherryPy 17, pycryptodome 3.0-3.6, etc).
 _MSRV_REPAIR_PY = '''import sys, re, subprocess, urllib.request, json, time, tomllib
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 TARGET = sys.argv[1]
 UA = "pqc-sca-research/1.0 (+https://github.com/DonjaVanEsch/SCA)"
@@ -618,9 +619,7 @@ def ver_tuple(v):
 TARGET_T = ver_tuple(TARGET)
 _cache = {}
 
-def fetch_versions(crate):
-    if crate in _cache:
-        return _cache[crate]
+def _fetch_one(crate):
     req = urllib.request.Request(
         f"https://crates.io/api/v1/crates/{crate}/versions",
         headers={"User-Agent": UA},
@@ -636,9 +635,24 @@ def fetch_versions(crate):
                 print(f"  ! failed to fetch {crate}: {e}", file=sys.stderr)
             else:
                 time.sleep(1)
-    versions = [v for v in data.get("versions", []) if _STABLE_RE.match(v["num"])]
-    _cache[crate] = versions
-    return versions
+    return [v for v in data.get("versions", []) if _STABLE_RE.match(v["num"])]
+
+def prefetch_all(crates):
+    # crates.io lookups are pure I/O -- confirmed live that doing them one
+    # at a time was NOT actually the dominant cost (see repair_loop's
+    # docstring), but they still add up serially across ~50-80 unique
+    # crates; a thread pool costs nothing to add and removes that tail.
+    todo = [c for c in dict.fromkeys(crates) if c not in _cache]
+    if not todo:
+        return
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for crate, versions in zip(todo, pool.map(_fetch_one, todo)):
+            _cache[crate] = versions
+
+def fetch_versions(crate):
+    if crate not in _cache:
+        _cache[crate] = _fetch_one(crate)
+    return _cache[crate]
 
 def parse_lock():
     with open("Cargo.lock") as f:
@@ -682,11 +696,49 @@ def candidate_order(crate, current_version):
     same_class = [v for v in versions if caret_compatible(current_version, v["num"])]
     return [v["num"] for v in same_class if effective_floor(v) <= TARGET_T]
 
+def _apply_batch(to_fix, original_toml):
+    """Try to fix ALL of this round's downgrades with ONE cargo invocation
+    instead of one `cargo update --precise` call per crate. Confirmed live
+    this was the actual dominant cost, not the Python-side crates.io
+    lookups: each `--precise` call independently re-syncs the crates.io
+    index (~3s fixed cost every time, regardless of freshness), so N
+    packages needing repair meant N x ~3s just in that overhead -- for
+    rustc 1.31 (needing the most downgrades of any tracked target) this
+    alone pushed a single combo's warm-up build past 13 minutes.
+
+    The batch mechanism: temporarily add an exact `name = "=version"` pin
+    per offending crate (forces zero-ambiguity resolution for exactly that
+    crate), then `cargo update -p name@old_version ...` (repeated -p, no
+    --precise) -- confirmed live this selectively updates ONLY the named
+    packages to satisfy their new exact pin, leaving every other locked
+    package (e.g. iron) untouched, in a single ~3s call regardless of how
+    many packages are included.
+
+    Falls back to the slower one-call-per-crate path (repair_loop, below)
+    only if the batch itself is rejected outright -- e.g. two crates in
+    the same round happen to share a name at different majors, which would
+    collide as duplicate TOML keys."""
+    pin_lines = "\\n".join(f'{name} = "={replacement}"' for name, _, replacement in to_fix)
+    with open("Cargo.toml", "w") as f:
+        f.write(original_toml + "\\n" + pin_lines + "\\n")
+    specs = []
+    for name, version, _ in to_fix:
+        specs += ["-p", f"{name}@{version}"]
+    r = subprocess.run(["cargo", "update"] + specs, capture_output=True, text=True)
+    with open("Cargo.toml", "w") as f:
+        f.write(original_toml)
+    return r.returncode == 0
+
 def repair_loop():
+    with open("Cargo.toml") as f:
+        original_toml = f.read()
     given_up = set()
     for round_num in range(12):
-        changed = False
-        for name, version in parse_lock():
+        pkgs = parse_lock()
+        prefetch_all(name for name, _ in pkgs)
+
+        to_fix = []
+        for name, version in pkgs:
             if (name, version) in given_up:
                 continue
             floor = current_floor(name, version)
@@ -697,19 +749,27 @@ def repair_loop():
                 print(f"  ! {name} {version} needs rust {floor} > {TARGET}, no compatible version found in the same semver range -- genuine floor")
                 given_up.add((name, version))
                 continue
-            for replacement in candidates:
-                r = subprocess.run(["cargo", "update", "-p", f"{name}@{version}", "--precise", replacement],
-                                    capture_output=True, text=True)
-                if r.returncode == 0:
-                    print(f"  downgraded {name} {version} (needs {floor}) -> {replacement}")
-                    changed = True
-                    break
-            else:
-                print(f"  ! {name} {version} needs rust {floor} > {TARGET}, all {len(candidates)} candidate(s) rejected by cargo")
-                given_up.add((name, version))
-        if not changed:
+            to_fix.append((name, version, candidates[0]))
+
+        if not to_fix:
             print(f"stable after {round_num + 1} round(s)")
             return
+
+        if _apply_batch(to_fix, original_toml):
+            for name, version, replacement in to_fix:
+                print(f"  downgraded {name} {version} (needs repair) -> {replacement}")
+            continue
+
+        # Batch rejected -- fall back to one cargo call per crate this
+        # round (still correct, just the pre-optimization speed).
+        for name, version, replacement in to_fix:
+            r = subprocess.run(["cargo", "update", "-p", f"{name}@{version}", "--precise", replacement],
+                                capture_output=True, text=True)
+            if r.returncode == 0:
+                print(f"  downgraded {name} {version} (individual fallback) -> {replacement}")
+            else:
+                print(f"  ! {name} {version} rejected even individually, giving up: {r.stderr[-200:]}")
+                given_up.add((name, version))
     print("gave up after 12 rounds (may still have incompatible crates)")
 
 def dep_line(name, version, orig_value):
