@@ -14,8 +14,8 @@
         {
           "nr": "1.31",
           "release_date": "2018-12-06",
-          "include": true,
-          "notes": "Kept in sparse coverage: oldest tracked rustc (Docker floor) + edition 2018 + lowest MSRV floor (Rocket 0.4/Iron 0.6/warp 0.1/ring 0.16/bcrypt 0.5+0.10/argon2 0.1+0.3/rust-crypto 0.2)"
+          "include": false,
+          "notes": "Excluded 2026-07-25 after extensive real-build investigation: rustc 1.31 (2018-12-06) was originally kept as this registry's oldest Docker-floor anchor + several frameworks/libs' lowest MSRV floor (Rocket 0.4, Iron 0.6, warp 0.1, ring 0.16, bcrypt 0.5/0.10, argon2 0.1/0.3, rust-crypto 0.2). In practice, building FRESH against today's live crates.io for this old a target increasingly hits real, hard-to-resolve ecosystem drift: widely-used transitive crates (syn/serde_derive/quote among them) have bumped past what 1.31 can compile, sometimes in multi-level lockstep chains a straightforward MSRV-aware repair can't unwind (confirmed live: serde_derive bumping to syn 3.x, itself requiring quote/serde to move in lockstep too -- see lang_rust.py's repair mechanism and its documented limits). Realistically, any REAL deployment that actually shipped on rustc 1.31 would have used a Cargo.lock frozen around 2018-2019, not resolved fresh against today's crates.io -- so testing \"build fresh against 1.31 today\" has low research value and mostly exercises ecosystem drift, not the framework/library combo actually being studied. Coverage is unaffected: every (framework, library) pair whose floor was exactly 1.31 remains testable at 1.36 (the next included version; all compatibility ranges in this registry are open-ended floor..latest, so a higher version always still satisfies a lower floor). If a FUTURE language addition hits a similarly ancient tracked floor, expect the same class of live ecosystem-drift wall and apply the same reasoning before sinking more effort into a full resolver-level fix."
         },
         {
           "nr": "1.32",

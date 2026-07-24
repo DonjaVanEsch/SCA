@@ -654,14 +654,6 @@ def fetch_versions(crate):
         _cache[crate] = _fetch_one(crate)
     return _cache[crate]
 
-def parse_lock():
-    with open("Cargo.lock") as f:
-        text = f.read()
-    pkgs = []
-    for m in re.finditer(r'\\[\\[package\\]\\]\\nname = "([^"]+)"\\nversion = "([^"]+)"', text):
-        pkgs.append((m.group(1), m.group(2)))
-    return pkgs
-
 _EDITION_FLOOR = {"2015": (1, 0), "2018": (1, 31), "2021": (1, 56), "2024": (1, 85)}
 
 def effective_floor(v):
@@ -695,6 +687,101 @@ def candidate_order(crate, current_version):
     versions = [v for v in fetch_versions(crate) if not v.get("yanked")]
     same_class = [v for v in versions if caret_compatible(current_version, v["num"])]
     return [v["num"] for v in same_class if effective_floor(v) <= TARGET_T]
+
+def _cargo_metadata():
+    r = subprocess.run(
+        ["cargo", "metadata", "--filter-platform", "x86_64-unknown-linux-gnu", "--format-version", "1"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return None
+    return json.loads(r.stdout)
+
+def _split_pkg_id(pkg_id):
+    after_hash = pkg_id.rsplit("#", 1)[-1]
+    name, version = after_hash.rsplit("@", 1)
+    return name, version
+
+def _resolved_pkgs(meta):
+    """The exact (name, version) set `cargo metadata --filter-platform`
+    resolves right now -- the SAME call rewrite_pinned_toml() uses to
+    build the final pin list. repair_loop() used to check Cargo.lock
+    (via a regex parse) instead, which is a DIFFERENT resolution snapshot
+    -- confirmed live this let packages slip through uninspected: a
+    cascade fix's own cargo update call re-resolved an unrelated crate
+    (quote) to a fresh version never checked by any later round, and it
+    surfaced in the real build instead (edition2021 on rustc 1.31).
+    Checking against metadata's own view directly closes that gap."""
+    pkgs = []
+    for node in meta["resolve"]["nodes"]:
+        if node["id"].startswith("path+"):
+            continue
+        pkgs.append(_split_pkg_id(node["id"]))
+    return pkgs
+
+def _dependents_of(meta, target_name):
+    """Direct parents (any resolved version) of `target_name` in the
+    current dependency graph."""
+    parents = []
+    for node in meta["resolve"]["nodes"]:
+        if node["id"].startswith("path+"):
+            continue
+        pname, pversion = _split_pkg_id(node["id"])
+        for dep in node.get("deps", []):
+            dep_id = dep.get("pkg", "")
+            if dep_id.startswith("path+"):
+                continue
+            dep_name, _ = _split_pkg_id(dep_id)
+            if dep_name == target_name:
+                parents.append((pname, pversion))
+    return parents
+
+def _crate_dep_req(crate, version, dep_name):
+    """The requirement string `crate`@`version` places on `dep_name`, or
+    None if it doesn't depend on it at all."""
+    req_url = urllib.request.Request(
+        f"https://crates.io/api/v1/crates/{crate}/{version}/dependencies",
+        headers={"User-Agent": UA},
+    )
+    try:
+        with urllib.request.urlopen(req_url, timeout=20) as r:
+            data = json.load(r)
+    except Exception:
+        return None
+    for d in data.get("dependencies", []):
+        if d["crate_id"] == dep_name:
+            return d.get("req")
+    return None
+
+def _cascade_fix(name, version, meta):
+    """When `name`@`version` has NO compatible candidate in its own
+    semver class, a plain per-crate floor check can't fix it -- but the
+    real cause is often a DIRECT PARENT that recently bumped its own
+    requirement onto a newer major of `name` (confirmed live: serde_derive
+    1.0.229, published the same day syn 3.0.0 shipped, requires syn "^3",
+    which has no old-rustc-compatible release at all -- but serde_derive
+    1.0.228, one patch older, requires syn "^2.0.81" instead, which does).
+    Looks for a same-semver-class OLDER release of a direct parent whose
+    OWN requirement on `name` opens up a compatible candidate, and returns
+    both substitutions together (they must move as one unit) so the
+    caller can batch them in the same round."""
+    if meta is None:
+        return None
+    for pname, pversion in _dependents_of(meta, name):
+        for p_candidate in candidate_order(pname, pversion):
+            req = _crate_dep_req(pname, p_candidate, name)
+            if not req:
+                continue
+            bare_req = req.lstrip("^")
+            child_candidates = [
+                v["num"] for v in fetch_versions(name)
+                if not v.get("yanked")
+                and caret_compatible(bare_req, v["num"])
+                and effective_floor(v) <= TARGET_T
+            ]
+            if child_candidates:
+                return [(pname, pversion, p_candidate), (name, version, child_candidates[0])]
+    return None
 
 def _apply_batch(to_fix, original_toml):
     """Try to fix ALL of this round's downgrades with ONE cargo invocation
@@ -734,22 +821,41 @@ def repair_loop():
         original_toml = f.read()
     given_up = set()
     for round_num in range(12):
-        pkgs = parse_lock()
+        meta = _cargo_metadata()
+        if meta is None:
+            print("  ! cargo metadata failed, aborting repair loop")
+            return
+        pkgs = _resolved_pkgs(meta)
         prefetch_all(name for name, _ in pkgs)
 
         to_fix = []
+        scheduled_names = set()
         for name, version in pkgs:
-            if (name, version) in given_up:
+            if (name, version) in given_up or name in scheduled_names:
                 continue
             floor = current_floor(name, version)
             if floor is None or floor <= TARGET_T:
                 continue
             candidates = [c for c in candidate_order(name, version) if c != version]
-            if not candidates:
-                print(f"  ! {name} {version} needs rust {floor} > {TARGET}, no compatible version found in the same semver range -- genuine floor")
-                given_up.add((name, version))
+            if candidates:
+                to_fix.append((name, version, candidates[0]))
+                scheduled_names.add(name)
                 continue
-            to_fix.append((name, version, candidates[0]))
+
+            # No fix within this crate's own semver class -- a DIRECT
+            # PARENT may have relaxed its requirement in an older release
+            # (see _cascade_fix's docstring: serde_derive+syn is the
+            # confirmed-live case, but this isn't hardcoded to that pair).
+            cascade = _cascade_fix(name, version, meta)
+            if cascade and not any(n in scheduled_names for n, _, _ in cascade):
+                for n, v, r in cascade:
+                    to_fix.append((n, v, r))
+                    scheduled_names.add(n)
+                print(f"  ! {name} {version} needs rust {floor} > {TARGET} -- fixed via cascade (parent downgrade)")
+                continue
+
+            print(f"  ! {name} {version} needs rust {floor} > {TARGET}, no compatible version found in the same semver range -- genuine floor")
+            given_up.add((name, version))
 
         if not to_fix:
             print(f"stable after {round_num + 1} round(s)")
