@@ -4500,7 +4500,11 @@
     runClientAction('remove', ids, {}, (err, cancelled) => {
       document.getElementById('btn-client-remove').disabled = clientState.selected.size === 0;
       if (!err && !cancelled) {
-        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
+        // Docker lifecycle actions (Launch/Stop/Remove) always deselect --
+        // only Build/Test/Fingerprint respect the "deselect after batch"
+        // checkbox, since those are the ones commonly chained/re-run on
+        // the same selection.
+        deselectAllClients();
         loadClientImages(clientState.page);
       }
     });
@@ -4513,7 +4517,7 @@
     runClientAction('run', ids, {}, (err, cancelled) => {
       document.getElementById('btn-client-launch').disabled = clientState.selected.size === 0;
       if (!err && !cancelled) {
-        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
+        deselectAllClients();
         loadClientImages(clientState.page);
       }
     });
@@ -4526,7 +4530,7 @@
     runClientAction('stop', ids, {}, (err, cancelled) => {
       document.getElementById('btn-client-stop').disabled = clientState.selected.size === 0;
       if (!err && !cancelled) {
-        if (document.getElementById('client-opt-deselect-after').checked) deselectAllClients();
+        deselectAllClients();
         loadClientImages(clientState.page);
       }
     });
@@ -4838,6 +4842,25 @@
     runAction('run_container', ids, {}, (err, cancelled) => {
       document.getElementById('btn-launch').disabled = state.selected.size === 0;
       if (!err && !cancelled) {
+        // Docker lifecycle actions (Launch/Stop/Remove) always deselect --
+        // only Build/Test/Fingerprint respect the "deselect after batch"
+        // checkbox, since those are the ones commonly chained/re-run on the
+        // same selection.
+        deselectAll();
+        loadImages(state.page);
+        loadStats();
+      }
+    });
+  }
+
+  async function stopSelected() {
+    if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
+    const ids = [...state.selected];
+    document.getElementById('btn-stop').disabled = true;
+    runAction('stop', ids, {}, (err, cancelled) => {
+      document.getElementById('btn-stop').disabled = state.selected.size === 0;
+      if (!err && !cancelled) {
+        deselectAll();
         loadImages(state.page);
         loadStats();
       }
@@ -4855,6 +4878,7 @@
     runAction('remove', ids, {}, (err, cancelled) => {
       document.getElementById('btn-remove').disabled = state.selected.size === 0;
       if (!err && !cancelled) {
+        deselectAll();
         loadImages(state.page);
         loadStats();
       }
@@ -7216,11 +7240,7 @@
   document.getElementById('btn-start').addEventListener('click', startActions);
   document.getElementById('btn-launch').addEventListener('click', launchSelected);
   document.getElementById('btn-remove').addEventListener('click', removeSelected);
-  document.getElementById('btn-stop').addEventListener('click', () => {
-    const ids = [...state.selected];
-    const opts = {};
-    runAction('stop', ids, opts);
-  });
+  document.getElementById('btn-stop').addEventListener('click', stopSelected);
   document.getElementById('btn-mark-success').addEventListener('click', markSuccess);
   document.getElementById('mnu-ignore').addEventListener('click', ignoreSelected);
 
