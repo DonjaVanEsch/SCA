@@ -14,337 +14,404 @@
         {
           "nr": "1.31",
           "release_date": "2018-12-06",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: oldest tracked rustc (Docker floor) + edition 2018 + lowest MSRV floor (Rocket 0.4/Iron 0.6/warp 0.1/ring 0.16/bcrypt 0.5+0.10/argon2 0.1+0.3/rust-crypto 0.2)"
         },
         {
           "nr": "1.32",
           "release_date": "2019-01-17",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.33",
           "release_date": "2019-02-28",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.34",
           "release_date": "2019-04-11",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.35",
           "release_date": "2019-05-23",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.36",
           "release_date": "2019-07-04",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: sodiumoxide 0.2"
         },
         {
           "nr": "1.37",
           "release_date": "2019-08-15",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.38",
           "release_date": "2019-09-26",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.39",
           "release_date": "2019-11-07",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: warp 0.2"
         },
         {
           "nr": "1.40",
           "release_date": "2019-12-19",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.41",
           "release_date": "2020-01-30",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: ed25519-dalek 1"
         },
         {
           "nr": "1.42",
           "release_date": "2020-03-12",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: actix-web 3"
         },
         {
           "nr": "1.43",
           "release_date": "2020-04-23",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.44",
           "release_date": "2020-06-04",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.45",
           "release_date": "2020-07-16",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: warp 0.3"
         },
         {
           "nr": "1.46",
           "release_date": "2020-08-27",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.47",
           "release_date": "2020-10-08",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.48",
           "release_date": "2020-11-19",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.49",
           "release_date": "2020-12-31",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.50",
           "release_date": "2021-02-11",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.51",
           "release_date": "2021-03-25",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.52",
           "release_date": "2021-05-06",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.53",
           "release_date": "2021-06-17",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.54",
           "release_date": "2021-07-29",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: actix-web 4"
         },
         {
           "nr": "1.55",
           "release_date": "2021-09-09",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: Debian codename transition to bullseye (confirmed live)"
         },
         {
           "nr": "1.56",
           "release_date": "2021-10-21",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: edition 2021 + MSRV floor: rsa 0.8"
         },
         {
           "nr": "1.57",
           "release_date": "2021-12-02",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.58",
           "release_date": "2022-01-13",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.59",
           "release_date": "2022-02-24",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.60",
           "release_date": "2022-04-07",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: ed25519-dalek 2"
         },
         {
           "nr": "1.61",
           "release_date": "2022-05-19",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: ring 0.17"
         },
         {
           "nr": "1.62",
           "release_date": "2022-06-30",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.63",
           "release_date": "2022-08-11",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: bcrypt 0.15, openssl 0.10, axum 0.6"
         },
         {
           "nr": "1.64",
           "release_date": "2022-09-22",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: Rocket 0.5"
         },
         {
           "nr": "1.65",
           "release_date": "2022-11-03",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: argon2 0.5, rsa 0.9"
         },
         {
           "nr": "1.66",
           "release_date": "2022-12-15",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.67",
           "release_date": "2023-01-26",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.68",
           "release_date": "2023-03-09",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.69",
           "release_date": "2023-04-20",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: Debian codename transition to bookworm (confirmed live)"
         },
         {
           "nr": "1.70",
           "release_date": "2023-06-01",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: axum 0.7"
         },
         {
           "nr": "1.71",
           "release_date": "2023-07-13",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.72",
           "release_date": "2023-08-24",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.73",
           "release_date": "2023-10-05",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.74",
           "release_date": "2023-11-16",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.75",
           "release_date": "2023-12-28",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: MSRV floor: warp 0.4"
         },
         {
           "nr": "1.76",
           "release_date": "2024-02-08",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.77",
           "release_date": "2024-03-21",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.78",
           "release_date": "2024-05-02",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.79",
           "release_date": "2024-06-13",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.80",
           "release_date": "2024-07-25",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.81",
           "release_date": "2024-09-05",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.82",
           "release_date": "2024-10-17",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.83",
           "release_date": "2024-11-28",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.84",
           "release_date": "2025-01-09",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.85",
           "release_date": "2025-02-20",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: edition 2024 stabilized here (also the version where crates.io's own ecosystem drift toward edition2024 transitive deps first becomes relevant -- see lang_rust.py's MSRV-repair mechanism)"
         },
         {
           "nr": "1.86",
           "release_date": "2025-04-04",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.87",
           "release_date": "2025-05-16",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.88",
           "release_date": "2025-06-28",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.89",
           "release_date": "2025-08-10",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.90",
           "release_date": "2025-09-21",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: Debian codename transition to trixie (era estimate, not individually verified live)"
         },
         {
           "nr": "1.91",
           "release_date": "2025-11-03",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.92",
           "release_date": "2025-12-16",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.93",
           "release_date": "2026-01-27",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.94",
           "release_date": "2026-03-11",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.95",
           "release_date": "2026-04-23",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.96",
           "release_date": "2026-06-04",
-          "include": true
+          "include": false,
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
         },
         {
           "nr": "1.97",
           "release_date": "2026-07-17",
-          "include": true
+          "include": true,
+          "notes": "Kept in sparse coverage: newest tracked rustc release"
         }
       ],
       "frameworks": [
