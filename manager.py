@@ -518,6 +518,11 @@ _LANGUAGE_CACHE_ID = {
     "python": "pip-cache",
     "php":    "composer-cache",
     "dotnet": "nuget-cache",
+    # Rust's Dockerfile mounts two caches (cargo-registry-cache +
+    # cargo-git-cache -- see lang_rust.py's make_dockerfile), but this
+    # warm-up check only needs one representative id; the git cache is
+    # rarely exercised since none of this registry's crates are git deps.
+    "rust":   "cargo-registry-cache",
 }
 
 

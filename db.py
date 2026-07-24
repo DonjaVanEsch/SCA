@@ -41,6 +41,7 @@ _REGISTRY_FILES = [
     SCRIPTS_DIR / "registry java.json",
     SCRIPTS_DIR / "registry dotnet.json",
     SCRIPTS_DIR / "registry php.json",
+    SCRIPTS_DIR / "registry rust.json",
 ]
 
 
