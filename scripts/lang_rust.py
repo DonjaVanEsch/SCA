@@ -248,7 +248,14 @@ LIB_META = {
         # implementing the `digest` crate's traits, so the caller is
         # expected to depend on a hash crate (sha2) directly rather than
         # go through rsa's re-export -- added explicitly here instead.
-        "crate": "rsa", "sys_deps": [], "extra_deps": 'rand = "0.8"\nsha2 = "0.10"\n',
+        # `SigningKey::<Sha256>::new()` additionally requires `Sha256:
+        # AssociatedOid` (from the `digest`/`const-oid` machinery) --
+        # confirmed live via a real build failure (E0599, "trait bounds
+        # were not satisfied ... AssociatedOid") that sha2's default
+        # features do NOT provide this; its own "oid" feature (which just
+        # enables `digest/oid`) does, per sha2's crates.io feature list.
+        "crate": "rsa", "sys_deps": [],
+        "extra_deps": 'rand = "0.8"\nsha2 = { version = "0.10", features = ["oid"] }\n',
         "imports": "use rsa::{RsaPrivateKey, RsaPublicKey};\nuse rsa::pkcs1v15::SigningKey;\nuse rsa::signature::{Keypair, RandomizedSigner, SignatureEncoding};\nuse sha2::Sha256;",
         "touch": (
             'let mut rng = rand::thread_rng();\n'
@@ -604,6 +611,7 @@ _SERDE_CORE_FLOOR = (1, 71)     # syn "^2.0.81"+/"^3" wall serde_core drags in
 _TINYVEC_PARSE_FLOOR = (1, 60)  # namespaced-features manifest syntax
 _EDITION2021_FLOOR = (1, 56)    # quote/proc-macro2's edition="2021" switch
 _SUBTLE_COHERENCE_FLOOR = (1, 41)  # rebalance-coherence orphan-rule relaxation
+_BASE64CT_EDITION2024_FLOOR = (1, 85)  # base64ct 1.8.0+ ships edition="2024"
 
 
 def _ver_tuple2(v: str) -> tuple:
@@ -663,6 +671,19 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         )
     if target_t < _SUBTLE_COHERENCE_FLOOR:
         ecosystem_caps += 'subtle = ">=2, <2.3"\n'
+    if target_t < _BASE64CT_EDITION2024_FLOOR:
+        # base64ct is a transitive hub crate pulled in by both rsa
+        # (rsa -> pkcs1/pkcs8 -> der -> base64ct) and argon2 (via
+        # password-hash) -- confirmed live via crates.io version metadata
+        # that 1.8.0+ switched to edition="2024" (rust_version 1.85), while
+        # msrv_repair.py's own metadata-snapshot repair loop can end up
+        # resolving an OLDER, floor-compliant base64ct at pin time while the
+        # real `cargo build --release` (a separate, unpinned re-resolution --
+        # only Cargo.toml, not Cargo.lock, crosses the lockgen->builder stage
+        # boundary) picks the newest semver-compatible release instead.
+        # Capping it directly in Cargo.toml removes that gap: every cargo
+        # invocation, pinning or real build, then sees the same constraint.
+        ecosystem_caps += 'base64ct = ">=1, <1.8.0"\n'
 
     return (
         "[package]\n"
@@ -1105,9 +1126,28 @@ def repair_loop():
                                 capture_output=True, text=True)
             if r.returncode == 0:
                 print(f"  downgraded {name} {version} (individual fallback) -> {replacement}")
-            else:
-                print(f"  ! {name} {version} rejected even individually, giving up: {r.stderr[-200:]}")
-                given_up.add((name, version))
+                continue
+            if "did not match any packages" in r.stderr:
+                # A cascade fix schedules a parent-downgrade + child-downgrade
+                # pair together (see _cascade_fix) that must move as one unit
+                # -- but this per-crate fallback applies them SEQUENTIALLY, so
+                # if the parent's own update runs first, it can re-resolve the
+                # child crate away from its old version as a side effect,
+                # BEFORE the child's own turn in this same loop. Confirmed
+                # live (syn 2.0.32, scheduled alongside its parent's
+                # downgrade): by the time syn's own `cargo update -p
+                # syn@2.0.32` ran, syn was already gone from the graph, so
+                # cargo rejected the PkgId outright with "did not match any
+                # packages" -- a false failure, not a real one. Check whether
+                # the crate is still resolved at the stale version at all
+                # before giving up on it.
+                check_meta = _cargo_metadata()
+                still_present = check_meta is not None and (name, version) in _resolved_pkgs(check_meta)
+                if not still_present:
+                    print(f"  {name} {version} already resolved away by a co-scheduled fix -- nothing to do")
+                    continue
+            print(f"  ! {name} {version} rejected even individually, giving up: {r.stderr[-200:]}")
+            given_up.add((name, version))
     print("gave up after 12 rounds (may still have incompatible crates)")
 
 def dep_line(name, version, orig_value):
