@@ -276,8 +276,28 @@ LIB_META = {
         "touch": 'let touch_result = hash("pqc-sca probe", 4).expect("bcrypt hash");',
     },
     "argon2": {
-        "crate": "argon2", "sys_deps": [], "extra_deps": 'password-hash = "0.5"\n',
-        "imports": "use argon2::Argon2;\nuse argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};",
+        # No `password-hash` extra_dep: `argon2::password_hash::...`
+        # already resolves SaltString/PasswordHasher via argon2's OWN
+        # re-export, so an independently pinned `password-hash = "X"` was
+        # both unnecessary AND actively harmful (confirmed live): it
+        # pinned a version for the NEWEST API era regardless of which
+        # argon2 bucket was in use, so for "0.1" specifically it added an
+        # incompatible SECOND copy of the crate MSRV repair could never
+        # reconcile with the one argon2 0.1.x actually needs. All 3
+        # tracked buckets enable "password-hash" as a DEFAULT feature on
+        # their own, confirmed via crates.io.
+        #
+        # `rand_core` IS pinned explicitly, though (confirmed live this
+        # one's needed): `argon2::password_hash::rand_core::OsRng` doesn't
+        # reliably resolve via the same re-export chain -- argon2's
+        # default "rand" feature maps to password-hash's OWN "rand_core"
+        # Cargo feature (gating internal functionality), not a guaranteed
+        # public re-export of the whole rand_core module for downstream
+        # use. rand_core itself is a small, stable, near-universally
+        # transitively-present crate already, so depending on it directly
+        # is simpler and more reliable than threading a re-export chain.
+        "crate": "argon2", "sys_deps": [], "extra_deps": 'rand_core = { version = "0.6", features = ["getrandom"] }\n',
+        "imports": "use argon2::Argon2;\nuse argon2::password_hash::{PasswordHasher, SaltString};\nuse rand_core::OsRng;",
         "touch": (
             'let salt = SaltString::generate(&mut OsRng);\n'
             '    let touch_result = Argon2::default()\n'
@@ -311,6 +331,27 @@ LIB_META = {
 # lib name match.
 _LIB_EXTERN_NAME = {"rust-crypto": "crypto"}
 
+# argon2's registry buckets span a REAL PasswordHasher API break, the same
+# class of thing _fw_kind() already handles for frameworks -- confirmed via
+# direct source inspection (crates.io download + grep, not assumed):
+# argon2 0.1.x's `hash_password` takes 5 args (password, alg_id, version_id,
+# params, salt) and needs `SaltString::as_salt()` (password-hash 0.1.x has
+# no `impl Into<Salt> for &SaltString`); 0.3.x/0.5.x collapsed this to the
+# 2-arg (password, salt) form LIB_META's default "touch" string already
+# targets. Confirmed live: building the "0.1" bucket with the 0.3/0.5-style
+# 2-arg call fails with a real E0061 arg-count mismatch, not a MSRV issue.
+_ARGON2_LEGACY_TOUCH = (
+    'let salt = SaltString::generate(&mut OsRng);\n'
+    '    let touch_result = Argon2::default()\n'
+    '        .hash_password(b"pqc-sca probe", None, None, argon2::Params::default(), salt.as_salt())\n'
+    '        .expect("argon2 hash")\n'
+    '        .to_string();'
+)
+
+
+def _argon2_touch(lib_major: str) -> str:
+    return _ARGON2_LEGACY_TOUCH if lib_major == "0.1" else LIB_META["argon2"]["touch"]
+
 
 # ── App template (main.rs) ────────────────────────────────────────────────────
 # A small hand-rolled hex encoder -- std has no built-in one, and pulling in
@@ -338,11 +379,11 @@ def _version_json_expr(fw_name: str, lib_name: str) -> str:
     )
 
 
-def make_main_rs(fw_name: str, fw_major: str, lib_name: str) -> str:
+def make_main_rs(fw_name: str, fw_major: str, lib_name: str, lib_major: str) -> str:
     kind = _fw_kind(fw_name, fw_major)
     meta = LIB_META[lib_name]
     imports = meta["imports"]
-    touch = meta["touch"]
+    touch = _argon2_touch(lib_major) if lib_name == "argon2" else meta["touch"]
     version_json = _version_json_expr(fw_name, lib_name)
 
     if kind == "rocket-nightly":
@@ -520,8 +561,89 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         f"{extra_fw_deps}"
         f'{lib_crate} = "{lib_ver}"\n'
         f"{extra_lib_deps}"
-        'serde = { version = "1", features = ["derive"] }\n'
-        'serde_json = "1"\n'
+        # No template uses #[derive(Serialize)]/#[derive(Deserialize)] --
+        # every response is built via serde_json::json!() (a macro that
+        # constructs a serde_json::Value directly, which has its own
+        # hand-written Serialize impl, not a derived one) -- so serde's
+        # "derive" feature is genuinely unused, and removing it was the
+        # first fix here. NOT sufficient alone, though (confirmed live):
+        # serde 1.0.220 split out an internal `serde_core` crate that
+        # unconditionally (optional=false) depends on serde_derive -> syn
+        # regardless of whether the "derive" feature is requested at all
+        # -- serde 1.0.219 and older predate this split and treat
+        # serde_derive as genuinely optional again (confirmed live via
+        # crates.io's own dependency metadata: serde_derive is
+        # optional=true for serde 1.0.219, optional=false once serde_core
+        # exists). Pinning below the split avoids the whole serde_derive
+        # -> syn chain entirely for a dependency nothing here calls -- far
+        # more robust than repairing that chain's own MSRV/cargo-version
+        # gates release by release (serde_derive's LATEST release requires
+        # syn "^3", itself requiring rustc>=1.71 with no older release at
+        # all; stepping back to "^2.0.81"+ still requires cargo>=1.60 for
+        # syn's own namespaced-features manifest syntax; only "^1", i.e.
+        # serde_derive <1.0.160, is genuinely old-syntax-compatible).
+        # serde_json independently gained its OWN unconditional serde_core
+        # dependency starting at 1.0.144 (confirmed live) -- capping serde
+        # alone isn't enough, since serde_json pulls in serde_core (and
+        # thus serde_derive -> syn) on its own regardless of which serde
+        # version is used. serde_json also picked up `zmij` (a small
+        # float-formatting helper) starting at 1.0.148, itself another
+        # rustc>=1.71 floor -- capping below 1.0.144 avoids both at once.
+        # Capping serde/serde_json alone doesn't fully close this off:
+        # serde's own requirement on serde_derive is just a wide-open "^1"
+        # (any 1.x satisfies it), so cargo is still free to resolve
+        # serde_derive to its newest 1.x release (using syn "^2.0.81"+,
+        # itself namespaced-features-syntax that needs cargo>=1.60) even
+        # with serde capped. Confirmed live this specific phantom edge is
+        # ALSO reachable under old (pre-1.60) cargo specifically -- serde's
+        # own published manifest carries a `target = "cfg(any())"` exact
+        # pin on serde_derive that newer cargo correctly evaluates as never
+        # active (confirmed via `cargo metadata`'s own reachability graph),
+        # but older cargo appears to treat differently, resolving it
+        # anyway. Pinning serde_derive directly below its own syn "^1" ->
+        # "^2" switch (1.0.160) sidesteps the ambiguity outright regardless
+        # of which cargo era is doing the resolving.
+        'serde = ">=1, <1.0.220"\n'
+        'serde_json = ">=1, <1.0.144"\n'
+        'serde_derive = ">=1, <1.0.160"\n'
+        # tinyvec (pulled in transitively via unicode-normalization/url/idna,
+        # used by several frameworks' HTTP-parsing dependency chains) is a
+        # SEPARATE instance of the same namespaced-features problem: 1.11.0
+        # already uses `dep:` syntax, and 1.12.0 has a genuine name
+        # collision between a feature and a dependency both called
+        # "schemars" that pre-1.60 cargo can't parse at all (confirmed live
+        # via direct source inspection, not just a build failure). Declares
+        # rust_version=None across its ENTIRE history and edition="2018"
+        # throughout, so this is invisible to the rust_version/edition
+        # floor check entirely -- capping below the first `dep:` usage
+        # sidesteps it the same way the serde family caps do above.
+        'tinyvec = ">=1, <1.11.0"\n'
+        # The core proc-macro trio (proc-macro2/quote/syn) all follow the
+        # SAME pattern: a wide-open "^1" requirement from whatever pulls
+        # them in (syn itself, in this case, now capped to its own "^1"
+        # line via the serde_derive cap above) lets cargo pick the newest
+        # 1.x release by default, and both of these switched from
+        # edition="2018" to edition="2021" partway through their 1.x
+        # history (proc-macro2 at 1.0.66, quote at 1.0.43) -- confirmed
+        # live quote 1.0.47 specifically breaks old cargo's manifest
+        # parser the same way as every other edition2021-vs-old-cargo case
+        # in this file. Capped below both switches as a preventive measure
+        # (this exact combo hit quote's version; proc-macro2's own switch
+        # is the same failure mode waiting to happen for a different combo).
+        'proc-macro2 = ">=1, <1.0.66"\n'
+        'quote = ">=1, <1.0.43"\n'
+        # subtle (constant-time comparisons, pulled in transitively via
+        # password-hash) is a DIFFERENT failure class entirely from
+        # everything above: not a manifest-syntax gate, a genuine SOURCE
+        # CODE language-feature requirement. subtle 2.6.1's
+        # `impl<T> From<CtOption<T>> for Option<T>` needs the "rebalance
+        # coherence" orphan-rule relaxation stabilized in rustc 1.41 --
+        # confirmed live this impl doesn't exist yet in subtle 2.2.1
+        # (2019-11-27, predating rustc 1.41's 2020-01-30 release). subtle
+        # declares NO rust_version across its entire history, so this is
+        # invisible to the floor check by construction, not just an
+        # oversight.
+        'subtle = ">=2, <2.3"\n'
     )
 
 
@@ -703,20 +825,41 @@ def _split_pkg_id(pkg_id):
     return name, version
 
 def _resolved_pkgs(meta):
-    """The exact (name, version) set `cargo metadata --filter-platform`
-    resolves right now -- the SAME call rewrite_pinned_toml() uses to
-    build the final pin list. repair_loop() used to check Cargo.lock
-    (via a regex parse) instead, which is a DIFFERENT resolution snapshot
-    -- confirmed live this let packages slip through uninspected: a
-    cascade fix's own cargo update call re-resolved an unrelated crate
-    (quote) to a fresh version never checked by any later round, and it
-    surfaced in the real build instead (edition2021 on rustc 1.31).
-    Checking against metadata's own view directly closes that gap."""
-    pkgs = []
-    for node in meta["resolve"]["nodes"]:
-        if node["id"].startswith("path+"):
+    """The (name, version) set ACTUALLY REACHABLE from our own crate via
+    active dependency edges -- NOT every node `cargo metadata` lists.
+    `resolve.nodes` is the full closure of everything reachable under ANY
+    feature combination, which can include packages our OWN build never
+    actually activates. Confirmed live this mattered concretely:
+    `serde_core` appeared as a bare node even with no `derive` feature
+    requested anywhere, and blindly pinning it (rewrite_pinned_toml used
+    to do the same raw-node iteration) force-activated its own hard,
+    non-optional dependency on serde_derive -> syn -- recreating the
+    exact wall this whole mechanism exists to avoid. A plain BFS from
+    `resolve.root` over each node's `deps` (which cargo metadata DOES
+    correctly restrict to feature-active edges -- confirmed live via a
+    direct check of `app`'s own reported deps) gives the true reachable
+    set instead."""
+    nodes_by_id = {node["id"]: node for node in meta["resolve"]["nodes"]}
+    root_id = meta["resolve"].get("root")
+    if root_id is None:
+        for node in meta["resolve"]["nodes"]:
+            if node["id"].startswith("path+"):
+                root_id = node["id"]
+                break
+    seen = set()
+    stack = [root_id] if root_id else []
+    while stack:
+        node_id = stack.pop()
+        if node_id in seen or node_id not in nodes_by_id:
             continue
-        pkgs.append(_split_pkg_id(node["id"]))
+        seen.add(node_id)
+        for dep in nodes_by_id[node_id].get("deps", []):
+            stack.append(dep.get("pkg", ""))
+    pkgs = []
+    for node_id in seen:
+        if node_id.startswith("path+"):
+            continue
+        pkgs.append(_split_pkg_id(node_id))
     return pkgs
 
 def _dependents_of(meta, target_name):
@@ -736,9 +879,21 @@ def _dependents_of(meta, target_name):
                 parents.append((pname, pversion))
     return parents
 
+_dep_req_cache = {}
+
 def _crate_dep_req(crate, version, dep_name):
-    """The requirement string `crate`@`version` places on `dep_name`, or
-    None if it doesn't depend on it at all."""
+    """(found, req): found=False means the API call itself failed
+    (network/rate-limit) -- an UNKNOWN result, not evidence either way.
+    found=True + req=None means the fetch succeeded and CONFIRMED
+    `crate`@`version` does not depend on `dep_name` at all -- the best
+    possible outcome for a cascade fix (see _cascade_fix), since an older
+    parent that simply doesn't pull in the problem child eliminates it
+    entirely, it doesn't just relax its requirement. Cached: cascade
+    attempts revisit the same (crate, version, dep) triples repeatedly
+    across parents/rounds."""
+    key = (crate, version, dep_name)
+    if key in _dep_req_cache:
+        return _dep_req_cache[key]
     req_url = urllib.request.Request(
         f"https://crates.io/api/v1/crates/{crate}/{version}/dependencies",
         headers={"User-Agent": UA},
@@ -747,11 +902,15 @@ def _crate_dep_req(crate, version, dep_name):
         with urllib.request.urlopen(req_url, timeout=20) as r:
             data = json.load(r)
     except Exception:
-        return None
+        return (False, None)  # NOT cached -- a transient failure should
+        # not permanently poison an otherwise-good candidate.
+    result = (True, None)
     for d in data.get("dependencies", []):
         if d["crate_id"] == dep_name:
-            return d.get("req")
-    return None
+            result = (True, d.get("req"))
+            break
+    _dep_req_cache[key] = result
+    return result
 
 def _cascade_fix(name, version, meta):
     """When `name`@`version` has NO compatible candidate in its own
@@ -764,21 +923,46 @@ def _cascade_fix(name, version, meta):
     Looks for a same-semver-class OLDER release of a direct parent whose
     OWN requirement on `name` opens up a compatible candidate, and returns
     both substitutions together (they must move as one unit) so the
-    caller can batch them in the same round."""
+    caller can batch them in the same round.
+
+    Also handles the even better case (confirmed live: serde_core, a
+    recent internal split out of serde with no old-rustc-compatible
+    release at all): an older parent candidate that doesn't depend on the
+    problem crate AT ALL. An earlier version of this function treated
+    that (`req` falsy) as "not applicable, keep looking" -- exactly
+    backwards, since a parent that drops the dependency entirely is a
+    STRICTLY BETTER fix than merely relaxing it, and needs no further
+    substitution for the child at all. Candidates are capped at 25 per
+    parent to bound worst-case latency (each check is a live crates.io
+    lookup) -- confirmed live an earlier, uncapped version of this loop
+    could run for 20+ minutes against a crate with a long version history."""
     if meta is None:
         return None
     for pname, pversion in _dependents_of(meta, name):
-        for p_candidate in candidate_order(pname, pversion):
-            req = _crate_dep_req(pname, p_candidate, name)
-            if not req:
-                continue
+        candidates = candidate_order(pname, pversion)[:25]
+        # Prefetch every candidate's dep-req in parallel -- confirmed live
+        # doing this sequentially (one HTTP round-trip per candidate,
+        # tried in strict order) was the actual cause of a 20+ minute
+        # hang. Order is still respected below (first match wins); this
+        # just removes the network latency between checks.
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            list(pool.map(lambda c: _crate_dep_req(pname, c, name), candidates))
+        for p_candidate in candidates:
+            found, req = _crate_dep_req(pname, p_candidate, name)
+            if not found:
+                continue  # transient failure -- try the next candidate
+            if req is None:
+                return [(pname, pversion, p_candidate)]
             bare_req = req.lstrip("^")
-            child_candidates = [
-                v["num"] for v in fetch_versions(name)
-                if not v.get("yanked")
-                and caret_compatible(bare_req, v["num"])
-                and effective_floor(v) <= TARGET_T
-            ]
+            try:
+                child_candidates = [
+                    v["num"] for v in fetch_versions(name)
+                    if not v.get("yanked")
+                    and caret_compatible(bare_req, v["num"])
+                    and effective_floor(v) <= TARGET_T
+                ]
+            except ValueError:
+                continue
             if child_candidates:
                 return [(pname, pversion, p_candidate), (name, version, child_candidates[0])]
     return None
@@ -886,6 +1070,9 @@ def dep_line(name, version, orig_value):
             return f'{name} = {{ version = "={version}", features = [{feat_str}] }}'
     return f'{name} = "={version}"'
 
+def _orig_req_string(orig_value):
+    return orig_value.get("version", "") if isinstance(orig_value, dict) else orig_value
+
 def rewrite_pinned_toml():
     with open("Cargo.toml", "rb") as f:
         data = tomllib.load(f)
@@ -899,12 +1086,7 @@ def rewrite_pinned_toml():
     ).stdout)
 
     by_name = defaultdict(set)
-    for node in meta["resolve"]["nodes"]:
-        pkg_id = node["id"]
-        if pkg_id.startswith("path+"):
-            continue
-        after_hash = pkg_id.rsplit("#", 1)[-1]
-        name, version = after_hash.rsplit("@", 1)
+    for name, version in _resolved_pkgs(meta):
         by_name[name].add(version)
 
     lines = []
@@ -917,8 +1099,25 @@ def rewrite_pinned_toml():
             else:
                 lines.append(f'{name} = "={v}"')
         else:
+            # Multiple incompatible majors resolved for one crate name --
+            # if it's one of OUR OWN direct deps, the "protected" (feature-
+            # preserving) treatment must go to whichever candidate ACTUALLY
+            # satisfies our own declared requirement, not just whichever
+            # sorts first. Confirmed live this was a real bug: for
+            # rand_core resolved at both 0.3.1/0.4.2/0.6.4 (pulled in by
+            # unrelated old crates), the alphabetically-first 0.3.1 got our
+            # own features=["getrandom"] applied to it (wrong -- we asked
+            # for "0.6"), while the ACTUAL 0.6.4 we needed got aliased away
+            # without that feature, breaking the OsRng import entirely.
+            protected_idx = None
+            if name in protected:
+                req = _orig_req_string(orig_deps[name])
+                for idx, v in enumerate(versions):
+                    if req and caret_compatible(req, v):
+                        protected_idx = idx
+                        break
             for i, v in enumerate(versions):
-                if name in protected and i == 0:
+                if i == protected_idx:
                     lines.append(dep_line(name, v, orig_deps[name]))
                 else:
                     alias = f"{name.replace('-', '_')}_pin{i}"
@@ -1076,7 +1275,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     (out / "src").mkdir(exist_ok=True)
 
     (out / "src" / "main.rs").write_text(
-        make_main_rs(fw_name, fw_major, lib_name), encoding="utf-8"
+        make_main_rs(fw_name, fw_major, lib_name, lib_ver), encoding="utf-8"
     )
     (out / "Cargo.toml").write_text(
         make_cargo_toml(fw_name, fw_major, fw_resolved, lib_name, lib_resolved),

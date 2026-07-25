@@ -14,8 +14,8 @@
         {
           "nr": "1.31",
           "release_date": "2018-12-06",
-          "include": false,
-          "notes": "Excluded 2026-07-25 after extensive real-build investigation: rustc 1.31 (2018-12-06) was originally kept as this registry's oldest Docker-floor anchor + several frameworks/libs' lowest MSRV floor (Rocket 0.4, Iron 0.6, warp 0.1, ring 0.16, bcrypt 0.5/0.10, argon2 0.1/0.3, rust-crypto 0.2). In practice, building FRESH against today's live crates.io for this old a target increasingly hits real, hard-to-resolve ecosystem drift: widely-used transitive crates (syn/serde_derive/quote among them) have bumped past what 1.31 can compile, sometimes in multi-level lockstep chains a straightforward MSRV-aware repair can't unwind (confirmed live: serde_derive bumping to syn 3.x, itself requiring quote/serde to move in lockstep too -- see lang_rust.py's repair mechanism and its documented limits). Realistically, any REAL deployment that actually shipped on rustc 1.31 would have used a Cargo.lock frozen around 2018-2019, not resolved fresh against today's crates.io -- so testing \"build fresh against 1.31 today\" has low research value and mostly exercises ecosystem drift, not the framework/library combo actually being studied. Coverage is unaffected: every (framework, library) pair whose floor was exactly 1.31 remains testable at 1.36 (the next included version; all compatibility ranges in this registry are open-ended floor..latest, so a higher version always still satisfies a lower floor). If a FUTURE language addition hits a similarly ancient tracked floor, expect the same class of live ecosystem-drift wall and apply the same reasoning before sinking more effort into a full resolver-level fix."
+          "include": true,
+          "notes": "Reinstated 2026-07-25: originally excluded after hitting a syn/serde_derive/proc-macro2/quote resolution wall that appeared specific to very old rustc -- confirmed via direct testing at rustc 1.36 that this was actually a GENERAL ecosystem MSRV/manifest-syntax drift problem (crates.io's live serde/serde_derive/serde_json/quote/proc-macro2/tinyvec releases keep climbing past what old rustc can parse), now fixed generally in lang_rust.py via explicit version caps on those specific crates, not something unique to 1.31."
         },
         {
           "nr": "1.32",
@@ -1529,17 +1529,6 @@
               "nr": "0.1",
               "release_date": "2021-01-29",
               "compatibility": [
-                "1.31",
-                "1.32",
-                "1.33",
-                "1.34",
-                "1.35",
-                "1.36",
-                "1.37",
-                "1.38",
-                "1.39",
-                "1.40",
-                "1.41",
                 "1.42",
                 "1.43",
                 "1.44",
@@ -1588,25 +1577,21 @@
                 "1.87",
                 "1.88",
                 "1.89",
-                "1.90"
+                "1.90",
+                "1.91",
+                "1.92",
+                "1.93",
+                "1.94",
+                "1.95",
+                "1.96",
+                "1.97"
               ],
-              "notes": "Confirmed release date via crates.io."
+              "notes": "Confirmed release date via crates.io. Floor corrected 2026-07-25 from 1.31 to 1.42: confirmed live that base64ct (a hard, non-optional transitive dependency via password-hash, needed by every argon2 bucket) has used a subslice-pattern language feature requiring rustc>=1.42 since its first-ever published release (2021-03-17) -- a genuine, permanent ecosystem floor, not fixable via version pinning."
             },
             {
               "nr": "0.3",
               "release_date": "2021-08-28",
               "compatibility": [
-                "1.31",
-                "1.32",
-                "1.33",
-                "1.34",
-                "1.35",
-                "1.36",
-                "1.37",
-                "1.38",
-                "1.39",
-                "1.40",
-                "1.41",
                 "1.42",
                 "1.43",
                 "1.44",
@@ -1655,9 +1640,16 @@
                 "1.87",
                 "1.88",
                 "1.89",
-                "1.90"
+                "1.90",
+                "1.91",
+                "1.92",
+                "1.93",
+                "1.94",
+                "1.95",
+                "1.96",
+                "1.97"
               ],
-              "notes": "Confirmed release date via crates.io."
+              "notes": "Confirmed release date via crates.io. Floor corrected 2026-07-25 from 1.31 to 1.42: confirmed live that base64ct (a hard, non-optional transitive dependency via password-hash, needed by every argon2 bucket) has used a subslice-pattern language feature requiring rustc>=1.42 since its first-ever published release (2021-03-17) -- a genuine, permanent ecosystem floor, not fixable via version pinning."
             },
             {
               "nr": "0.5",
