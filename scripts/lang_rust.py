@@ -241,8 +241,15 @@ LIB_META = {
         ),
     },
     "rsa": {
-        "crate": "rsa", "sys_deps": [], "extra_deps": 'rand = "0.8"\n',
-        "imports": "use rsa::{RsaPrivateKey, RsaPublicKey};\nuse rsa::pkcs1v15::SigningKey;\nuse rsa::signature::{Keypair, RandomizedSigner, SignatureEncoding};\nuse rsa::sha2::Sha256;",
+        # rsa's own re-export of "sha2" (used as `rsa::sha2::Sha256`) has
+        # been removed from its current releases -- confirmed live via
+        # crates.io: rsa 0.9.9's own feature list no longer has a "sha2"
+        # entry at all. `SigningKey<D>` is generic over any hash type
+        # implementing the `digest` crate's traits, so the caller is
+        # expected to depend on a hash crate (sha2) directly rather than
+        # go through rsa's re-export -- added explicitly here instead.
+        "crate": "rsa", "sys_deps": [], "extra_deps": 'rand = "0.8"\nsha2 = "0.10"\n',
+        "imports": "use rsa::{RsaPrivateKey, RsaPublicKey};\nuse rsa::pkcs1v15::SigningKey;\nuse rsa::signature::{Keypair, RandomizedSigner, SignatureEncoding};\nuse sha2::Sha256;",
         "touch": (
             'let mut rng = rand::thread_rng();\n'
             '    let priv_key = RsaPrivateKey::new(&mut rng, 512).expect("rsa keygen");\n'
@@ -261,7 +268,15 @@ LIB_META = {
         ),
     },
     "sodiumoxide": {
-        "crate": "sodiumoxide", "sys_deps": ["libsodium-dev"], "extra_deps": "",
+        # libsodium-sys's build.rs (confirmed via direct source inspection)
+        # only tries pkg-config when EITHER its own "use-pkg-config" crate
+        # feature is enabled OR the SODIUM_USE_PKG_CONFIG env var is set --
+        # installing the pkg-config system package alone changes nothing,
+        # it still falls back to compiling libsodium from source (which
+        # then fails without a full autotools/make toolchain). "pkg-config"
+        # added to sys_deps here for the TOOL; the env var is set in
+        # make_dockerfile (see _LIB_BUILD_ENV) to actually activate it.
+        "crate": "sodiumoxide", "sys_deps": ["libsodium-dev", "pkg-config"], "extra_deps": "",
         "imports": "use sodiumoxide::crypto::sign;",
         "touch": (
             'sodiumoxide::init().ok();\n'
@@ -353,6 +368,39 @@ def _argon2_touch(lib_major: str) -> str:
     return _ARGON2_LEGACY_TOUCH if lib_major == "0.1" else LIB_META["argon2"]["touch"]
 
 
+# ed25519-dalek 2.0 renamed its whole signing-key API: 1.x's `Keypair`
+# (`Keypair::generate(&mut rng) -> Keypair`, `Signer` impl'd for `Keypair`)
+# became 2.x's `SigningKey` (`SigningKey::generate`, `Signer` impl'd for
+# `SigningKey` instead) -- confirmed via direct source inspection of the
+# real 1.0.1 release, not assumed. LIB_META's default imports/touch already
+# target the 2.x shape; bucket "1" needs the old one.
+_ED25519_DALEK_1_IMPORTS = "use ed25519_dalek::{Keypair, Signer};\nuse rand::rngs::OsRng;"
+_ED25519_DALEK_1_TOUCH = (
+    'let keypair = Keypair::generate(&mut OsRng);\n'
+    '    let signature = keypair.sign(b"pqc-sca probe");\n'
+    '    let touch_result = format!("ed25519:{}", hex_encode(&signature.to_bytes()));'
+)
+
+
+def _ed25519_dalek_imports(lib_major: str) -> str:
+    return _ED25519_DALEK_1_IMPORTS if lib_major == "1" else LIB_META["ed25519-dalek"]["imports"]
+
+
+def _ed25519_dalek_touch(lib_major: str) -> str:
+    return _ED25519_DALEK_1_TOUCH if lib_major == "1" else LIB_META["ed25519-dalek"]["touch"]
+
+
+def _ed25519_dalek_extra_deps(lib_major: str) -> str:
+    # ed25519-dalek "1" needs `rand ^0.7` (confirmed via crates.io
+    # dependency metadata: rand_core ^0.5 transitively) -- NOT "^0.8" like
+    # bucket "2". Using rand 0.8's `OsRng` with bucket "1"'s
+    # `Keypair::generate<R: CryptoRng + RngCore>` fails with a real trait
+    # mismatch (rand_core 0.5's CryptoRng/RngCore are distinct types from
+    # rand_core 0.6's, even though same-named) -- confirmed live via
+    # E0277 "trait bound OsRng: CryptoRng is not satisfied".
+    return 'rand = "0.7"\n' if lib_major == "1" else LIB_META["ed25519-dalek"]["extra_deps"]
+
+
 # ── App template (main.rs) ────────────────────────────────────────────────────
 # A small hand-rolled hex encoder -- std has no built-in one, and pulling in
 # yet another crate just for this would add an extra, version-sensitive
@@ -382,8 +430,15 @@ def _version_json_expr(fw_name: str, lib_name: str) -> str:
 def make_main_rs(fw_name: str, fw_major: str, lib_name: str, lib_major: str) -> str:
     kind = _fw_kind(fw_name, fw_major)
     meta = LIB_META[lib_name]
-    imports = meta["imports"]
-    touch = _argon2_touch(lib_major) if lib_name == "argon2" else meta["touch"]
+    if lib_name == "argon2":
+        imports = meta["imports"]
+        touch = _argon2_touch(lib_major)
+    elif lib_name == "ed25519-dalek":
+        imports = _ed25519_dalek_imports(lib_major)
+        touch = _ed25519_dalek_touch(lib_major)
+    else:
+        imports = meta["imports"]
+        touch = meta["touch"]
     version_json = _version_json_expr(fw_name, lib_name)
 
     if kind == "rocket-nightly":
@@ -533,12 +588,39 @@ def make_main_rs(fw_name: str, fw_major: str, lib_name: str, lib_major: str) -> 
     raise ValueError(f"Unknown framework kind: {kind}")
 
 
+# Every ecosystem-drift cap below exists ONLY because a specific crate's
+# NEWEST release needs a rustc newer than some old target the registry
+# still exercises. Confirmed live (2026-07-25) that applying them
+# UNCONDITIONALLY was itself a real bug: at a NEW target (e.g. 1.55, or
+# any target above these thresholds), the caps aren't just unneeded, they
+# actively CONFLICT with legitimate exact-version requirements from other
+# real dependencies -- e.g. digest 0.10.3 requires `subtle = "=2.4"`
+# exactly, which a blanket `subtle < 2.3` cap makes unsatisfiable even
+# though rustc 1.55 has no problem at all compiling subtle 2.4. Each cap
+# is therefore gated on the EFFECTIVE msrv target actually being old
+# enough to need it -- see each threshold's own comment for what it was
+# confirmed against.
+_SERDE_CORE_FLOOR = (1, 71)     # syn "^2.0.81"+/"^3" wall serde_core drags in
+_TINYVEC_PARSE_FLOOR = (1, 60)  # namespaced-features manifest syntax
+_EDITION2021_FLOOR = (1, 56)    # quote/proc-macro2's edition="2021" switch
+_SUBTLE_COHERENCE_FLOOR = (1, 41)  # rebalance-coherence orphan-rule relaxation
+
+
+def _ver_tuple2(v: str) -> tuple:
+    parts = v.split(".")
+    return tuple(int(p) for p in parts[:2])
+
+
 def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
-                    lib_name: str, lib_ver: str) -> str:
+                    lib_name: str, lib_ver: str, msrv_target: str, lib_major: str) -> str:
     kind = _fw_kind(fw_name, fw_major)
     fw_crate = _FW_PACKAGE[fw_name]
     lib_crate = LIB_META[lib_name]["crate"]
-    extra_lib_deps = LIB_META[lib_name]["extra_deps"]
+    if lib_name == "ed25519-dalek":
+        extra_lib_deps = _ed25519_dalek_extra_deps(lib_major)
+    else:
+        extra_lib_deps = LIB_META[lib_name]["extra_deps"]
+    target_t = _ver_tuple2(msrv_target)
 
     if kind == "rocket-stable":
         fw_dep = f'{fw_crate} = {{ version = "{fw_ver}", features = ["json"] }}\n'
@@ -550,6 +632,37 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         extra_fw_deps = 'tokio = { version = "1", features = ["full"] }\n'
     elif kind == "iron":
         extra_fw_deps = 'router = "0.6"\n'
+
+    # serde_json is a BASE dependency every template needs (for its own
+    # serde_json::json!() calls) regardless of target -- confirmed live as
+    # a real regression: an earlier version of this function only ever
+    # emitted a serde_json line INSIDE the conditional cap block, so for
+    # any target >= _SERDE_CORE_FLOOR (no cap needed) serde_json was never
+    # declared as a dependency AT ALL, failing with "can't find crate for
+    # `serde_json`" despite every template calling it directly. The cap
+    # (when needed) replaces the bare requirement with a tighter range --
+    # it must never be an ADDITIONAL line, since TOML doesn't allow two
+    # "serde_json" keys.
+    serde_json_dep = (
+        'serde_json = ">=1, <1.0.144"\n' if target_t < _SERDE_CORE_FLOOR
+        else 'serde_json = "1"\n'
+    )
+
+    ecosystem_caps = ""
+    if target_t < _SERDE_CORE_FLOOR:
+        ecosystem_caps += (
+            'serde = ">=1, <1.0.220"\n'
+            'serde_derive = ">=1, <1.0.160"\n'
+        )
+    if target_t < _TINYVEC_PARSE_FLOOR:
+        ecosystem_caps += 'tinyvec = ">=1, <1.11.0"\n'
+    if target_t < _EDITION2021_FLOOR:
+        ecosystem_caps += (
+            'proc-macro2 = ">=1, <1.0.66"\n'
+            'quote = ">=1, <1.0.43"\n'
+        )
+    if target_t < _SUBTLE_COHERENCE_FLOOR:
+        ecosystem_caps += 'subtle = ">=2, <2.3"\n'
 
     return (
         "[package]\n"
@@ -565,85 +678,9 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # every response is built via serde_json::json!() (a macro that
         # constructs a serde_json::Value directly, which has its own
         # hand-written Serialize impl, not a derived one) -- so serde's
-        # "derive" feature is genuinely unused, and removing it was the
-        # first fix here. NOT sufficient alone, though (confirmed live):
-        # serde 1.0.220 split out an internal `serde_core` crate that
-        # unconditionally (optional=false) depends on serde_derive -> syn
-        # regardless of whether the "derive" feature is requested at all
-        # -- serde 1.0.219 and older predate this split and treat
-        # serde_derive as genuinely optional again (confirmed live via
-        # crates.io's own dependency metadata: serde_derive is
-        # optional=true for serde 1.0.219, optional=false once serde_core
-        # exists). Pinning below the split avoids the whole serde_derive
-        # -> syn chain entirely for a dependency nothing here calls -- far
-        # more robust than repairing that chain's own MSRV/cargo-version
-        # gates release by release (serde_derive's LATEST release requires
-        # syn "^3", itself requiring rustc>=1.71 with no older release at
-        # all; stepping back to "^2.0.81"+ still requires cargo>=1.60 for
-        # syn's own namespaced-features manifest syntax; only "^1", i.e.
-        # serde_derive <1.0.160, is genuinely old-syntax-compatible).
-        # serde_json independently gained its OWN unconditional serde_core
-        # dependency starting at 1.0.144 (confirmed live) -- capping serde
-        # alone isn't enough, since serde_json pulls in serde_core (and
-        # thus serde_derive -> syn) on its own regardless of which serde
-        # version is used. serde_json also picked up `zmij` (a small
-        # float-formatting helper) starting at 1.0.148, itself another
-        # rustc>=1.71 floor -- capping below 1.0.144 avoids both at once.
-        # Capping serde/serde_json alone doesn't fully close this off:
-        # serde's own requirement on serde_derive is just a wide-open "^1"
-        # (any 1.x satisfies it), so cargo is still free to resolve
-        # serde_derive to its newest 1.x release (using syn "^2.0.81"+,
-        # itself namespaced-features-syntax that needs cargo>=1.60) even
-        # with serde capped. Confirmed live this specific phantom edge is
-        # ALSO reachable under old (pre-1.60) cargo specifically -- serde's
-        # own published manifest carries a `target = "cfg(any())"` exact
-        # pin on serde_derive that newer cargo correctly evaluates as never
-        # active (confirmed via `cargo metadata`'s own reachability graph),
-        # but older cargo appears to treat differently, resolving it
-        # anyway. Pinning serde_derive directly below its own syn "^1" ->
-        # "^2" switch (1.0.160) sidesteps the ambiguity outright regardless
-        # of which cargo era is doing the resolving.
-        'serde = ">=1, <1.0.220"\n'
-        'serde_json = ">=1, <1.0.144"\n'
-        'serde_derive = ">=1, <1.0.160"\n'
-        # tinyvec (pulled in transitively via unicode-normalization/url/idna,
-        # used by several frameworks' HTTP-parsing dependency chains) is a
-        # SEPARATE instance of the same namespaced-features problem: 1.11.0
-        # already uses `dep:` syntax, and 1.12.0 has a genuine name
-        # collision between a feature and a dependency both called
-        # "schemars" that pre-1.60 cargo can't parse at all (confirmed live
-        # via direct source inspection, not just a build failure). Declares
-        # rust_version=None across its ENTIRE history and edition="2018"
-        # throughout, so this is invisible to the rust_version/edition
-        # floor check entirely -- capping below the first `dep:` usage
-        # sidesteps it the same way the serde family caps do above.
-        'tinyvec = ">=1, <1.11.0"\n'
-        # The core proc-macro trio (proc-macro2/quote/syn) all follow the
-        # SAME pattern: a wide-open "^1" requirement from whatever pulls
-        # them in (syn itself, in this case, now capped to its own "^1"
-        # line via the serde_derive cap above) lets cargo pick the newest
-        # 1.x release by default, and both of these switched from
-        # edition="2018" to edition="2021" partway through their 1.x
-        # history (proc-macro2 at 1.0.66, quote at 1.0.43) -- confirmed
-        # live quote 1.0.47 specifically breaks old cargo's manifest
-        # parser the same way as every other edition2021-vs-old-cargo case
-        # in this file. Capped below both switches as a preventive measure
-        # (this exact combo hit quote's version; proc-macro2's own switch
-        # is the same failure mode waiting to happen for a different combo).
-        'proc-macro2 = ">=1, <1.0.66"\n'
-        'quote = ">=1, <1.0.43"\n'
-        # subtle (constant-time comparisons, pulled in transitively via
-        # password-hash) is a DIFFERENT failure class entirely from
-        # everything above: not a manifest-syntax gate, a genuine SOURCE
-        # CODE language-feature requirement. subtle 2.6.1's
-        # `impl<T> From<CtOption<T>> for Option<T>` needs the "rebalance
-        # coherence" orphan-rule relaxation stabilized in rustc 1.41 --
-        # confirmed live this impl doesn't exist yet in subtle 2.2.1
-        # (2019-11-27, predating rustc 1.41's 2020-01-30 release). subtle
-        # declares NO rust_version across its entire history, so this is
-        # invisible to the floor check by construction, not just an
-        # oversight.
-        'subtle = ">=2, <2.3"\n'
+        # "derive" feature is genuinely unused.
+        f"{serde_json_dep}"
+        f"{ecosystem_caps}"
     )
 
 
@@ -665,6 +702,17 @@ _CARGO_GIT_CACHE_MOUNT = "--mount=type=cache,id=cargo-git-cache,target=/usr/loca
 # caches, a shared target/ would mix incompatible incremental-compilation
 # state between combos) -- deliberately NOT mounted as a shared cache,
 # unlike the download-cache paths above.
+
+# Some libraries need an extra build-time ENV var beyond sys_deps' apt
+# packages to actually use them. sodiumoxide's libsodium-sys (confirmed via
+# direct build.rs inspection): installing the "pkg-config" system package
+# alone does nothing -- its build.rs only tries pkg-config when EITHER its
+# own "use-pkg-config" crate feature is enabled or SODIUM_USE_PKG_CONFIG is
+# set, otherwise it silently falls back to compiling libsodium from source
+# (and fails, since we don't install a full autotools/make toolchain).
+_LIB_BUILD_ENV = {
+    "sodiumoxide": "ENV SODIUM_USE_PKG_CONFIG=1\n",
+}
 
 # ── MSRV-aware lockfile repair ───────────────────────────────────────────────
 # A real, confirmed-live bug class (found while build-testing Rocket/Iron/
@@ -1137,8 +1185,103 @@ def rewrite_pinned_toml():
         f.write("\\n".join(out))
     print(f"rewrote Cargo.toml with {len(lines)} exact-pinned dependencies")
 
+def _reconcile_new_pins(max_rounds=5):
+    """rewrite_pinned_toml() pins everything `cargo metadata` reveals at
+    THAT moment -- but confirmed live that re-resolving the JUST-WRITTEN,
+    fully-pinned manifest can surface packages that were never part of the
+    earlier (range-based) snapshot at all (e.g. `lock_api`, which only
+    became part of the graph once some OTHER package's version was
+    already pinned exactly) -- these were never floor-checked by
+    repair_loop() and can silently carry a too-new requirement straight
+    into the real build. repair_loop()'s own `cargo update --precise`
+    mechanism can't fix this at this stage (the manifest now has hard "=X"
+    requirements cargo won't let a plain update cross), so this edits the
+    TOML text directly instead: floor-check every currently resolved
+    package, and either fix its existing pin in place or add a brand new
+    one, looping until the resolved set needs no more changes."""
+    for round_num in range(max_rounds):
+        meta = _cargo_metadata()
+        if meta is None:
+            print("  ! cargo metadata failed during pin verification")
+            return
+        with open("Cargo.toml", "rb") as f:
+            data = tomllib.load(f)
+        deps = data.get("dependencies", {})
+        by_crate = defaultdict(list)
+        for key, val in deps.items():
+            if isinstance(val, dict) and "package" in val:
+                crate = val["package"]
+                ver = val.get("version", "").lstrip("=")
+            else:
+                crate = key
+                ver = (val.get("version") if isinstance(val, dict) else val) or ""
+                ver = ver.lstrip("=")
+            by_crate[crate].append((key, ver))
+
+        changed = False
+        for name, version in _resolved_pkgs(meta):
+            floor = current_floor(name, version)
+            target_version = version
+            if floor is not None and floor > TARGET_T:
+                candidates = [c for c in candidate_order(name, version) if c != version]
+                if candidates:
+                    target_version = candidates[0]
+                else:
+                    print(f"  ! newly-surfaced {name} {version} needs rust {floor} > {TARGET}, no compatible version -- leaving as-is")
+
+            if name not in by_crate:
+                deps[name] = f"={target_version}"
+                changed = True
+                print(f"  newly-surfaced {name} -> pinned at ={target_version}")
+                continue
+
+            for key, ver in by_crate[name]:
+                if ver == version and target_version != version:
+                    val = deps[key]
+                    if isinstance(val, dict):
+                        val["version"] = f"={target_version}"
+                    else:
+                        deps[key] = f"={target_version}"
+                    changed = True
+                    print(f"  reconciled {name} {version} (needs {floor}) -> {target_version}")
+
+        if not changed:
+            print(f"pin set stable after {round_num} reconcile round(s)")
+            return
+
+        pkg = data["package"]
+        lines = []
+        for key in sorted(deps):
+            val = deps[key]
+            if isinstance(val, dict):
+                if "package" in val:
+                    lines.append(f'{key} = {{ package = "{val["package"]}", version = "{val["version"]}" }}')
+                else:
+                    feats = val.get("features")
+                    if feats:
+                        feat_str = ", ".join(f'"{ft}"' for ft in feats)
+                        lines.append(f'{key} = {{ version = "{val["version"]}", features = [{feat_str}] }}')
+                    else:
+                        lines.append(f'{key} = "{val["version"]}"')
+            else:
+                lines.append(f'{key} = "{val}"')
+        out = [
+            "[package]",
+            f'name = "{pkg["name"]}"',
+            f'version = "{pkg["version"]}"',
+            f'edition = "{pkg["edition"]}"',
+            "",
+            "[dependencies]",
+            *lines,
+            "",
+        ]
+        with open("Cargo.toml", "w") as f:
+            f.write("\\n".join(out))
+    print("gave up reconciling new pins after max rounds")
+
 repair_loop()
 rewrite_pinned_toml()
+_reconcile_new_pins()
 '''
 
 
@@ -1186,6 +1329,7 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
         f"PQC_FW_VERSION={fw_ver} "
         f"PQC_LIB_VERSION={lib_ver}\n"
     )
+    lib_build_env = _LIB_BUILD_ENV.get(lib_name, "")
 
     msrv_target = _effective_msrv_target(rust_ver, kind)
 
@@ -1218,6 +1362,7 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
         f"{cache_bust}"
         f"{toolchain_setup}"
         f"{version_env}"
+        f"{lib_build_env}"
         "WORKDIR /build\n"
         "COPY --from=lockgen /build/Cargo.toml .\n"
         "COPY src ./src\n"
@@ -1274,11 +1419,13 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     out.mkdir(parents=True, exist_ok=True)
     (out / "src").mkdir(exist_ok=True)
 
+    msrv_target = _effective_msrv_target(lang_ver, _fw_kind(fw_name, fw_major))
+
     (out / "src" / "main.rs").write_text(
         make_main_rs(fw_name, fw_major, lib_name, lib_ver), encoding="utf-8"
     )
     (out / "Cargo.toml").write_text(
-        make_cargo_toml(fw_name, fw_major, fw_resolved, lib_name, lib_resolved),
+        make_cargo_toml(fw_name, fw_major, fw_resolved, lib_name, lib_resolved, msrv_target, lib_ver),
         encoding="utf-8",
     )
     (out / "Dockerfile").write_text(
