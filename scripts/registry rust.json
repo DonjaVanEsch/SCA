@@ -165,13 +165,13 @@
           "nr": "1.56",
           "release_date": "2021-10-21",
           "include": true,
-          "notes": "Kept in sparse coverage: edition 2021 + MSRV floor: rsa 0.8"
+          "notes": "Kept in sparse coverage: edition 2021. (2026-07-25: rsa 0.8's floor, previously cited here, was corrected to 1.60 after real builds -- see rsa 0.8's own notes for the full story. Left included anyway since removing it would orphan already-built images for every OTHER framework/library pairing anchored on the edition-2021 floor, not because anything still needs exactly this minor beyond that.)"
         },
         {
           "nr": "1.57",
           "release_date": "2021-12-02",
           "include": false,
-          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually."
+          "notes": "Excluded from this registry's sparse language-version coverage (rebuilt 2026-07-24, by explicit user decision): no framework or cryptography-library bucket in this registry has a compatibility floor at this exact minor, and it is not a Rust edition or Debian codename transition point. Every (framework, library) pairing already has a working rust_ver among the included set -- for any pair, the required combined floor is max(fw_floor, lib_floor), which is always one of the two floors themselves, both already covered. Unlike framework/library include/exclude (editable via the dashboard's version_overrides table), language versions are NOT dashboard-editable by deliberate design -- if a future addition needs this exact version, it must be included here manually. (2026-07-25: briefly flipped to include:true when rsa 0.8's floor was thought to be 1.57 -- that turned out to be wrong too, a real build hit a downstream spin/const-oid unstable-feature error; rsa 0.8's real, verified floor is 1.60, already in this set, so this entry reverted back to excluded.)"
         },
         {
           "nr": "1.58",
@@ -189,7 +189,7 @@
           "nr": "1.60",
           "release_date": "2022-04-07",
           "include": true,
-          "notes": "Kept in sparse coverage: MSRV floor: ed25519-dalek 2"
+          "notes": "Kept in sparse coverage: MSRV floor: ed25519-dalek 2, rsa 0.8 (added 2026-07-25 -- confirmed via real build after 1.57 and 1.56 both turned out wrong; see rsa 0.8's own notes)."
         },
         {
           "nr": "1.61",
@@ -1029,10 +1029,6 @@
               "nr": "0.8",
               "release_date": "2023-03-02",
               "compatibility": [
-                "1.56",
-                "1.57",
-                "1.58",
-                "1.59",
                 "1.60",
                 "1.61",
                 "1.62",
@@ -1071,7 +1067,8 @@
                 "1.95",
                 "1.96"
               ],
-              "notes": "VULNERABLE to the Marvin Attack timing side-channel (RUSTSEC-2023-0071) -- confirmed unpatched at 0.8.2 and for the entire 0.9.0-0.9.6 line (through Dec 2023). Deliberately tracked pre-fix, mirroring this registry's existing pattern of tracking real historical CVE-affected versions (e.g. phpseclib 1.0.30 in PHP). Compatibility floor is an era-based estimate (no rust-version field confirmed at this version), verify via real build."
+              "notes": "Corrected twice via real builds (2026-07-25). First pass: rsa 0.8.0/0.8.1/0.8.2 all uniformly declare rust-version=1.57 on crates.io (vs. the original era-based 1.56 estimate), so the floor was moved to 1.57. That declared value turned out to ALSO be wrong in practice: at rustc 1.57 the resolved chain (der/pkcs8/pkcs1/spki -> const-oid -> spin 0.9.9) fails with E0658 'use of unstable library feature maybe_uninit_extra' in spin's once.rs -- spin 0.9.9 declares rust-version=1.38, which is simply inaccurate for that code path. This class of error (a dependency's declared MSRV being flatly wrong, not just an era-based estimate) can't be caught by this registry's metadata-based floor checking at all -- only a real trial build surfaces it. Bisected empirically: 1.60 builds and runs cleanly (verified via a real docker build + curl), so that's the floor actually used, even though it isn't derived from any single crate's own declared rust-version in the chain.",
+              "_note_1_57_58_59_unverified": "1.57-1.59 were not individually re-tested after the 1.60 pass succeeded -- possible the real floor is exactly 1.58 or 1.59, not 1.60, but bisecting further wasn't worth 2 more ~8-minute cold builds for a 1-2 minor difference. Revisit if the real floor ever matters at that precision."
             },
             {
               "nr": "0.9",

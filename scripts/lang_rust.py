@@ -845,7 +845,65 @@ def fetch_versions(crate):
         _cache[crate] = _fetch_one(crate)
     return _cache[crate]
 
+def prefetch_schema_all(crates):
+    # Same rationale as prefetch_all -- parallelize the sparse-index fetch
+    # too, so effective_floor's per-version schema check (added after a
+    # real cc/1.60 failure -- see _INDEX_SCHEMA2_FLOOR) doesn't serialize
+    # one HTTP round-trip per crate on top of the REST-API prefetch above.
+    todo = [c for c in dict.fromkeys(crates) if c not in _schema_cache]
+    if not todo:
+        return
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(_fetch_schema_versions, todo))
+
 _EDITION_FLOOR = {"2015": (1, 0), "2018": (1, 31), "2021": (1, 56), "2024": (1, 85)}
+
+# Cargo's registry-index schema has its own "v" field, separate from a
+# crate's declared rust-version/edition -- confirmed live via a real build
+# failure that this is NOT just another floor to compare against, it's a
+# visibility cliff: a release using namespaced/weak-dependency features
+# (the `dep:crate` syntax, index schema "v":2, stabilized in cargo 1.60)
+# is not merely rejected by older cargo, it is INVISIBLE to it -- old
+# cargo's candidate list for that crate silently stops at the newest
+# schema-v1 release, as if the newer ones don't exist at all. Confirmed
+# live (cc 1.2.55+, "v":2 for its namespaced `dep:libc`/`dep:jobserver`
+# features) that this happens even under a completely fresh, never-before
+# -used BuildKit cache mount (full ~450s index resync from scratch) --
+# ruling out any local/shared cache staleness explanation. The crates.io
+# REST API's own /versions endpoint (what `fetch_versions` above uses)
+# does NOT expose this "v"/"features2" schema info at all -- only the
+# real sparse index does -- so it has to be fetched separately.
+_INDEX_SCHEMA2_FLOOR = (1, 60)
+_schema_cache = {}
+
+def _sparse_index_path(crate):
+    name = crate.lower()
+    if len(name) <= 2:
+        return f"{len(name)}/{name}"
+    if len(name) == 3:
+        return f"3/{name[0]}/{name}"
+    return f"{name[0:2]}/{name[2:4]}/{name}"
+
+def _fetch_schema_versions(crate):
+    if crate in _schema_cache:
+        return _schema_cache[crate]
+    result = {}
+    req = urllib.request.Request(
+        f"https://index.crates.io/{_sparse_index_path(crate)}",
+        headers={"User-Agent": UA},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            for line in r.read().decode().splitlines():
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                result[entry["vers"]] = entry.get("v", 1)
+    except Exception:
+        pass  # unknown -- treat as schema v1 (no extra floor) rather than
+        # block an otherwise-good candidate on a transient network failure
+    _schema_cache[crate] = result
+    return result
 
 def effective_floor(v):
     floor = _EDITION_FLOOR.get(v.get("edition"), (1, 0))
@@ -857,6 +915,9 @@ def effective_floor(v):
                 floor = rvt
         except ValueError:
             pass
+    schema_v = _fetch_schema_versions(v.get("crate", "")).get(v["num"], 1)
+    if schema_v >= 2 and _INDEX_SCHEMA2_FLOOR > floor:
+        floor = _INDEX_SCHEMA2_FLOOR
     return floor
 
 def current_floor(crate, version):
@@ -1080,6 +1141,7 @@ def repair_loop():
             return
         pkgs = _resolved_pkgs(meta)
         prefetch_all(name for name, _ in pkgs)
+        prefetch_schema_all(name for name, _ in pkgs)
 
         to_fix = []
         scheduled_names = set()
