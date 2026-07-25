@@ -882,30 +882,6 @@
               "nr": "0.6",
               "release_date": "2019-08-14",
               "compatibility": [
-                "1.31",
-                "1.32",
-                "1.33",
-                "1.34",
-                "1.35",
-                "1.36",
-                "1.37",
-                "1.38",
-                "1.39",
-                "1.40",
-                "1.41",
-                "1.42",
-                "1.43",
-                "1.44",
-                "1.45",
-                "1.46",
-                "1.47",
-                "1.48",
-                "1.49",
-                "1.50",
-                "1.51",
-                "1.52",
-                "1.53",
-                "1.54",
                 "1.55",
                 "1.56",
                 "1.57",
@@ -950,7 +926,7 @@
                 "1.96",
                 "1.97"
               ],
-              "notes": "Final release (0.6.1), confirmed via crates.io. Officially unmaintained since. Sync, pre-async, middleware-chain Handler trait -- a genuine legacy baseline, directly analogous to this project's oldest tracked majors in other languages (e.g. PHP's Slim 1). No MSRV ever declared and no `edition` field in its Cargo.toml (implies edition 2015) -- compatibility is the FULL range as a conservative estimate (old, simple, sync code plausibly still compiles on modern rustc, but this has NOT been verified with a real build yet)."
+              "notes": "Floor corrected 2026-07-25, twice: first from 1.31 to 1.40 (core::mem::take, stabilized 1.40, used unconditionally by tinyvec's entire 1.x line since 2020-08-28), THEN further to 1.55 after confirming live that tinyvec 1.10.0 also needs const generics (rustc 1.51) AND Array::map (rustc 1.55) -- 1.50 still fails to compile tinyvec, 1.55 succeeds (confirmed via direct isolated build test, not inferred). A genuine, permanent floor via Iron's own unavoidable url -> idna -> unicode-normalization -> tinyvec chain (unicode-normalization requires tinyvec \"^1\" specifically, no older tinyvec major satisfies that requirement)."
             }
           ],
           "notes": "Single-era legacy framework, included specifically as the pre-async baseline (mirrors this registry's treatment of Iron's real historical role) rather than for version density."

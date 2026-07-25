@@ -644,13 +644,22 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
                 f"\n⚠ {note} -- warming with {len(warmup_entries)} representative "
                 f"combo(s) sequentially first (avoids a registry rate-limit burst) ...\n"
             )
-            _do_build(
+            warmup_results = _do_build(
                 warmup_entries, no_cache=False, skip_existing=False,
                 log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
                 workers=1, _warmup_checked=True,
             )
             if stop_event is not None and stop_event.is_set():
                 return {}
+            if any(not r.get("success") for r in warmup_results.values()):
+                log_fn(
+                    "\n✗ Cache warm-up FAILED -- aborting the batch instead of "
+                    "continuing (a warm-up failure means this framework/version "
+                    "group has a real build problem, not just a cold cache; "
+                    "every other combo in the group would likely hit the same "
+                    "issue). Fix it, then retry.\n"
+                )
+                return warmup_results
             log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
 
     n = len(entries)
@@ -1423,13 +1432,22 @@ def _do_client_build(entries, no_cache=False, skip_existing=False, log_fn=print,
                 f"\n⚠ {note} -- warming with {len(warmup_entries)} representative "
                 f"combo(s) sequentially first (avoids a registry rate-limit burst) ...\n"
             )
-            _do_client_build(
+            warmup_results = _do_client_build(
                 warmup_entries, no_cache=False, skip_existing=False,
                 log_fn=log_fn, save_fn=save_fn, stop_event=stop_event,
                 workers=1, _warmup_checked=True,
             )
             if stop_event is not None and stop_event.is_set():
                 return {}
+            if any(not r.get("success") for r in warmup_results.values()):
+                log_fn(
+                    "\n✗ Cache warm-up FAILED -- aborting the batch instead of "
+                    "continuing (a warm-up failure means this group has a real "
+                    "build problem, not just a cold cache; every other combo in "
+                    "the group would likely hit the same issue). Fix it, then "
+                    "retry.\n"
+                )
+                return warmup_results
             log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
 
     n = len(entries)
