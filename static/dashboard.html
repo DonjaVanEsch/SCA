@@ -1696,6 +1696,43 @@
     transform: translateX(0)
   }
 
+  /* Run-log mode (see viewRunLog()): wider, and starts lower (below the
+     tab's own header/filter/sub-tab row, over the list instead of over
+     it) -- the exact `top` offset is computed at open-time in JS since it
+     depends on which tab's header is currently above the table, not a
+     fixed value here. */
+  #detail-drawer.wide {
+    width: 640px;
+  }
+
+  #detail-body.fill-mode {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Only the log's own .detail-row should stretch -- letting the button
+     row above it size to content instead of also being forced to flex:1. */
+  #detail-body.fill-mode .detail-row {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .detail-output-fill {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .log-line-fail {
+    color: var(--danger)
+  }
+
+  .log-line-pass {
+    color: var(--success)
+  }
+
   #detail-header {
     padding: 12px 14px;
     border-bottom: 1px solid var(--border);
@@ -4602,6 +4639,7 @@
   async function openClientDetail(id) {
     const row = clientState.items.find(x => x.id === id);
     if (!row) return;
+    resetDetailDrawer();
     document.getElementById('detail-tag').textContent = row.image_tag || '—';
     const body = document.getElementById('detail-body');
     body.innerHTML = _clientDetailHeaderHtml([
@@ -4650,6 +4688,7 @@
   // Opens the same drawer directly from a Fingerprint-log entry -- the
   // report endpoint already carries every header field, no row lookup needed.
   async function openClientFingerprintDetail(fpId) {
+    resetDetailDrawer();
     document.getElementById('detail-tag').textContent = '—';
     const body = document.getElementById('detail-body');
     body.innerHTML = `<div class="detail-note">Loading…</div>`;
@@ -6255,6 +6294,7 @@
     const imgData = state.pageItems?.find(r => r.id === id);
     if (!imgData) return;
 
+    resetDetailDrawer();
     document.getElementById('detail-tag').textContent = imgData.image_tag || '—';
     const body = document.getElementById('detail-body');
 
@@ -6425,6 +6465,26 @@
     }
   }
 
+  // Clears the run-log-specific drawer overrides (width/position/fill-mode)
+  // before any OTHER drawer opener runs, so they don't inherit run-log
+  // sizing/position left over from a previous "view log" open.
+  function resetDetailDrawer() {
+    document.getElementById('detail-drawer').classList.remove('wide');
+    document.getElementById('detail-drawer').style.top = '';
+    document.getElementById('detail-body').classList.remove('fill-mode');
+  }
+
+  // Classifies one raw (pre-escape) log line as pass/fail for coloring --
+  // patterns match this project's own log_fn conventions (manager.py:
+  // "FAILED"/"FAIL"/"PASS"/"PASSED"/"  OK", the ✗/✓ warm-up-abort markers)
+  // plus cargo/rustc's own "error:"/"error[EXXXX]:" line prefix. Deliberately
+  // does NOT match "warning:" -- a warning isn't a failure.
+  function _logLineClass(raw) {
+    if (/^\s*error(\[|:)/.test(raw) || /\bFAILED?\b/.test(raw) || raw.includes('✗')) return 'log-line-fail';
+    if (/\bPASS(ED)?\b/.test(raw) || /^\s*OK\b/.test(raw) || raw.includes('✓')) return 'log-line-pass';
+    return '';
+  }
+
   // Opens the shared #detail-drawer instead of reusing #log-console --
   // confirmed live this was a real bug: #log-console is also the LIVE view
   // for a currently-running batch (openLog() keeps writing streamed output
@@ -6432,12 +6492,21 @@
   // saved run's log while a batch is running clobbered the running view
   // with the saved one, with no way back to it short of a page reload.
   // The drawer is a separate, independent panel, so both can be open/visible
-  // at once without either overwriting the other.
+  // at once without either overwriting the other. Also runs wider and lower
+  // than the drawer's normal image-detail use (over the report list, not
+  // over the tab's own header/filter row above it) -- top is computed from
+  // the report table's actual on-screen position rather than hardcoded,
+  // since header height differs per tab.
   async function viewRunLog(name, host) {
     try {
       const data = await api(`/api/runs/summary?name=${encodeURIComponent(name)}&host=${encodeURIComponent(host || '')}`);
       document.getElementById('detail-tag').textContent = `Run log — ${name}`;
+      const drawer = document.getElementById('detail-drawer');
       const body = document.getElementById('detail-body');
+      drawer.classList.add('wide');
+      body.classList.add('fill-mode');
+      const listTop = document.getElementById('report-table-wrap')?.getBoundingClientRect().top;
+      if (listTop != null) drawer.style.top = `${listTop}px`;
       const statusLabel = data.status === 'running' ? 'Running…'
         : data.status === 'interrupted' ? 'Interrupted'
         : ((data.build_failed > 0 || data.test_failed > 0) ? 'Done — failures' : 'Done');
@@ -6445,14 +6514,18 @@
         && (data.build_failed > 0 || data.test_failed > 0);
       const elapsed = data.duration_seconds != null ? ` · ${_fmtElapsed(data.duration_seconds * 1000)}` : '';
       const text = data.log_text || '(no saved log for this run)';
-      const linked = text.split('\n').map(linkifyLog).join('\n');
+      const linked = text.split('\n').map(line => {
+        const cls = _logLineClass(line);
+        const html = linkifyLog(line);
+        return cls ? `<span class="${cls}">${html}</span>` : html;
+      }).join('\n');
       body.innerHTML = `
       <div class="detail-row" style="border-bottom:none">
         <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:4px">
           <span class="detail-key" style="color:${failed ? 'var(--danger)' : 'var(--muted2)'}">${statusLabel}${elapsed}</span>
           <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px" onclick="copyOutput('run-log-pre',this)">Copy</button>
         </div>
-        <pre id="run-log-pre" class="detail-output${failed ? ' detail-output-err' : ''}">${linked}</pre>
+        <pre id="run-log-pre" class="detail-output detail-output-fill">${linked}</pre>
       </div>`;
       document.getElementById('detail-drawer').classList.add('open');
     } catch (e) {
@@ -6843,6 +6916,7 @@
     const lang = _refData?.languages.find(l => l.name === langName);
     if (!lang) return;
 
+    resetDetailDrawer();
     if (kind === 'language') {
       const v = lang.versions.find(x => x.version_nr === nr);
       if (!v) return;
