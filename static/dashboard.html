@@ -6505,7 +6505,13 @@
       const body = document.getElementById('detail-body');
       drawer.classList.add('wide');
       body.classList.add('fill-mode');
-      const listTop = document.getElementById('report-table-wrap')?.getBoundingClientRect().top;
+      // Measure the header ROW's bottom edge, not #report-table-wrap's own
+      // top (which is the SAME position as the header row, since the sticky
+      // <thead> is the wrap's first child) -- confirmed live that using the
+      // wrap's top made the drawer start flush with the "Date" column
+      // header, visually reading as if it belonged to the drawer.
+      const headerRow = document.querySelector('#report-table thead');
+      const listTop = headerRow?.getBoundingClientRect().bottom;
       if (listTop != null) drawer.style.top = `${listTop}px`;
       const statusLabel = data.status === 'running' ? 'Running…'
         : data.status === 'interrupted' ? 'Interrupted'
