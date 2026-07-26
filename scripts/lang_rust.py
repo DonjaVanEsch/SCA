@@ -1339,11 +1339,13 @@ def _reconcile_new_pins(max_rounds=5):
         for name, version in _resolved_pkgs(meta):
             floor = current_floor(name, version)
             target_version = version
+            no_fix = False
             if floor is not None and floor > TARGET_T:
                 candidates = [c for c in candidate_order(name, version) if c != version]
                 if candidates:
                     target_version = candidates[0]
                 else:
+                    no_fix = True
                     print(f"  ! newly-surfaced {name} {version} needs rust {floor} > {TARGET}, no compatible version -- leaving as-is")
 
             if name not in by_crate:
@@ -1353,7 +1355,27 @@ def _reconcile_new_pins(max_rounds=5):
                 continue
 
             for key, ver in by_crate[name]:
-                if ver == version and target_version != version:
+                if ver != version:
+                    continue
+                if no_fix:
+                    # An earlier round can exact-pin a crate that only
+                    # existed transitively because of ANOTHER package's
+                    # then-unfixed version (confirmed live: find-msvc-tools
+                    # got pinned while `cc`/`ring` were still at their
+                    # original too-new versions; once cc/ring got reconciled
+                    # down to versions that don't need it at all, its own
+                    # pin just sat there forever as a forced direct
+                    # dependency, since nothing ever removes a pin, only
+                    # adds/adjusts one). Drop it and let the next round's
+                    # fresh metadata decide whether it's still genuinely
+                    # needed -- if some other consumer still requires it,
+                    # it simply resurfaces as newly-surfaced again next
+                    # round (bounded by max_rounds, same as any other
+                    # unresolved case); if not, it's gone for good.
+                    del deps[key]
+                    changed = True
+                    print(f"  dropping stale pin on {name} {version} (no fix -- retrying without it in case its original parent has since been fixed)")
+                elif target_version != version:
                     val = deps[key]
                     if isinstance(val, dict):
                         val["version"] = f"={target_version}"
