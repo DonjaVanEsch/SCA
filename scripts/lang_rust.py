@@ -131,7 +131,10 @@ def _rustc_minor(rust_ver: str) -> int:
 
 # Full codename mapping (not just an EOL/current split) -- confirmed live
 # via `docker run rust:X.Y-slim cat /etc/os-release`: bullseye starts
-# exactly at 1.55, bookworm by 1.69 (both confirmed live). trixie's start
+# exactly at 1.55, bookworm starts exactly at 1.72 (corrected 2026-07-26 --
+# originally recorded as 1.69, which turned out to be wrong: confirmed live
+# that rust:1.69-slim/1.70-slim/1.71-slim are ALL STILL bullseye, and
+# rust:1.72-slim is the first to actually be bookworm). trixie's start
 # (between 1.85 absent and 1.90 present per the research pass) and the
 # stretch/buster cutover (~1.38/1.39) are reasonable estimates, not
 # individually verified for every minor -- see _debian_archive_apt's
@@ -139,16 +142,21 @@ def _rustc_minor(rust_ver: str) -> int:
 # the runtime stage's base image must match the SAME codename the builder
 # stage's rust:X.Y-slim tag actually resolves to, or a dynamically-linked
 # crate (openssl, sodiumoxide) can link against a DIFFERENT glibc/libssl
-# than the runtime image ships -- the same class of bug already found for
-# .NET's LibOQS.NET (a real GLIBC-version runtime crash caught via a real
-# docker run, not a build failure).
+# than the runtime image ships -- confirmed live this was a REAL bug, not
+# just a theoretical risk: rust:1.69-slim/1.70-slim (bullseye, OpenSSL 1.1)
+# paired with a hardcoded bookworm (OpenSSL 3.0) runtime stage produced a
+# binary that failed at container startup with "error while loading shared
+# libraries: libssl.so.1.1: cannot open shared object file" -- the exact
+# same class of bug already found for .NET's LibOQS.NET (a real
+# GLIBC-version runtime crash caught via a real docker run, not a build
+# failure).
 def _debian_codename(rust_ver: str) -> str:
     minor = _rustc_minor(rust_ver)
     if minor <= 38:
         return "stretch"
     if minor <= 54:
         return "buster"
-    if minor <= 68:
+    if minor <= 71:
         return "bullseye"
     if minor <= 89:
         return "bookworm"
