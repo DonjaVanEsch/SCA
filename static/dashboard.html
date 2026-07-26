@@ -6425,33 +6425,36 @@
     }
   }
 
+  // Opens the shared #detail-drawer instead of reusing #log-console --
+  // confirmed live this was a real bug: #log-console is also the LIVE view
+  // for a currently-running batch (openLog() keeps writing streamed output
+  // into the same #log-body/#log-title/#log-dot elements), so viewing a
+  // saved run's log while a batch is running clobbered the running view
+  // with the saved one, with no way back to it short of a page reload.
+  // The drawer is a separate, independent panel, so both can be open/visible
+  // at once without either overwriting the other.
   async function viewRunLog(name, host) {
     try {
       const data = await api(`/api/runs/summary?name=${encodeURIComponent(name)}&host=${encodeURIComponent(host || '')}`);
-      const con = document.getElementById('log-console');
-      const body = document.getElementById('log-body');
-      const dot = document.getElementById('log-dot');
-      if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
-      document.getElementById('log-title').textContent = `Run log — ${name}`;
-      document.getElementById('log-status').textContent = data.status === 'running' ? 'Running…' : 'Done';
-      document.getElementById('log-progress').textContent = '';
-      document.getElementById('log-elapsed').textContent = data.duration_seconds != null
-        ? _fmtElapsed(data.duration_seconds * 1000) : '';
-      document.getElementById('btn-cancel-job').style.display = 'none';
-      body.innerHTML = '';
+      document.getElementById('detail-tag').textContent = `Run log — ${name}`;
+      const body = document.getElementById('detail-body');
+      const statusLabel = data.status === 'running' ? 'Running…'
+        : data.status === 'interrupted' ? 'Interrupted'
+        : ((data.build_failed > 0 || data.test_failed > 0) ? 'Done — failures' : 'Done');
+      const failed = data.status !== 'running' && data.status !== 'interrupted'
+        && (data.build_failed > 0 || data.test_failed > 0);
+      const elapsed = data.duration_seconds != null ? ` · ${_fmtElapsed(data.duration_seconds * 1000)}` : '';
       const text = data.log_text || '(no saved log for this run)';
-      text.split('\n').forEach(line => {
-        const div = document.createElement('div');
-        div.innerHTML = linkifyLog(line);
-        body.appendChild(div);
-      });
-      dot.className = data.status === 'running' ? 'running'
-        : data.status === 'interrupted' ? 'done-warn'
-        : ((data.build_failed > 0 || data.test_failed > 0) ? 'done-fail' : 'done-ok');
-      con.classList.add('open');
-      con.classList.remove('collapsed');
-      document.getElementById('btn-collapse-log').textContent = '▼';
-      body.scrollTop = 0;
+      const linked = text.split('\n').map(linkifyLog).join('\n');
+      body.innerHTML = `
+      <div class="detail-row" style="border-bottom:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:4px">
+          <span class="detail-key" style="color:${failed ? 'var(--danger)' : 'var(--muted2)'}">${statusLabel}${elapsed}</span>
+          <button class="btn btn-ghost btn-sm copy-btn" style="padding:1px 7px;font-size:10px" onclick="copyOutput('run-log-pre',this)">Copy</button>
+        </div>
+        <pre id="run-log-pre" class="detail-output${failed ? ' detail-output-err' : ''}">${linked}</pre>
+      </div>`;
+      document.getElementById('detail-drawer').classList.add('open');
     } catch (e) {
       toast(`Failed to load run log: ${e.message}`, 'err');
     }
