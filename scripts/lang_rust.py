@@ -195,19 +195,39 @@ _FW_PACKAGE = {
 # proc_macro_hygiene/decl_macro feature gates that were never stabilized in
 # the form Rocket used, so no stable Rust ever worked for it. A specific
 # nightly date is pinned here (rather than "nightly latest", which drifts
-# and can break as the nightly compiler itself changes) -- 2021-04-13 is a
-# real date downstream Rocket 0.4 projects are documented to pin.
-_ROCKET_04_NIGHTLY = "nightly-2021-04-13"
+# and can break as the nightly compiler itself changes).
+#
+# Corrected 2026-07-26 from the originally-pinned 2021-04-13: confirmed live
+# via a real build failure that rocket 0.4.11 (the actual resolved patch in
+# our "0.4" bucket)'s OWN build.rs hard-codes a minimum nightly of
+# "1.54.0-nightly (2021-05-18)" and explicitly panics below it -- 2021-04-13
+# is over a month too early and was rejected outright.
+#
+# Getting past THAT check just exposed a deeper, recurring pattern: a
+# nightly reporting version "X.0-nightly" does NOT mean every API "for X"
+# has landed yet, only that it's past X-1's stable cutoff -- specific APIs
+# stabilize partway through a ~6-week nightly cycle, not on day one. Five
+# closer dates were tried and tested live, each passing whatever check
+# motivated it but then hitting the NEXT not-yet-landed API in some
+# dependency: proc-macro2's `Literal::from_str` (needs ~1.54), tinyvec's
+# unconditional `Array::map` (~1.55), proc-macro2's `is_available()`
+# (~1.57), the cargo index schema-v2 visibility gap for memchr (~1.60,
+# this project's OWN _INDEX_SCHEMA2_FLOOR), and rustix's `io_safety`/AsFd
+# (~1.63). Rather than keep chasing individual APIs one at a time, jumped
+# a full stable-release cycle past the last one for real headroom:
+# 2023-01-01 confirmed live (real `rustup toolchain install`, reporting
+# "1.68.0-nightly (2022-12-31)", AND a full real build + run) to have
+# everything needed.
+_ROCKET_04_NIGHTLY = "nightly-2023-01-01"
 
-# The cargo bundled with _ROCKET_04_NIGHTLY is on the ~1.53 release train
-# (confirmed live: `rustup toolchain install nightly-2021-04-13` reports
-# "rust version 1.53.0-nightly") -- this is the REAL compiler that will run
-# `cargo build`, not the nominal rust_ver axis value (which is cosmetic for
-# this one combo, see _fw_kind's docstring). The MSRV-repair step (see
-# make_dockerfile's lockgen stage) must target this real version, or it
-# would let through transitive crates the pinned nightly genuinely can't
-# parse.
-_ROCKET_04_NIGHTLY_MSRV = "1.53"
+# The cargo bundled with _ROCKET_04_NIGHTLY is on the ~1.68 release train
+# (confirmed live via the same real `rustup toolchain install` above) --
+# this is the REAL compiler that will run `cargo build`, not the nominal
+# rust_ver axis value (which is cosmetic for this one combo, see
+# _fw_kind's docstring). The MSRV-repair step (see make_dockerfile's
+# lockgen stage) must target this real version, or it would let through
+# transitive crates the pinned nightly genuinely can't parse.
+_ROCKET_04_NIGHTLY_MSRV = "1.68"
 
 
 def _effective_msrv_target(rust_ver: str, kind: str) -> str:
@@ -617,9 +637,19 @@ def make_main_rs(fw_name: str, fw_major: str, lib_name: str, lib_major: str) -> 
 # confirmed against.
 _SERDE_CORE_FLOOR = (1, 71)     # syn "^2.0.81"+/"^3" wall serde_core drags in
 _TINYVEC_PARSE_FLOOR = (1, 60)  # namespaced-features manifest syntax
+_TINYVEC_ARRAY_MAP_FLOOR = (1, 55)  # tinyvec 1.10.0+ made its
+# const_generic_impl (needs Array::map, stabilized 1.55) UNCONDITIONAL --
+# 1.6.0-1.9.0 gated it behind an opt-in "rustc_1_55" Cargo feature (never
+# requested by anything here, confirmed via `cargo tree -e features`), so
+# they default to the older generated_impl and compile fine below 1.55.
 _EDITION2021_FLOOR = (1, 56)    # quote/proc-macro2's edition="2021" switch
 _SUBTLE_COHERENCE_FLOOR = (1, 41)  # rebalance-coherence orphan-rule relaxation
 _BASE64CT_EDITION2024_FLOOR = (1, 85)  # base64ct 1.8.0+ ships edition="2024"
+_GETRANDOM_EDITION2024_FLOOR = (1, 85)  # getrandom 0.4.0+ ships edition="2024"
+_TEMPFILE_GETRANDOM04_FLOOR = (1, 85)  # tempfile 3.25.0+ widens its own
+# getrandom range to allow 0.4.x
+_YANSI_ATTR_MACRO_FLOOR = (1, 54)  # yansi 0.5.1's #[doc = concat!(...)]
+# needs "arbitrary expressions in key-value attributes" (rust-lang/rust#78835)
 
 
 def _ver_tuple2(v: str) -> tuple:
@@ -685,7 +715,9 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             'serde = ">=1, <1.0.220"\n'
             'serde_derive = ">=1, <1.0.160"\n'
         )
-    if target_t < _TINYVEC_PARSE_FLOOR:
+    if target_t < _TINYVEC_ARRAY_MAP_FLOOR:
+        ecosystem_caps += 'tinyvec = ">=1, <1.10.0"\n'
+    elif target_t < _TINYVEC_PARSE_FLOOR:
         ecosystem_caps += 'tinyvec = ">=1, <1.11.0"\n'
     if target_t < _EDITION2021_FLOOR:
         ecosystem_caps += (
@@ -707,6 +739,46 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # Capping it directly in Cargo.toml removes that gap: every cargo
         # invocation, pinning or real build, then sees the same constraint.
         ecosystem_caps += 'base64ct = ">=1, <1.8.0"\n'
+    if target_t < _GETRANDOM_EDITION2024_FLOOR:
+        # Same edition2024 pattern as base64ct above, confirmed live via a
+        # real build failure (argon2's rand_core="0.6",features=["getrandom"]
+        # extra_dep pulls it in): getrandom 0.4.0+ ships edition="2024"
+        # (rust_version 1.85), and candidate_order/reconcile can't cross
+        # from an already-resolved 0.4.x back down to the compliant 0.3.x
+        # series on their own (caret_compatible treats 0.3 and 0.4 as
+        # different, incompatible semver classes for a 0.x crate, same
+        # restriction that makes cascade fixes necessary elsewhere) --
+        # capping the declared range directly sidesteps that entirely.
+        ecosystem_caps += 'getrandom = ">=0.2, <0.4.0"\n'
+    if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
+        # Rocket depends directly on `tempfile`, which is where getrandom
+        # 0.4.x actually enters the graph -- confirmed live via `cargo tree
+        # -i getrandom@0.4.3` that it comes through tempfile, NOT through
+        # any crypto library or our own declared deps, so this bites EVERY
+        # library paired with Rocket, not just one. The getrandom cap above
+        # can't fix this on its own: our own top-level `getrandom` entry and
+        # tempfile's internal one are different, mutually-INcompatible
+        # semver classes once tempfile allows 0.4.x (0.3 vs 0.4 don't
+        # unify), so capping getrandom directly only ever constrains
+        # whichever edge already matched our own declared range, not
+        # tempfile's separate one. tempfile itself IS the same "^3" class
+        # project-wide, though, so capping IT unifies with Rocket's own
+        # requirement and forces the resolved tempfile back down to a
+        # release confirmed live to depend on "getrandom ^0.3.0" only
+        # (3.18.0-3.23.0) rather than 3.25.0+'s widened
+        # ">=0.3.0, <0.5" range that lets 0.4.x back in.
+        ecosystem_caps += 'tempfile = ">=3, <3.25.0"\n'
+    if target_t < _YANSI_ATTR_MACRO_FLOOR:
+        # Rocket depends directly on yansi (terminal coloring) -- confirmed
+        # live via a real build failure (E0658, "arbitrary expressions in
+        # key-value attributes are unstable") that yansi 0.5.1's
+        # `#[doc = concat!(...)]` pattern needs a language feature
+        # stabilized in rustc 1.54 (rust-lang/rust#78835). yansi never
+        # declares its own rust-version (both 0.5.0 and 0.5.1 show `None`),
+        # so metadata-based floor checking can never catch this on its own
+        # -- confirmed via yansi 0.5.0's real source that it predates this
+        # pattern entirely and compiles fine at old targets.
+        ecosystem_caps += 'yansi = ">=0.5, <0.5.1"\n'
 
     return (
         "[package]\n"
@@ -950,8 +1022,23 @@ def current_floor(crate, version):
     return None
 
 def caret_compatible(base, other):
-    b = [int(x) for x in base.split(".")] + [0, 0]
-    o = [int(x) for x in other.split(".")] + [0, 0]
+    # `base` is sometimes a RANGE expression rather than a plain version --
+    # confirmed live via a real crash (ValueError on '>=1, <1.0.144'):
+    # rewrite_pinned_toml()'s "protected" check passes whatever requirement
+    # string our OWN Cargo.toml originally declared for a crate, and for
+    # the conditionally-capped ecosystem deps (serde/serde_json/tinyvec/
+    # proc-macro2/quote/subtle/base64ct) that's a range, not an exact
+    # version, which int()-parsing can't handle at all. There's no single
+    # "same semver class" answer for a range expression, so treat it as
+    # not a match rather than crash -- every one of those capped deps is
+    # declared as a bare version/range with no `features=[...]` to lose,
+    # so falling through to the generic (unprotected) aliasing path for
+    # them is harmless.
+    try:
+        b = [int(x) for x in base.split(".")] + [0, 0]
+        o = [int(x) for x in other.split(".")] + [0, 0]
+    except ValueError:
+        return False
     if b[0] != 0:
         return o[0] == b[0]
     if b[1] != 0:
@@ -1246,6 +1333,55 @@ def dep_line(name, version, orig_value):
 def _orig_req_string(orig_value):
     return orig_value.get("version", "") if isinstance(orig_value, dict) else orig_value
 
+# rewrite_pinned_toml() only tracks (name, version) for purely transitive
+# crates (never part of our OWN Cargo.toml, so there's no `orig_deps` entry
+# to preserve features from) -- a bare `name = "=X"` re-pin uses that
+# crate's DEFAULT features, which can silently reactivate something the
+# real resolved graph never actually needed. Confirmed live: indexmap's own
+# edge to hashbrown explicitly sets `default-features = false, features =
+# ["raw"]` (it doesn't use ahash as its hasher), but our bare hashbrown pin
+# re-enabled hashbrown's `default = ["ahash", "inline-more"]`, pulling in a
+# genuinely-unneeded ahash dependency (with its own MSRV floor) that was
+# never part of the real feature-activation graph at all.
+_TRANSITIVE_PIN_OVERRIDES = {
+    # Confirmed live this override caused a REAL regression when left
+    # version-blind: hashbrown 0.15.0 (resolved in a different, newer
+    # combo) removed "ahash" from its default features entirely (switched
+    # to "foldhash") and renamed/removed the "raw" feature altogether --
+    # requesting a nonexistent "raw" feature made cargo refuse to select
+    # ANY version at all. 0.11.x-0.14.x all still have "ahash" in their
+    # default features and a real "raw" feature, so the override is only
+    # valid, and only actually needed, below 0.15.
+    "hashbrown": {"features": ["raw"], "before": (0, 15)},
+}
+
+def _crate_ver_tuple(v):
+    parts = v.split(".")
+    return tuple(int(p) for p in parts[:2])
+
+def _transitive_pin_override(name, version):
+    override = _TRANSITIVE_PIN_OVERRIDES.get(name)
+    if not override:
+        return None
+    before = override.get("before")
+    if before is not None and _crate_ver_tuple(version) >= before:
+        return None
+    return override
+
+def _transitive_pin_line(name, version):
+    override = _transitive_pin_override(name, version)
+    if not override:
+        return f'{name} = "={version}"'
+    feat_str = ", ".join(f'"{f}"' for f in override["features"])
+    return f'{name} = {{ version = "={version}", default-features = false, features = [{feat_str}] }}'
+
+def _transitive_pin_dict(name, version):
+    override = _transitive_pin_override(name, version)
+    if not override:
+        return f'{{ package = "{name}", version = "={version}" }}'
+    feat_str = ", ".join(f'"{f}"' for f in override["features"])
+    return f'{{ package = "{name}", version = "={version}", default-features = false, features = [{feat_str}] }}'
+
 def rewrite_pinned_toml():
     with open("Cargo.toml", "rb") as f:
         data = tomllib.load(f)
@@ -1270,7 +1406,7 @@ def rewrite_pinned_toml():
             if name in protected:
                 lines.append(dep_line(name, v, orig_deps[name]))
             else:
-                lines.append(f'{name} = "={v}"')
+                lines.append(_transitive_pin_line(name, v))
         else:
             # Multiple incompatible majors resolved for one crate name --
             # if it's one of OUR OWN direct deps, the "protected" (feature-
@@ -1294,7 +1430,7 @@ def rewrite_pinned_toml():
                     lines.append(dep_line(name, v, orig_deps[name]))
                 else:
                     alias = f"{name.replace('-', '_')}_pin{i}"
-                    lines.append(f'{alias} = {{ package = "{name}", version = "={v}" }}')
+                    lines.append(f'{alias} = {_transitive_pin_dict(name, v)}')
 
     out = [
         "[package]",
@@ -1343,6 +1479,37 @@ def _reconcile_new_pins(max_rounds=5):
                 ver = ver.lstrip("=")
             by_crate[crate].append((key, ver))
 
+        def _apply_pin(cname, cold, cnew):
+            if cname not in by_crate:
+                deps[cname] = f"={cnew}"
+                by_crate[cname].append((cname, cnew))
+                return
+            # A cascade fix can converge two SEPARATE, previously-aliased
+            # majors of the same crate name (e.g. socket2 0.6.x AND 0.5.x,
+            # each with their own `..._pinN = { package = "socket2", ... }`
+            # entry from the "multiple incompatible majors" branch of
+            # rewrite_pinned_toml()) onto the SAME target version -- cargo
+            # rejects two different dependency names resolving to the
+            # identical crate+version outright ("depends on crate X vY
+            # multiple times with different names"). Confirmed live. If
+            # another key already represents (cname, cnew), the one being
+            # retargeted is now genuinely redundant -- delete it instead of
+            # creating a duplicate.
+            for ckey, cver in by_crate[cname]:
+                if cver == cold:
+                    other_already_at_target = any(
+                        ok != ckey and ov == cnew for ok, ov in by_crate[cname]
+                    )
+                    if other_already_at_target:
+                        del deps[ckey]
+                    else:
+                        val = deps[ckey]
+                        if isinstance(val, dict):
+                            val["version"] = f"={cnew}"
+                        else:
+                            deps[ckey] = f"={cnew}"
+                    return
+
         changed = False
         for name, version in _resolved_pkgs(meta):
             floor = current_floor(name, version)
@@ -1353,6 +1520,27 @@ def _reconcile_new_pins(max_rounds=5):
                 if candidates:
                     target_version = candidates[0]
                 else:
+                    # No same-class candidate -- try a cascade fix (same
+                    # mechanism repair_loop() already uses, see its own
+                    # docstring) before giving up entirely. Confirmed live
+                    # this matters here too, not just in repair_loop: ahash
+                    # 0.7.8 and getrandom 0.4.x both need a CROSS-CLASS
+                    # downgrade (0.7->0.4, 0.4->0.3/0.2) that candidate_order
+                    # alone can never find (it only searches the SAME
+                    # semver class), and without this, reconcile just
+                    # oscillated between dropping and re-adding the same
+                    # unfixable pin every round until it gave up. Applying
+                    # cascade's substitutions as direct TOML edits (not
+                    # `cargo update` commands) sidesteps the ordering bugs
+                    # that hit repair_loop's own per-crate fallback path --
+                    # there's no cargo command sequencing to get wrong.
+                    cascade = _cascade_fix(name, version, meta)
+                    if cascade:
+                        for cname, cver, creplacement in cascade:
+                            _apply_pin(cname, cver, creplacement)
+                        changed = True
+                        print(f"  ! {name} {version} needs rust {floor} > {TARGET} -- fixed via cascade (reconcile pin edit)")
+                        continue
                     no_fix = True
                     print(f"  ! newly-surfaced {name} {version} needs rust {floor} > {TARGET}, no compatible version -- leaving as-is")
 
@@ -1401,15 +1589,28 @@ def _reconcile_new_pins(max_rounds=5):
         for key in sorted(deps):
             val = deps[key]
             if isinstance(val, dict):
+                # Confirmed live this dropped "default-features" (and, for
+                # a `package = ...` rename, "features" too) on every round
+                # that touched ANY dependency -- rewrite_pinned_toml()'s
+                # own hashbrown default-features=false fix survived only
+                # until the FIRST reconcile round that changed some OTHER
+                # package, since this reconstruction only ever read
+                # "package"/"version"/"features", silently discarding
+                # anything else already in the dict.
+                parts = []
                 if "package" in val:
-                    lines.append(f'{key} = {{ package = "{val["package"]}", version = "{val["version"]}" }}')
+                    parts.append(f'package = "{val["package"]}"')
+                parts.append(f'version = "{val["version"]}"')
+                if val.get("default-features") is False:
+                    parts.append("default-features = false")
+                feats = val.get("features")
+                if feats:
+                    feat_str = ", ".join(f'"{ft}"' for ft in feats)
+                    parts.append(f'features = [{feat_str}]')
+                if len(parts) == 1:
+                    lines.append(f'{key} = "{val["version"]}"')
                 else:
-                    feats = val.get("features")
-                    if feats:
-                        feat_str = ", ".join(f'"{ft}"' for ft in feats)
-                        lines.append(f'{key} = {{ version = "{val["version"]}", features = [{feat_str}] }}')
-                    else:
-                        lines.append(f'{key} = "{val["version"]}"')
+                    lines.append(f'{key} = {{ {", ".join(parts)} }}')
             else:
                 lines.append(f'{key} = "{val}"')
         out = [
