@@ -635,6 +635,21 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
     else:
         fw_dep = f'{fw_crate} = "{fw_ver}"\n'
 
+    if lib_name == "ed25519-dalek" and lib_major == "2":
+        # SigningKey::generate() (used by our touch code) is gated behind
+        # ed25519-dalek's own "rand_core" feature -- confirmed live via a
+        # real build (E0599, "no function or associated item named
+        # `generate`") and the crate's own source (signing.rs:
+        # `#[cfg(feature = "rand_core")] pub fn generate...`). It is NOT
+        # part of ed25519-dalek's default features (only fast/std/zeroize
+        # are), so it must be requested explicitly. This is a genuine bug
+        # in our own dependency declaration, not an MSRV/floor issue --
+        # confirmed by reproducing the identical failure across multiple
+        # rustc targets (1.61, 1.65, 1.85), including the newest one.
+        lib_dep = f'{lib_crate} = {{ version = "{lib_ver}", features = ["rand_core"] }}\n'
+    else:
+        lib_dep = f'{lib_crate} = "{lib_ver}"\n'
+
     extra_fw_deps = ""
     if kind in ("axum-old", "axum-new", "warp"):
         extra_fw_deps = 'tokio = { version = "1", features = ["full"] }\n'
@@ -693,7 +708,7 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         "[dependencies]\n"
         f"{fw_dep}"
         f"{extra_fw_deps}"
-        f'{lib_crate} = "{lib_ver}"\n'
+        f"{lib_dep}"
         f"{extra_lib_deps}"
         # No template uses #[derive(Serialize)]/#[derive(Deserialize)] --
         # every response is built via serde_json::json!() (a macro that
