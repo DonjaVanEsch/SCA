@@ -1662,9 +1662,25 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
         # Needs a PINNED nightly toolchain regardless of the base image's
         # own stable rustc -- see _ROCKET_04_NIGHTLY's docstring. Installed
         # via rustup on top of the selected stable base image.
+        #
+        # curve25519-dalek (pulled in transitively by ed25519-dalek) probes
+        # `rustc_version::Channel::Nightly` in its OWN build.rs and, on
+        # nightly + x86_64, tries to auto-select its "simd" backend, which
+        # gates a nightly-only `#![feature(stdarch_x86_avx512)]` -- confirmed
+        # live via a real build failure (E0635 "unknown feature") that our
+        # pinned nightly is simply too old to even recognize that gate name,
+        # a fundamentally unstable, frequently-churning nightly internal, not
+        # something any fixed toolchain date could reliably satisfy long-
+        # term. Forcing the portable "serial" backend via RUSTFLAGS (which
+        # the crate's build.rs reads back as CARGO_CFG_CURVE25519_DALEK_
+        # BACKEND) sidesteps the whole nightly-SIMD-detection path entirely
+        # -- confirmed live via the crate's own build.rs source that this is
+        # its documented override mechanism. Harmless for every OTHER
+        # Rocket-0.4 combo that doesn't pull in curve25519-dalek at all.
         toolchain_setup = (
             f"RUN rustup toolchain install {_ROCKET_04_NIGHTLY} "
             f"&& rustup default {_ROCKET_04_NIGHTLY}\n"
+            'ENV RUSTFLAGS=\'--cfg curve25519_dalek_backend="serial"\'\n'
         )
     else:
         toolchain_setup = ""
