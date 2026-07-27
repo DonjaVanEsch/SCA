@@ -643,13 +643,51 @@ _TINYVEC_ARRAY_MAP_FLOOR = (1, 55)  # tinyvec 1.10.0+ made its
 # requested by anything here, confirmed via `cargo tree -e features`), so
 # they default to the older generated_impl and compile fine below 1.55.
 _EDITION2021_FLOOR = (1, 56)    # quote/proc-macro2's edition="2021" switch
+_PROC_MACRO_HUB_1_71_FLOOR = (1, 71)  # proc-macro2/quote/unicode-ident/
+# lock_api all separately bumped their own MSRV to 1.71 -- confirmed live
+# via a real build failure (Rocket 0.4's effective target, 1.68, is JUST
+# below this) and crates.io version history for each. A second, higher
+# cap tier on top of _EDITION2021_FLOOR's, same rationale as tinyvec's own
+# two-tier cap: the ecosystem keeps drifting past thresholds over time,
+# a single static cutoff isn't permanent.
 _SUBTLE_COHERENCE_FLOOR = (1, 41)  # rebalance-coherence orphan-rule relaxation
 _BASE64CT_EDITION2024_FLOOR = (1, 85)  # base64ct 1.8.0+ ships edition="2024"
 _GETRANDOM_EDITION2024_FLOOR = (1, 85)  # getrandom 0.4.0+ ships edition="2024"
+_ZEROIZE_EDITION2024_FLOOR = (1, 85)  # zeroize 1.9.0+/zeroize_derive 1.5.0+
+# ship edition="2024" -- confirmed live via a real build failure that
+# relying on _reconcile_new_pins alone (the original plan, see Phase 9's
+# notes) wasn't actually sufficient; the same lockgen-vs-builder-stage gap
+# as base64ct/getrandom applies here too.
 _TEMPFILE_GETRANDOM04_FLOOR = (1, 85)  # tempfile 3.25.0+ widens its own
 # getrandom range to allow 0.4.x
 _YANSI_ATTR_MACRO_FLOOR = (1, 54)  # yansi 0.5.1's #[doc = concat!(...)]
 # needs "arbitrary expressions in key-value attributes" (rust-lang/rust#78835)
+
+# `time` is pulled in transitively (Rocket's own tokio/tracing stack), and
+# its own MSRV has crept up gradually release by release -- confirmed live
+# via a real build failure (cargo's own MSRV-aware-resolver error, "rustc
+# 1.85.1 is not supported... time@0.3.54 requires rustc 1.88.0") that this
+# is the SAME lockgen-vs-builder-stage gap as base64ct/getrandom/tempfile:
+# msrv_repair.py's own metadata call can resolve an older, floor-compliant
+# `time`, but the builder stage's fresh, unpinned re-resolution (only
+# Cargo.toml, not Cargo.lock, crosses that boundary) picks the newest
+# semver-compatible release instead. Multi-tiered because unlike those
+# single-jump edition2024 cases, `time`'s floor climbed in many small
+# steps (confirmed live via crates.io version history) -- (threshold,
+# cap_version) pairs in ascending order; the first tier whose threshold
+# exceeds the target gives the tightest cap actually needed.
+_TIME_MSRV_TIERS = [
+    ((1, 57), "0.3.10"),
+    ((1, 59), "0.3.14"),
+    ((1, 60), "0.3.16"),
+    ((1, 62), "0.3.18"),
+    ((1, 63), "0.3.20"),
+    ((1, 65), "0.3.21"),
+    ((1, 67), "0.3.24"),
+    ((1, 81), "0.3.42"),
+    ((1, 83), "0.3.45"),
+    ((1, 88), "0.3.46"),
+]
 
 
 def _ver_tuple2(v: str) -> tuple:
@@ -724,6 +762,16 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             'proc-macro2 = ">=1, <1.0.66"\n'
             'quote = ">=1, <1.0.43"\n'
         )
+    elif target_t < _PROC_MACRO_HUB_1_71_FLOOR:
+        ecosystem_caps += (
+            'proc-macro2 = ">=1, <1.0.107"\n'
+            'quote = ">=1, <1.0.45"\n'
+        )
+    if target_t < _PROC_MACRO_HUB_1_71_FLOOR:
+        ecosystem_caps += (
+            'unicode-ident = ">=1, <1.0.23"\n'
+            'lock_api = ">=0.4, <0.4.14"\n'
+        )
     if target_t < _SUBTLE_COHERENCE_FLOOR:
         ecosystem_caps += 'subtle = ">=2, <2.3"\n'
     if target_t < _BASE64CT_EDITION2024_FLOOR:
@@ -750,6 +798,11 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # restriction that makes cascade fixes necessary elsewhere) --
         # capping the declared range directly sidesteps that entirely.
         ecosystem_caps += 'getrandom = ">=0.2, <0.4.0"\n'
+    if target_t < _ZEROIZE_EDITION2024_FLOOR:
+        ecosystem_caps += (
+            'zeroize = ">=1, <1.9.0"\n'
+            'zeroize_derive = ">=1, <1.5.0"\n'
+        )
     if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
         # Rocket depends directly on `tempfile`, which is where getrandom
         # 0.4.x actually enters the graph -- confirmed live via `cargo tree
@@ -779,6 +832,10 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # -- confirmed via yansi 0.5.0's real source that it predates this
         # pattern entirely and compiles fine at old targets.
         ecosystem_caps += 'yansi = ">=0.5, <0.5.1"\n'
+    for threshold, cap_version in _TIME_MSRV_TIERS:
+        if target_t < threshold:
+            ecosystem_caps += f'time = ">=0.3, <{cap_version}"\n'
+            break
 
     return (
         "[package]\n"
