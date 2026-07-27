@@ -1526,6 +1526,7 @@
 
   /* ── Log console ────────────────────────────────────────────────────────── */
   #log-console {
+    position: relative;
     flex: 1;
     min-width: 0;
     background: var(--surface2);
@@ -1547,6 +1548,25 @@
 
   #log-console.collapsed #log-body {
     display: none
+  }
+
+  #log-console.resizing {
+    transition: none
+  }
+
+  #log-resize-handle {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: ns-resize;
+    z-index: 20;
+  }
+
+  #log-resize-handle:hover,
+  #log-resize-handle.dragging {
+    background: var(--accent)
   }
 
   #log-header {
@@ -1694,6 +1714,21 @@
 
   #detail-drawer.open {
     transform: translateX(0)
+  }
+
+  #detail-resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    width: 8px;
+    cursor: ew-resize;
+    z-index: 20;
+  }
+
+  #detail-resize-handle:hover,
+  #detail-resize-handle.dragging {
+    background: var(--accent)
   }
 
   /* Run-log mode (see viewRunLog()): wider, and starts lower (below the
@@ -3308,6 +3343,7 @@
     <div id="pg-buttons"></div>
   </div>
   <div id="log-console">
+    <div id="log-resize-handle" title="Drag to resize"></div>
     <div id="log-header">
       <div style="width:8px;height:8px;border-radius:50%" id="log-dot" class="running"></div>
       <span id="log-title">Job output</span>
@@ -3329,6 +3365,7 @@
 
 <!-- ── Detail drawer ───────────────────────────────────────────────────── -->
 <div id="detail-drawer">
+  <div id="detail-resize-handle" title="Drag to resize"></div>
   <div id="detail-header">
     <h3 id="detail-tag">—</h3>
     <button class="btn btn-ghost btn-sm" id="btn-close-detail">✕</button>
@@ -7804,6 +7841,79 @@
     setDockH();
     new ResizeObserver(setDockH).observe(dock);
     new ResizeObserver(setDockH).observe(body);
+  })();
+
+  // ── Manual resize handles (log console height, detail drawer width) ────────
+  // Persisted to localStorage so a user's chosen size survives a page reload.
+  // A manually-set drawer width is an inline style, which beats the "wide"
+  // class's 640px (see viewRunLog()) at the same specificity a class vs.
+  // inline always resolves at -- deliberate: once the user has taken control
+  // of the size, it should stick across every mode until they resize again.
+  (function () {
+    const MIN_LOG_H = 120, MAX_LOG_H_RATIO = 0.85;
+    const MIN_DRAWER_W = 260, MAX_DRAWER_W_RATIO = 0.9;
+
+    function setupDrag(handle, { onStart, onMove, onEnd } = {}) {
+      if (!handle) return;
+      handle.addEventListener('mousedown', e => {
+        e.preventDefault();
+        handle.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        if (onStart) onStart();
+        const onMouseMove = ev => onMove(ev);
+        const onMouseUp = () => {
+          handle.classList.remove('dragging');
+          document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          if (onEnd) onEnd();
+        };
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
+
+    // The handle sits at the panel's TOP edge; the panel itself is anchored
+    // to the bottom of the viewport (#bottom-dock), so dragging UP (smaller
+    // clientY) must make it TALLER.
+    const logConsole = document.getElementById('log-console');
+    setupDrag(document.getElementById('log-resize-handle'), {
+      onStart: () => logConsole?.classList.add('resizing'),
+      onMove: e => {
+        const maxH = window.innerHeight * MAX_LOG_H_RATIO;
+        const newH = Math.min(maxH, Math.max(MIN_LOG_H, window.innerHeight - e.clientY));
+        document.documentElement.style.setProperty('--log-h', `${newH}px`);
+      },
+      onEnd: () => {
+        logConsole?.classList.remove('resizing');
+        try {
+          localStorage.setItem('pqc-log-h', document.documentElement.style.getPropertyValue('--log-h'));
+        } catch {}
+      },
+    });
+
+    // The handle sits at the panel's LEFT edge; the panel itself is anchored
+    // to the right edge of the viewport, so dragging LEFT (smaller clientX)
+    // must make it WIDER.
+    const drawer = document.getElementById('detail-drawer');
+    setupDrag(document.getElementById('detail-resize-handle'), {
+      onMove: e => {
+        const maxW = window.innerWidth * MAX_DRAWER_W_RATIO;
+        const newW = Math.min(maxW, Math.max(MIN_DRAWER_W, window.innerWidth - e.clientX));
+        if (drawer) drawer.style.width = `${newW}px`;
+      },
+      onEnd: () => {
+        if (!drawer) return;
+        try { localStorage.setItem('pqc-drawer-w', drawer.style.width); } catch {}
+      },
+    });
+
+    try {
+      const savedLogH = localStorage.getItem('pqc-log-h');
+      if (savedLogH) document.documentElement.style.setProperty('--log-h', savedLogH);
+      const savedDrawerW = localStorage.getItem('pqc-drawer-w');
+      if (savedDrawerW && drawer) drawer.style.width = savedDrawerW;
+    } catch {}
   })();
 
   // Start
