@@ -1715,7 +1715,24 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
         "COPY src ./src\n"
         "COPY msrv_repair.py .\n"
         f"RUN {_CARGO_REGISTRY_CACHE_MOUNT} {_CARGO_GIT_CACHE_MOUNT} \\\n"
-        f"    cargo generate-lockfile && python3 msrv_repair.py {msrv_target}\n"
+        # PYTHONHASHSEED=0 disables Python's default per-process hash
+        # randomization -- confirmed live this was a REAL, serious bug:
+        # rebuilding the IDENTICAL combo (openssl@1.75/Rocket-0.5) twice in
+        # a row, with nothing else different, produced two DIFFERENT final
+        # pin sets -- one fully self-consistent (time=0.3.41 with matching
+        # time-core/time-macros), the other with `time` reverted to 0.3.54
+        # while its OWN time-core/time-macros pins stayed at the values
+        # correct for 0.3.41, an unsatisfiable three-way conflict that
+        # broke the real build. Nothing in msrv_repair.py's OWN logic
+        # differs between runs -- the only plausible source of two
+        # different outcomes from the same inputs is Python's hash-
+        # randomized dict/set iteration order (`_resolved_pkgs()`'s `seen`
+        # set, `by_name`/`by_crate` dicts, all keyed by crate-name strings)
+        # changing WHICH crate's fix gets attempted first in a round where
+        # fixes interact. Pinning the hash seed makes the whole repair
+        # process fully reproducible for the same dependency graph, not
+        # just usually-correct.
+        f"    cargo generate-lockfile && PYTHONHASHSEED=0 python3 msrv_repair.py {msrv_target}\n"
         "\n"
     )
 
