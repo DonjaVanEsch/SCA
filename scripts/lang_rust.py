@@ -792,6 +792,17 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             'zeroize = ">=1, <1.9.0"\n'
             'zeroize_derive = ">=1, <1.5.0"\n'
         )
+    if target_t < _BASE64CT_EDITION2024_FLOOR:
+        # cpufeatures (pulled in transitively via sha2/blake2, needed by
+        # bcrypt/argon2's password-hash chain and actix-web 4's own hasher
+        # stack) -- same edition2024 pattern as base64ct/getrandom/zeroize
+        # above (confirmed live via a real build failure at rustc 1.75:
+        # "feature `edition2024` is required", cpufeatures 0.3.0's own
+        # crates.io metadata confirms edition="2024"/rust_version=1.85,
+        # every 0.2.x release is edition="2018"). Reuses
+        # _BASE64CT_EDITION2024_FLOOR rather than a new constant since
+        # both share the identical 1.85 threshold.
+        ecosystem_caps += 'cpufeatures = ">=0.2, <0.3.0"\n'
     if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
         # Rocket depends directly on `tempfile`, which is where getrandom
         # 0.4.x actually enters the graph -- confirmed live via `cargo tree
@@ -1180,6 +1191,31 @@ def _dependents_of(meta, target_name):
     return parents
 
 _dep_req_cache = {}
+_valid_features_cache = {}
+
+def _crate_valid_features(crate, version):
+    """The SET of named features crate@version actually declares (its own
+    [features] table, fetched from crates.io) -- used to check whether a
+    features=[...] list computed for a DIFFERENT version of the same
+    crate still applies after a reconcile version change. Returns None on
+    a transient fetch failure (unknown, not evidence either way) -- NOT
+    cached, so a transient failure doesn't permanently poison a good
+    lookup, matching _crate_dep_req's own caching discipline."""
+    key = (crate, version)
+    if key in _valid_features_cache:
+        return _valid_features_cache[key]
+    req_url = urllib.request.Request(
+        f"https://crates.io/api/v1/crates/{crate}/{version}",
+        headers={"User-Agent": UA},
+    )
+    try:
+        with urllib.request.urlopen(req_url, timeout=20) as r:
+            data = json.load(r)
+    except Exception:
+        return None
+    feats = set(data.get("version", {}).get("features", {}).keys())
+    _valid_features_cache[key] = feats
+    return feats
 
 def _crate_dep_req(crate, version, dep_name):
     """(found, req): found=False means the API call itself failed
@@ -1736,21 +1772,36 @@ def _reconcile_new_pins(max_rounds=5):
                 elif target_version != version:
                     val = deps[key]
                     if isinstance(val, dict):
-                        # Any default-features/features qualifier here was
-                        # computed for the OLD version -- confirmed live it
-                        # can name a feature that simply doesn't exist on
-                        # the new target version at all (form_urlencoded
-                        # 1.2.2's "alloc"/"std" feature split doesn't exist
-                        # on 1.0.1 -- a hard cargo manifest error, not just
-                        # a functional gap). Keep only the "package" alias
-                        # (renames don't change across versions) and let
-                        # the NEXT round's fresh metadata scan re-derive
-                        # whatever features the new version actually needs,
-                        # same as a newly-surfaced pin.
+                        # A features=[...] qualifier here was computed for
+                        # the OLD version -- confirmed live it can name a
+                        # feature that simply doesn't exist on the new
+                        # target version at all (form_urlencoded 1.2.2's
+                        # "alloc"/"std" feature split doesn't exist on
+                        # 1.0.1 -- a hard cargo manifest error, not just a
+                        # functional gap). But blindly DROPPING it is ALSO
+                        # wrong -- confirmed live via a separate real
+                        # build failure: ed25519-dalek's OWN deliberately-
+                        # requested "rand_core" feature (needed for our
+                        # touch code's SigningKey::generate() call, see
+                        # make_cargo_toml()) IS still valid on ITS
+                        # reconciled-down version too, and dropping it
+                        # entirely reintroduced the exact E0599 that
+                        # feature was added to fix in the first place.
+                        # Re-validate each feature name against the NEW
+                        # version's own real [features] table instead of
+                        # guessing either way.
+                        crate = val.get("package", key)
+                        valid = _crate_valid_features(crate, target_version)
+                        old_feats = val.get("features") or []
+                        kept_feats = [f for f in old_feats if valid is None or f in valid]
+                        new_val = {"version": f"={target_version}"}
                         if "package" in val:
-                            deps[key] = {"package": val["package"], "version": f"={target_version}"}
-                        else:
-                            deps[key] = f"={target_version}"
+                            new_val["package"] = val["package"]
+                        if val.get("default-features") is False:
+                            new_val["default-features"] = False
+                        if kept_feats:
+                            new_val["features"] = kept_feats
+                        deps[key] = new_val if (len(new_val) > 1) else f"={target_version}"
                     else:
                         deps[key] = f"={target_version}"
                     changed = True
