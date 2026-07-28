@@ -654,6 +654,19 @@ _TEMPFILE_GETRANDOM04_FLOOR = (1, 85)  # tempfile 3.25.0+ widens its own
 # getrandom range to allow 0.4.x
 _YANSI_ATTR_MACRO_FLOOR = (1, 54)  # yansi 0.5.1's #[doc = concat!(...)]
 # needs "arbitrary expressions in key-value attributes" (rust-lang/rust#78835)
+_BYTESTRING_1_88_FLOOR = (1, 88)  # bytestring 1.5.1+ needs rustc 1.88
+# (confirmed via crates.io version history: 1.3.1->1.65, 1.4.0->1.71.1,
+# 1.5.0->1.75, 1.5.1->1.88 -- a gradual MSRV creep, same class as `time`)
+_ICU_HUB_1_86_FLOOR = (1, 86)  # the whole ICU-Unicode hub (entered via
+# actix-connect -> trust-dns-proto/resolver -> idna -> idna_adapter, same
+# transitive path as the trust-dns-proto/backtrace finding in Phase 17) --
+# confirmed live via a real build failure listing 8 packages together,
+# ALL jumping from an older, lower rust_version to exactly 1.86 in
+# lockstep in their own 2.2.0 (or idna_adapter's 1.2.2) release: icu_
+# collections/locale_core/normalizer/normalizer_data/properties/
+# properties_data/provider, plus idna_adapter (which ALSO switches to
+# edition="2024" at 1.2.2, matching the project's other edition2024 hub
+# crates). Every one of these compiles fine one minor release earlier.
 
 # `time` is pulled in transitively (Rocket's own tokio/tracing stack), and
 # its own MSRV has crept up gradually release by release -- confirmed live
@@ -803,6 +816,19 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # _BASE64CT_EDITION2024_FLOOR rather than a new constant since
         # both share the identical 1.85 threshold.
         ecosystem_caps += 'cpufeatures = ">=0.2, <0.3.0"\n'
+    if target_t < _BYTESTRING_1_88_FLOOR:
+        ecosystem_caps += 'bytestring = ">=1, <1.5.1"\n'
+    if target_t < _ICU_HUB_1_86_FLOOR:
+        ecosystem_caps += (
+            'icu_collections = ">=1, <2.2.0"\n'
+            'icu_locale_core = ">=1, <2.2.0"\n'
+            'icu_normalizer = ">=1, <2.2.0"\n'
+            'icu_normalizer_data = ">=1, <2.2.0"\n'
+            'icu_properties = ">=1, <2.2.0"\n'
+            'icu_properties_data = ">=1, <2.2.0"\n'
+            'icu_provider = ">=1, <2.2.0"\n'
+            'idna_adapter = ">=1, <1.2.2"\n'
+        )
     if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
         # Rocket depends directly on `tempfile`, which is where getrandom
         # 0.4.x actually enters the graph -- confirmed live via `cargo tree
