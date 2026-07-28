@@ -642,14 +642,6 @@ _TINYVEC_ARRAY_MAP_FLOOR = (1, 55)  # tinyvec 1.10.0+ made its
 # 1.6.0-1.9.0 gated it behind an opt-in "rustc_1_55" Cargo feature (never
 # requested by anything here, confirmed via `cargo tree -e features`), so
 # they default to the older generated_impl and compile fine below 1.55.
-_EDITION2021_FLOOR = (1, 56)    # quote/proc-macro2's edition="2021" switch
-_PROC_MACRO_HUB_1_71_FLOOR = (1, 71)  # proc-macro2/quote/unicode-ident/
-# lock_api all separately bumped their own MSRV to 1.71 -- confirmed live
-# via a real build failure (Rocket 0.4's effective target, 1.68, is JUST
-# below this) and crates.io version history for each. A second, higher
-# cap tier on top of _EDITION2021_FLOOR's, same rationale as tinyvec's own
-# two-tier cap: the ecosystem keeps drifting past thresholds over time,
-# a single static cutoff isn't permanent.
 _SUBTLE_COHERENCE_FLOOR = (1, 41)  # rebalance-coherence orphan-rule relaxation
 _BASE64CT_EDITION2024_FLOOR = (1, 85)  # base64ct 1.8.0+ ships edition="2024"
 _GETRANDOM_EDITION2024_FLOOR = (1, 85)  # getrandom 0.4.0+ ships edition="2024"
@@ -757,21 +749,18 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         ecosystem_caps += 'tinyvec = ">=1, <1.10.0"\n'
     elif target_t < _TINYVEC_PARSE_FLOOR:
         ecosystem_caps += 'tinyvec = ">=1, <1.11.0"\n'
-    if target_t < _EDITION2021_FLOOR:
-        ecosystem_caps += (
-            'proc-macro2 = ">=1, <1.0.66"\n'
-            'quote = ">=1, <1.0.43"\n'
-        )
-    elif target_t < _PROC_MACRO_HUB_1_71_FLOOR:
-        ecosystem_caps += (
-            'proc-macro2 = ">=1, <1.0.107"\n'
-            'quote = ">=1, <1.0.45"\n'
-        )
-    if target_t < _PROC_MACRO_HUB_1_71_FLOOR:
-        ecosystem_caps += (
-            'unicode-ident = ">=1, <1.0.23"\n'
-            'lock_api = ">=0.4, <0.4.14"\n'
-        )
+    # No static proc-macro2/quote/unicode-ident/lock_api cap here (Phase 14
+    # added one, Phase 16 widened it) -- removed after confirming live that
+    # a static cap on this exact hub can make cargo's OWN initial, unrepaired
+    # resolution infeasible outright for a DIFFERENT framework's dependency
+    # graph (actix-web 3 pulls a much newer futures-util -> syn 2.x chain;
+    # the cap's range is non-empty in principle but cargo's resolver still
+    # rejected it before msrv_repair.py's own dynamic cascade/reconcile
+    # logic ever got a chance to run). Re-verified live that the dynamic
+    # mechanism alone (with the bare-pin active-features fix above) still
+    # correctly downgrades all four crates for Rocket 0.4's real effective
+    # target (1.68) without any static cap at all -- the static cap was
+    # unnecessary belt-and-suspenders here, not a hard requirement.
     if target_t < _SUBTLE_COHERENCE_FLOOR:
         ecosystem_caps += 'subtle = ">=2, <2.3"\n'
     if target_t < _BASE64CT_EDITION2024_FLOOR:
@@ -1159,6 +1148,20 @@ def _resolved_pkgs(meta):
         pkgs.append(_split_pkg_id(node_id))
     return pkgs
 
+def _features_by_pkg(meta):
+    """(name, version) -> the list of features cargo metadata reports as
+    ACTUALLY ACTIVE for that exact resolved node right now -- includes the
+    literal string "default" when default-features are on, alongside any
+    other active named feature. Used so a transitive bare re-pin can
+    reproduce this exact activation state instead of silently falling
+    back to the crate's own default features (see _transitive_pin_spec)."""
+    result = {}
+    for node in meta["resolve"]["nodes"]:
+        if node["id"].startswith("path+"):
+            continue
+        result[_split_pkg_id(node["id"])] = node.get("features", [])
+    return result
+
 def _dependents_of(meta, target_name):
     """Direct parents (any resolved version) of `target_name` in the
     current dependency graph."""
@@ -1209,6 +1212,51 @@ def _crate_dep_req(crate, version, dep_name):
     _dep_req_cache[key] = result
     return result
 
+def _satisfies_req(req, version):
+    """A REAL cargo-requirement satisfaction check: version >= req AND
+    within req's caret-compatible upper bound. Deliberately separate from
+    caret_compatible() above, which only checks "same semver class" for
+    pin-preservation decisions elsewhere and does NOT enforce the lower
+    bound at all -- confirmed live caret_compatible("1.1.1", "1.0.0")
+    returns True (both major version 1), which is wrong for an actual
+    requirement check (1.0.0 does not satisfy "^1.1.1")."""
+    req = req.strip().lstrip("^")
+    try:
+        r = [int(x) for x in req.split(".")]
+        v = [int(x) for x in version.split(".")]
+    except ValueError:
+        return False
+    r += [0] * (3 - len(r))
+    v += [0] * (3 - len(v))
+    if v < r:
+        return False
+    if r[0] != 0:
+        return v[0] == r[0]
+    if r[1] != 0:
+        return v[0] == 0 and v[1] == r[1]
+    return v[0] == 0 and v[1] == 0 and v[2] == r[2]
+
+def _parent_downgrade_safe(pname, p_candidate, meta):
+    """A cascade fix's candidate parent downgrade is only ever checked
+    against the ONE child relationship that triggered it -- but the same
+    parent can have OTHER already-resolved dependents with their own,
+    unrelated hard requirement on it. Confirmed live: actix-connect
+    (itself one of our own exact-pinned dependencies, via actix-web 3)
+    requires actix-rt "^1.1.1" -- cascading actix-rt down to 1.0.0 to fix
+    an UNRELATED futures-util floor issue satisfied that ONE relationship
+    but silently broke actix-connect's own hard pin instead, a conflict
+    that doesn't surface until the BUILDER stage's real `cargo build`,
+    well past msrv_repair.py's own pin-verification metadata call. Check
+    every OTHER current dependent of `pname` before accepting a
+    candidate."""
+    for gp_name, gp_version in _dependents_of(meta, pname):
+        found, req = _crate_dep_req(gp_name, gp_version, pname)
+        if not found or req is None:
+            continue
+        if not _satisfies_req(req, p_candidate):
+            return False
+    return True
+
 def _cascade_fix(name, version, meta):
     """When `name`@`version` has NO compatible candidate in its own
     semver class, a plain per-crate floor check can't fix it -- but the
@@ -1248,6 +1296,8 @@ def _cascade_fix(name, version, meta):
             found, req = _crate_dep_req(pname, p_candidate, name)
             if not found:
                 continue  # transient failure -- try the next candidate
+            if not _parent_downgrade_safe(pname, p_candidate, meta):
+                continue
             if req is None:
                 return [(pname, pversion, p_candidate)]
             bare_req = req.lstrip("^")
@@ -1416,28 +1466,66 @@ def _crate_ver_tuple(v):
     parts = v.split(".")
     return tuple(int(p) for p in parts[:2])
 
-def _transitive_pin_override(name, version):
+def _transitive_pin_spec(name, version, active_features):
+    """Returns None for "a bare `name = \"=version\"` pin is safe/exact",
+    or (default_features_bool, extra_features_list) otherwise.
+
+    The static _TRANSITIVE_PIN_OVERRIDES table is checked first (kept for
+    hashbrown's already-verified version-gated behavior), but for every
+    OTHER transitively-pinned crate this now derives the answer directly
+    from cargo metadata's own reported active-feature set for the CURRENT
+    resolved node, rather than leaving it to a hardcoded per-crate table
+    that can only ever cover crates someone already hit and diagnosed.
+
+    Confirmed live this generic case matters just as much as hashbrown's:
+    actix-web 3 (via actix-connect) resolves trust-dns-proto with
+    `default-features = false, features = ["tokio-runtime"]` -- its
+    "backtrace" feature (an optional dep pulling in gimli/addr2line/
+    object/adler2/etc., none of which the real dependency graph ever
+    needed) is NOT active. A bare `trust-dns-proto = "=0.19.7"` re-pin
+    (no default-features=false) reactivates it anyway -- confirmed by
+    directly comparing `cargo metadata`'s reported active-feature list
+    for this exact node with and without our own bare pin present in
+    Cargo.toml. That single reactivated feature then cascades into a
+    whole separate MSRV-floor chain (gimli/hashbrown/twox-hash) with no
+    connection to argon2 or actix-web at all."""
     override = _TRANSITIVE_PIN_OVERRIDES.get(name)
-    if not override:
+    if override:
+        before = override.get("before")
+        if before is None or _crate_ver_tuple(version) < before:
+            return (False, override["features"])
         return None
-    before = override.get("before")
-    if before is not None and _crate_ver_tuple(version) >= before:
+    default_active = "default" in active_features
+    extra = [f for f in active_features if f != "default"]
+    if default_active and not extra:
         return None
-    return override
+    return (default_active, extra)
 
-def _transitive_pin_line(name, version):
-    override = _transitive_pin_override(name, version)
-    if not override:
+def _transitive_pin_line(name, version, active_features=()):
+    spec = _transitive_pin_spec(name, version, active_features)
+    if spec is None:
         return f'{name} = "={version}"'
-    feat_str = ", ".join(f'"{f}"' for f in override["features"])
-    return f'{name} = {{ version = "={version}", default-features = false, features = [{feat_str}] }}'
+    default_features, features = spec
+    parts = [f'version = "={version}"']
+    if not default_features:
+        parts.append("default-features = false")
+    if features:
+        feat_str = ", ".join(f'"{f}"' for f in features)
+        parts.append(f'features = [{feat_str}]')
+    return f'{name} = {{ {", ".join(parts)} }}'
 
-def _transitive_pin_dict(name, version):
-    override = _transitive_pin_override(name, version)
-    if not override:
+def _transitive_pin_dict(name, version, active_features=()):
+    spec = _transitive_pin_spec(name, version, active_features)
+    if spec is None:
         return f'{{ package = "{name}", version = "={version}" }}'
-    feat_str = ", ".join(f'"{f}"' for f in override["features"])
-    return f'{{ package = "{name}", version = "={version}", default-features = false, features = [{feat_str}] }}'
+    default_features, features = spec
+    parts = [f'package = "{name}"', f'version = "={version}"']
+    if not default_features:
+        parts.append("default-features = false")
+    if features:
+        feat_str = ", ".join(f'"{f}"' for f in features)
+        parts.append(f'features = [{feat_str}]')
+    return f'{{ {", ".join(parts)} }}'
 
 def rewrite_pinned_toml():
     with open("Cargo.toml", "rb") as f:
@@ -1454,6 +1542,7 @@ def rewrite_pinned_toml():
     by_name = defaultdict(set)
     for name, version in _resolved_pkgs(meta):
         by_name[name].add(version)
+    feats_by_pkg = _features_by_pkg(meta)
 
     lines = []
     for name in sorted(by_name):
@@ -1463,7 +1552,7 @@ def rewrite_pinned_toml():
             if name in protected:
                 lines.append(dep_line(name, v, orig_deps[name]))
             else:
-                lines.append(_transitive_pin_line(name, v))
+                lines.append(_transitive_pin_line(name, v, feats_by_pkg.get((name, v), ())))
         else:
             # Multiple incompatible majors resolved for one crate name --
             # if it's one of OUR OWN direct deps, the "protected" (feature-
@@ -1487,7 +1576,7 @@ def rewrite_pinned_toml():
                     lines.append(dep_line(name, v, orig_deps[name]))
                 else:
                     alias = f"{name.replace('-', '_')}_pin{i}"
-                    lines.append(f'{alias} = {_transitive_pin_dict(name, v)}')
+                    lines.append(f'{alias} = {_transitive_pin_dict(name, v, feats_by_pkg.get((name, v), ()))}')
 
     out = [
         "[package]",
@@ -1522,6 +1611,7 @@ def _reconcile_new_pins(max_rounds=5):
         if meta is None:
             print("  ! cargo metadata failed during pin verification")
             return
+        feats_by_pkg = _features_by_pkg(meta)
         with open("Cargo.toml", "rb") as f:
             data = tomllib.load(f)
         deps = data.get("dependencies", {})
@@ -1602,7 +1692,22 @@ def _reconcile_new_pins(max_rounds=5):
                     print(f"  ! newly-surfaced {name} {version} needs rust {floor} > {TARGET}, no compatible version -- leaving as-is")
 
             if name not in by_crate:
-                deps[name] = f"={target_version}"
+                # Same bare-pin risk as rewrite_pinned_toml()'s transitive
+                # case (see _transitive_pin_spec) -- a newly-surfaced crate
+                # pinned with no default-features/features qualifier can
+                # reactivate an optional feature (and its own separate
+                # MSRV-floor chain) the real graph never asked for.
+                spec = _transitive_pin_spec(name, target_version, feats_by_pkg.get((name, version), ()))
+                if spec is None:
+                    deps[name] = f"={target_version}"
+                else:
+                    default_features, features = spec
+                    val = {"version": f"={target_version}"}
+                    if not default_features:
+                        val["default-features"] = False
+                    if features:
+                        val["features"] = features
+                    deps[name] = val
                 changed = True
                 print(f"  newly-surfaced {name} -> pinned at ={target_version}")
                 continue
@@ -1631,7 +1736,21 @@ def _reconcile_new_pins(max_rounds=5):
                 elif target_version != version:
                     val = deps[key]
                     if isinstance(val, dict):
-                        val["version"] = f"={target_version}"
+                        # Any default-features/features qualifier here was
+                        # computed for the OLD version -- confirmed live it
+                        # can name a feature that simply doesn't exist on
+                        # the new target version at all (form_urlencoded
+                        # 1.2.2's "alloc"/"std" feature split doesn't exist
+                        # on 1.0.1 -- a hard cargo manifest error, not just
+                        # a functional gap). Keep only the "package" alias
+                        # (renames don't change across versions) and let
+                        # the NEXT round's fresh metadata scan re-derive
+                        # whatever features the new version actually needs,
+                        # same as a newly-surfaced pin.
+                        if "package" in val:
+                            deps[key] = {"package": val["package"], "version": f"={target_version}"}
+                        else:
+                            deps[key] = f"={target_version}"
                     else:
                         deps[key] = f"={target_version}"
                     changed = True
