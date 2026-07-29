@@ -642,12 +642,6 @@
               "nr": "0.6",
               "release_date": "2022-11-16",
               "compatibility": [
-                "1.69",
-                "1.70",
-                "1.71",
-                "1.72",
-                "1.73",
-                "1.74",
                 "1.75",
                 "1.76",
                 "1.77",
@@ -672,7 +666,7 @@
                 "1.96",
                 "1.97"
               ],
-              "notes": "Pre-http-crate-1.0 era. Release date approximate (not independently pinned via crates.io in this pass). Vendor-estimated MSRV floor (1.63) turned out to be wrong once actually built: axum -> tower-http/hyper -> url/idna pulls in the icu4x-based idna_adapter chain, and idna_adapter's own icu_properties 1.x line hard-requires zerovec ^0.9.4 -- every non-yanked zerovec release satisfying that (0.9.7+) needs rustc 1.66, and no older icu_properties release avoids this without also failing idna_adapter's own version requirement. Corrected via real build to 1.69, the lowest sparse-set value confirmed working end-to-end (1.63/1.64/1.65 all fail on this same wall)."
+              "notes": "Pre-http-crate-1.0 era. Release date approximate (not independently pinned via crates.io in this pass). Vendor-estimated MSRV floor (1.63) turned out to be wrong once actually built: axum -> tower-http/hyper -> url/idna pulls in the icu4x-based idna_adapter chain. First correction (1.63->1.69) confirmed zerovec/icu_properties needing rustc 1.66. That floor then broke AGAIN within the same day (icu4x is under visibly rapid upstream churn) once some dependent in the same chain started hard-requiring yoke >=0.7.5, which itself needs rustc 1.71.1 -- confirmed live via a real build failure at both 1.69 and 1.70 (a combo that had passed clean hours earlier). Given how repeatedly this exact family has shifted underneath already-verified floors, corrected to 1.75 -- the same value already independently and repeatedly verified stable for axum-0.7 and actix-web -- rather than continuing to chase a moving target at the 1.69-1.74 boundary."
             },
             {
               "nr": "0.7",

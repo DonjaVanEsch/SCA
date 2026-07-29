@@ -744,6 +744,19 @@ _TIME_MSRV_TIERS = [
     ((1, 88), "0.3.46"),
 ]
 
+# `log` is a near-universal transitive dependency (pulled in by almost
+# every crate that logs anything) whose own MSRV has also crept up
+# gradually -- confirmed live via a real build failure on Rocket 0.4's
+# effective target (1.68): "log v0.4.33 cannot be built... requires rustc
+# 1.71.0". Same lockgen-vs-builder-stage gap, same multi-tier shape as
+# `time` above -- confirmed via crates.io version history.
+_LOG_MSRV_TIERS = [
+    ((1, 60), "0.4.20"),
+    ((1, 61), "0.4.28"),
+    ((1, 68), "0.4.29"),
+    ((1, 71), "0.4.30"),
+]
+
 
 def _ver_tuple2(v: str) -> tuple:
     parts = v.split(".")
@@ -921,6 +934,10 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
     for threshold, cap_version in _TIME_MSRV_TIERS:
         if target_t < threshold:
             ecosystem_caps += f'time = ">=0.3, <{cap_version}"\n'
+            break
+    for threshold, cap_version in _LOG_MSRV_TIERS:
+        if target_t < threshold:
+            ecosystem_caps += f'log = ">=0.4, <{cap_version}"\n'
             break
 
     return (
@@ -1291,6 +1308,36 @@ def _dependents_of(meta, target_name):
                 parents.append((pname, pversion))
     return parents
 
+def _dependents_of_exact(meta, target_name, target_version):
+    """Like _dependents_of, but only parents whose OWN dependency edge
+    resolves to THIS EXACT (name, version) instance -- not just any
+    parent of ANY resolved version sharing the same crate name. Confirmed
+    live this distinction is essential when multiple incompatible majors
+    of the same crate coexist as separate aliased pins (e.g. syn 0.15.44
+    for Rocket-era macros AND syn 2.0.119 for modern serde_derive,
+    genuinely unrelated to each other): the name-only _dependents_of()
+    let a cascade fix for the 2.x instance's floor issue get "solved"
+    using the 0.15.x instance's OWN parent's requirement instead --
+    nonsensical, since that parent never depended on the 2.x instance at
+    all, and the resulting "fix" doesn't change anything real. This
+    produced a genuine infinite non-converging reconcile loop: the exact
+    same no-op "fix" got reapplied every single round, always giving up
+    after max_rounds with the real floor violation still unresolved."""
+    target_ids = {
+        node["id"] for node in meta["resolve"]["nodes"]
+        if not node["id"].startswith("path+")
+        and _split_pkg_id(node["id"]) == (target_name, target_version)
+    }
+    parents = []
+    for node in meta["resolve"]["nodes"]:
+        if node["id"].startswith("path+"):
+            continue
+        pname, pversion = _split_pkg_id(node["id"])
+        for dep in node.get("deps", []):
+            if dep.get("pkg", "") in target_ids:
+                parents.append((pname, pversion))
+    return parents
+
 _dep_req_cache = {}
 _valid_features_cache = {}
 
@@ -1420,7 +1467,7 @@ def _cascade_fix(name, version, meta):
     could run for 20+ minutes against a crate with a long version history."""
     if meta is None:
         return None
-    for pname, pversion in _dependents_of(meta, name):
+    for pname, pversion in _dependents_of_exact(meta, name, version):
         candidates = candidate_order(pname, pversion)[:25]
         # Prefetch every candidate's dep-req in parallel -- confirmed live
         # doing this sequentially (one HTTP round-trip per candidate,
@@ -1505,9 +1552,25 @@ def repair_loop():
             floor = current_floor(name, version)
             if floor is None or floor <= TARGET_T:
                 continue
+            # _parent_downgrade_safe() (despite its name) is a generic
+            # "does downgrading THIS crate to THIS candidate break any of
+            # its CURRENT dependents' own requirements" check -- originally
+            # written for _cascade_fix's parent-downgrade case, but the
+            # exact same check is needed here too: a same-class candidate
+            # from candidate_order() was being accepted with NO check for
+            # whether an ALREADY-exact-pinned dependent (e.g. our own
+            # framework/library, pinned via the BFS full-closure mechanism)
+            # has a hard requirement the candidate doesn't satisfy.
+            # Confirmed live: parking_lot_core needed downgrading to 0.9.11
+            # (0.9.12 needs rustc 1.71), but our own already-pinned
+            # `parking_lot = "=0.12.5"` hard-requires `parking_lot_core
+            # ^0.9.12` -- accepted anyway, producing an internally
+            # inconsistent pin set that only failed in the BUILDER stage.
             candidates = [c for c in candidate_order(name, version) if c != version]
-            if candidates:
-                to_fix.append((name, version, candidates[0]))
+            safe_candidate = next(
+                (c for c in candidates if _parent_downgrade_safe(name, c, meta)), None)
+            if safe_candidate:
+                to_fix.append((name, version, safe_candidate))
                 scheduled_names.add(name)
                 continue
 
@@ -1884,8 +1947,10 @@ def _reconcile_new_pins(max_rounds=5):
             no_fix = False
             if floor is not None and floor > TARGET_T:
                 candidates = [c for c in candidate_order(name, version) if c != version]
-                if candidates:
-                    target_version = candidates[0]
+                safe_candidate = next(
+                    (c for c in candidates if _parent_downgrade_safe(name, c, meta)), None)
+                if safe_candidate:
+                    target_version = safe_candidate
                 else:
                     # No same-class candidate -- try a cascade fix (same
                     # mechanism repair_loop() already uses, see its own
@@ -2131,6 +2196,39 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
     )
 
 
+_ACTIX_WEB4_ACTIXHTTP_1_88_FLOOR = (1, 88)
+
+def _actix_web_4_msrv_cap(resolved: str, lang_ver: str) -> str:
+    """actix-web resolves its "4" bucket generically as "latest patch on
+    crates.io" via _resolve() -- with NO msrv awareness, since that
+    function is shared by every framework/library resolution in this
+    generator. Confirmed live this is a real, recurring gap for actix-web
+    specifically: actix-web 4.13.0 bumped its own internal actix-http
+    requirement from "^3.11.2" to "^3.12.0", and 4.14.0 to "^3.13.0" --
+    actix-http 3.12.0+ itself needs rustc 1.88 (confirmed via crates.io
+    version metadata). Since actix-web is exact-pinned as OUR OWN direct
+    dependency (fw_dep, not a loose range), msrv_repair.py's dynamic
+    downgrade mechanism can correctly identify that actix-http needs
+    capping below 1.88 but has no way to ALSO downgrade actix-web itself
+    to relax its own too-strict requirement -- confirmed live via a real
+    build failure ("failed to select a version for actix-http ... required
+    by actix-web v4.14.0"). Ecosystem drift (crates.io publishing a newer
+    actix-web patch) can silently push an already-tested rustc<1.88 combo
+    into this wall at any time, since nothing in our OWN generator needs
+    to change for it to recur. Cap the FRAMEWORK resolution itself back to
+    the newest pre-1.88-requiring release when the target doesn't reach
+    1.88, mirroring the ecosystem_caps pattern used elsewhere in this file
+    but applied at version-resolution time since a bare Cargo.toml range
+    can't apply to an already-exact-pinned framework dependency."""
+    if _ver_tuple2(lang_ver) >= _ACTIX_WEB4_ACTIXHTTP_1_88_FLOOR:
+        return resolved
+    if _ver_tuple2(resolved) < (4, 13):
+        return resolved
+    versions = _fetch_crates_versions("actix-web")
+    candidates = [v for v in versions if v.startswith("4.") and _ver_tuple2(v) < (4, 13)]
+    return candidates[-1] if candidates else resolved
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 def write_context(lang_ver: str, fw_name: str, fw_major: str,
@@ -2147,6 +2245,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     fw_pkg = _FW_PACKAGE[fw_name]
     try:
         fw_resolved = _resolve(fw_pkg, fw_major)
+        if fw_resolved is not None and fw_name == "actix-web" and fw_major == "4":
+            fw_resolved = _actix_web_4_msrv_cap(fw_resolved, lang_ver)
     except CratesIoLookupError as exc:
         print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
         return False
