@@ -672,11 +672,6 @@
               "nr": "0.7",
               "release_date": "2023-11-27",
               "compatibility": [
-                "1.70",
-                "1.71",
-                "1.72",
-                "1.73",
-                "1.74",
                 "1.75",
                 "1.76",
                 "1.77",
@@ -701,7 +696,7 @@
                 "1.96",
                 "1.97"
               ],
-              "notes": "http crate 0.2->1.0 + hyper 0.14->1.0 -- the single biggest breaking change in axum's history, confirmed via the first research pass. MSRV floor (1.70) is an era-based ESTIMATE pending real-build confirmation; current axum MSRV is 1.80 but that's for the LATEST 0.8.x, not 0.7.0 itself."
+              "notes": "http crate 0.2->1.0 + hyper 0.14->1.0 -- the single biggest breaking change in axum's history, confirmed via the first research pass. Vendor-estimated MSRV floor (1.70) turned out to be wrong once actually built: the same idna/icu4x chain axum-0.6 hits (see its own notes) affects 0.7 too -- some dependent in that chain hard-requires yoke >=0.7.5, needing rustc 1.71.1, confirmed live via a real build failure at 1.70 (a combo that had passed clean earlier the same day, before this same family shifted again). Corrected to 1.75, matching axum-0.6's own corrected floor and the value already repeatedly verified stable across this whole session."
             }
           ],
           "notes": "axum's own API shape (extractor-based) stays fairly consistent release to release -- confirmed via research this is the WEAKEST multi-era framework in this registry, included for density/popularity (397M downloads) rather than a sharp API break like Rocket's."
