@@ -1785,12 +1785,30 @@ def sync_client_images() -> tuple[int, int, int]:
 
 # ── Filter helpers ────────────────────────────────────────────────────────────
 
-def _wildcard_clause(field: str, pattern: str):
-    """Return (sql_fragment, param) or (None, None) if no filter is needed."""
+# Columns where the dashboard's own filter UI documents "x as a version
+# wildcard" (placeholders like "1.x", "3.1x" -- confirmed in dashboard.html,
+# shown only next to version-style filter inputs, never name inputs).
+_VERSION_WILDCARD_COLS = frozenset({
+    "lang_version", "fw_version", "lib_version", "http_client_version",
+})
+
+
+def _wildcard_clause(field: str, pattern: str, allow_x_wildcard: bool = False):
+    """Return (sql_fragment, param) or (None, None) if no filter is needed.
+
+    allow_x_wildcard: only version-style columns (see _VERSION_WILDCARD_COLS)
+    should treat a literal "x" in the pattern as "match anything from here
+    on" (e.g. "3.x", "1.5x") -- confirmed live this was being applied to
+    EVERY filterable column, including plain names, with no gate at all:
+    filtering the framework name column by "axum" truncated at the "x"
+    (index 1) and searched for "a%", which also matched "actix-web". Name
+    columns (language/framework/library/http_client) were never meant to
+    support this at all -- the dashboard's own filter-input labels only
+    ever advertise "wildcard ok" next to version fields, never name ones."""
     if not pattern or pattern.strip() in ("", "*"):
         return None, None
     p = pattern.strip()
-    if "x" in p.lower():
+    if allow_x_wildcard and "x" in p.lower():
         prefix = p[: p.lower().index("x")]
         return f"{field} LIKE ?", prefix + "%"
     return f"{field} = ?", p
@@ -1822,7 +1840,7 @@ def _build_where(filters: dict, prefix: str = "", exclude: frozenset = frozenset
         if key in exclude:
             continue
         field = f"{prefix}{col}" if prefix else col
-        frag, param = _wildcard_clause(field, filters.get(key, ""))
+        frag, param = _wildcard_clause(field, filters.get(key, ""), col in _VERSION_WILDCARD_COLS)
         if frag:
             clauses.append(frag)
             params.append(param)
@@ -1848,7 +1866,7 @@ def _build_client_where(filters: dict, exclude: frozenset = frozenset()) -> tupl
     for col, key in _CLIENT_DETAIL_FILTER_MAP:
         if key in exclude:
             continue
-        frag, param = _wildcard_clause(col, filters.get(key, ""))
+        frag, param = _wildcard_clause(col, filters.get(key, ""), col in _VERSION_WILDCARD_COLS)
         if frag:
             clauses.append(frag)
             params.append(param)
