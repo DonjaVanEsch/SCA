@@ -657,16 +657,66 @@ _YANSI_ATTR_MACRO_FLOOR = (1, 54)  # yansi 0.5.1's #[doc = concat!(...)]
 _BYTESTRING_1_88_FLOOR = (1, 88)  # bytestring 1.5.1+ needs rustc 1.88
 # (confirmed via crates.io version history: 1.3.1->1.65, 1.4.0->1.71.1,
 # 1.5.0->1.75, 1.5.1->1.88 -- a gradual MSRV creep, same class as `time`)
-_ICU_HUB_1_86_FLOOR = (1, 86)  # the whole ICU-Unicode hub (entered via
-# actix-connect -> trust-dns-proto/resolver -> idna -> idna_adapter, same
-# transitive path as the trust-dns-proto/backtrace finding in Phase 17) --
-# confirmed live via a real build failure listing 8 packages together,
-# ALL jumping from an older, lower rust_version to exactly 1.86 in
-# lockstep in their own 2.2.0 (or idna_adapter's 1.2.2) release: icu_
-# collections/locale_core/normalizer/normalizer_data/properties/
-# properties_data/provider, plus idna_adapter (which ALSO switches to
-# edition="2024" at 1.2.2, matching the project's other edition2024 hub
-# crates). Every one of these compiles fine one minor release earlier.
+# The whole ICU4X ecosystem (icu4x.unicode.org) -- icu_provider/icu_
+# properties(+_data)/icu_collections/icu_locale_core/icu_normalizer(+
+# _data), plus their own shared low-level deps zerovec(-derive)/yoke
+# (-derive)/zerofrom(-derive)/zerotrie/potential_utf/tinystr/writeable,
+# and idna_adapter -- entered via actix-connect -> trust-dns-proto/
+# resolver -> idna, same transitive path as the Phase 17 backtrace
+# finding. Confirmed live via THREE separate real build failures across
+# rustc 1.63/1.70/1.75, each hitting a DIFFERENT internal MSRV tier of
+# this same family -- a single-tier cap (the original Phase 17c fix,
+# just below) only actually worked by coincidence for the one target it
+# was tested against (1.85, already above every tier). Every crate below
+# releases in lockstep with near-identical bump points -- confirmed via
+# crates.io version history for each, programmatically computing the
+# newest safe (non-yanked, non-prerelease) version at every tier rather
+# than hand-picking. Several of the derive-macro crates (zerovec-derive,
+# yoke-derive, zerofrom-derive) declare NO rust_version at all across
+# their ENTIRE history -- their real floor is only discoverable by
+# testing (confirmed live: zerovec-derive 0.11.3 fails at rustc 1.75/1.70
+# with E0658 on `#[expect]`, stabilized 1.81, exactly matching zerovec's
+# own sibling-release 0.11.1+ declared floor) -- assumed to release in
+# tight lockstep with their non-derive sibling's own declared thresholds,
+# confirmed to hold for this exact case. `None` for a given crate/tier
+# means no non-prerelease release exists that old at all -- omitted from
+# the cap entirely for that tier (the crate simply shouldn't be
+# reachable then, if the OTHER caps here are doing their job of steering
+# everything onto the older icu4x 1.x line instead of the 2.x rewrite).
+# Tier thresholds/caps below are computed PER ACTUAL SPARSE TARGET (1.63,
+# 1.69, 1.75, 1.85 -- the only rust_ver values that can ever reach this
+# hub, since only axum 0.6 (floor 1.63), axum 0.7 (floor 1.70), and
+# actix-web (floor 1.75) pull it in at all), not by naively picking "the
+# safe version at the tier's UPPER boundary" -- confirmed live that
+# collapsing e.g. "target < 1.67" into one cap using the value safe AT
+# 1.67 itself picked zerovec 0.10.4, which still needs rustc 1.67,
+# breaking the ACTUAL lower end of that bucket (1.63) instead. Each cap
+# below is: the newest non-yanked, non-prerelease version compatible
+# with the LOWEST rustc value in its bucket, so it's safe for every
+# value in that bucket, not just the top of it.
+_ICU4X_TIERS = {
+    "icu_provider":        [((1, 69), "1.3.0"), ((1, 85), "2.0.0"), ((1, 86), "2.2.0")],
+    "icu_properties":      [((1, 69), "1.3.0"), ((1, 85), "2.0.0"), ((1, 86), "2.2.0")],
+    "icu_properties_data": [((1, 85), "2.0.0"), ((1, 86), "2.2.0")],
+    "icu_collections":     [((1, 69), "1.3.0"), ((1, 85), "2.0.0"), ((1, 86), "2.2.0")],
+    "icu_locale_core":     [((1, 86), "2.2.0")],
+    "icu_normalizer":      [((1, 69), "1.3.0"), ((1, 85), "2.0.0"), ((1, 86), "2.2.0")],
+    "icu_normalizer_data": [((1, 85), "2.0.0"), ((1, 86), "2.2.0")],
+    "idna_adapter":        [((1, 69), "1.2.0"), ((1, 85), "1.2.1"), ((1, 86), "1.2.2")],
+    "zerovec":             [((1, 69), "0.9.7"), ((1, 75), "0.11.0"), ((1, 85), "0.11.1")],
+    "zerovec-derive":      [((1, 69), "0.9.7"), ((1, 75), "0.11.0"), ((1, 85), "0.11.1")],
+    "yoke":                [((1, 69), "0.7.2"), ((1, 75), "0.7.5"), ((1, 85), "0.8.0")],
+    "yoke-derive":         [((1, 69), "0.7.2"), ((1, 75), "0.7.5"), ((1, 85), "0.8.0")],
+    "zerofrom":            [((1, 69), "0.1.3"), ((1, 75), "0.1.5")],
+    "zerofrom-derive":     [((1, 69), "0.1.3"), ((1, 75), "0.1.5")],
+    "zerotrie":            [((1, 75), "0.2.0"), ((1, 85), "0.2.1")],
+    "potential_utf":       [((1, 85), "0.1.2")],  # no non-prerelease
+    # release at all exists below rustc 1.71.1 -- must not be reachable
+    # below that if the OTHER caps here are steering everything onto
+    # icu4x's older 1.x line the way they're supposed to.
+    "tinystr":             [((1, 69), "0.7.2"), ((1, 75), "0.8.0"), ((1, 85), "0.8.1")],
+    "writeable":           [((1, 69), "0.5.3"), ((1, 75), "0.6.0"), ((1, 85), "0.6.1")],
+}
 
 # `time` is pulled in transitively (Rocket's own tokio/tracing stack), and
 # its own MSRV has crept up gradually release by release -- confirmed live
@@ -818,17 +868,11 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         ecosystem_caps += 'cpufeatures = ">=0.2, <0.3.0"\n'
     if target_t < _BYTESTRING_1_88_FLOOR:
         ecosystem_caps += 'bytestring = ">=1, <1.5.1"\n'
-    if target_t < _ICU_HUB_1_86_FLOOR:
-        ecosystem_caps += (
-            'icu_collections = ">=1, <2.2.0"\n'
-            'icu_locale_core = ">=1, <2.2.0"\n'
-            'icu_normalizer = ">=1, <2.2.0"\n'
-            'icu_normalizer_data = ">=1, <2.2.0"\n'
-            'icu_properties = ">=1, <2.2.0"\n'
-            'icu_properties_data = ">=1, <2.2.0"\n'
-            'icu_provider = ">=1, <2.2.0"\n'
-            'idna_adapter = ">=1, <1.2.2"\n'
-        )
+    for _icu_crate, _icu_tiers in _ICU4X_TIERS.items():
+        for _icu_threshold, _icu_cap_version in _icu_tiers:
+            if target_t < _icu_threshold:
+                ecosystem_caps += f'{_icu_crate} = ">=0, <{_icu_cap_version}"\n'
+                break
     if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
         # Rocket depends directly on `tempfile`, which is where getrandom
         # 0.4.x actually enters the graph -- confirmed live via `cargo tree
@@ -1654,6 +1698,88 @@ def rewrite_pinned_toml():
         f.write("\\n".join(out))
     print(f"rewrote Cargo.toml with {len(lines)} exact-pinned dependencies")
 
+def _write_reconciled_toml(pkg, deps):
+    lines = []
+    for key in sorted(deps):
+        val = deps[key]
+        if isinstance(val, dict):
+            # Confirmed live this dropped "default-features" (and, for
+            # a `package = ...` rename, "features" too) on every round
+            # that touched ANY dependency -- rewrite_pinned_toml()'s
+            # own hashbrown default-features=false fix survived only
+            # until the FIRST reconcile round that changed some OTHER
+            # package, since this reconstruction only ever read
+            # "package"/"version"/"features", silently discarding
+            # anything else already in the dict.
+            parts = []
+            if "package" in val:
+                parts.append(f'package = "{val["package"]}"')
+            parts.append(f'version = "{val["version"]}"')
+            if val.get("default-features") is False:
+                parts.append("default-features = false")
+            feats = val.get("features")
+            if feats:
+                feat_str = ", ".join(f'"{ft}"' for ft in feats)
+                parts.append(f'features = [{feat_str}]')
+            if len(parts) == 1:
+                lines.append(f'{key} = "{val["version"]}"')
+            else:
+                lines.append(f'{key} = {{ {", ".join(parts)} }}')
+        else:
+            lines.append(f'{key} = "{val}"')
+    out = [
+        "[package]",
+        f'name = "{pkg["name"]}"',
+        f'version = "{pkg["version"]}"',
+        f'edition = "{pkg["edition"]}"',
+        "",
+        "[dependencies]",
+        *lines,
+        "",
+    ]
+    with open("Cargo.toml", "w") as f:
+        f.write("\\n".join(out))
+
+def _dedupe_toml_aliases():
+    """Two separately-created aliases for the same crate (e.g. from
+    rewrite_pinned_toml()'s own "multiple incompatible majors" branch, or
+    two different reconcile rounds each creating a "newly-surfaced" pin
+    before the other's version got updated to match) can converge on the
+    IDENTICAL exact version -- cargo rejects two different dependency
+    names resolving to the same crate+version outright ("depends on
+    crate X vY multiple times with different names"). Confirmed live:
+    tinystr ended up with two separate aliases both pinned at exactly
+    "=0.7.1". This is a pure TOML-text problem, so it must run BEFORE
+    `cargo metadata` is ever called in a round -- cargo refuses to
+    compute metadata at all while the duplicate exists, so a dedup pass
+    placed after a metadata call can never be reached once this happens.
+    Returns True if anything was removed (Cargo.toml already rewritten)."""
+    with open("Cargo.toml", "rb") as f:
+        data = tomllib.load(f)
+    deps = data.get("dependencies", {})
+    by_crate = defaultdict(list)
+    for key, val in deps.items():
+        if isinstance(val, dict) and "package" in val:
+            crate = val["package"]
+            ver = val.get("version", "").lstrip("=")
+        else:
+            crate = key
+            ver = (val.get("version") if isinstance(val, dict) else val) or ""
+            ver = ver.lstrip("=")
+        by_crate[crate].append((key, ver))
+    changed = False
+    for crate, entries in by_crate.items():
+        seen = set()
+        for key, ver in entries:
+            if ver in seen:
+                del deps[key]
+                changed = True
+            else:
+                seen.add(ver)
+    if changed:
+        _write_reconciled_toml(data["package"], deps)
+    return changed
+
 def _reconcile_new_pins(max_rounds=5):
     """rewrite_pinned_toml() pins everything `cargo metadata` reveals at
     THAT moment -- but confirmed live that re-resolving the JUST-WRITTEN,
@@ -1669,6 +1795,7 @@ def _reconcile_new_pins(max_rounds=5):
     package, and either fix its existing pin in place or add a brand new
     one, looping until the resolved set needs no more changes."""
     for round_num in range(max_rounds):
+        _dedupe_toml_aliases()
         meta = _cargo_metadata()
         if meta is None:
             print("  ! cargo metadata failed during pin verification")
@@ -1837,47 +1964,7 @@ def _reconcile_new_pins(max_rounds=5):
             print(f"pin set stable after {round_num} reconcile round(s)")
             return
 
-        pkg = data["package"]
-        lines = []
-        for key in sorted(deps):
-            val = deps[key]
-            if isinstance(val, dict):
-                # Confirmed live this dropped "default-features" (and, for
-                # a `package = ...` rename, "features" too) on every round
-                # that touched ANY dependency -- rewrite_pinned_toml()'s
-                # own hashbrown default-features=false fix survived only
-                # until the FIRST reconcile round that changed some OTHER
-                # package, since this reconstruction only ever read
-                # "package"/"version"/"features", silently discarding
-                # anything else already in the dict.
-                parts = []
-                if "package" in val:
-                    parts.append(f'package = "{val["package"]}"')
-                parts.append(f'version = "{val["version"]}"')
-                if val.get("default-features") is False:
-                    parts.append("default-features = false")
-                feats = val.get("features")
-                if feats:
-                    feat_str = ", ".join(f'"{ft}"' for ft in feats)
-                    parts.append(f'features = [{feat_str}]')
-                if len(parts) == 1:
-                    lines.append(f'{key} = "{val["version"]}"')
-                else:
-                    lines.append(f'{key} = {{ {", ".join(parts)} }}')
-            else:
-                lines.append(f'{key} = "{val}"')
-        out = [
-            "[package]",
-            f'name = "{pkg["name"]}"',
-            f'version = "{pkg["version"]}"',
-            f'edition = "{pkg["edition"]}"',
-            "",
-            "[dependencies]",
-            *lines,
-            "",
-        ]
-        with open("Cargo.toml", "w") as f:
-            f.write("\\n".join(out))
+        _write_reconciled_toml(data["package"], deps)
     print("gave up reconciling new pins after max rounds")
 
 repair_loop()
