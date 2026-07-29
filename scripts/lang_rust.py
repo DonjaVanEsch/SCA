@@ -855,24 +855,40 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             'zeroize = ">=1, <1.9.0"\n'
             'zeroize_derive = ">=1, <1.5.0"\n'
         )
-    if target_t < _BASE64CT_EDITION2024_FLOOR:
-        # cpufeatures (pulled in transitively via sha2/blake2, needed by
-        # bcrypt/argon2's password-hash chain and actix-web 4's own hasher
-        # stack) -- same edition2024 pattern as base64ct/getrandom/zeroize
-        # above (confirmed live via a real build failure at rustc 1.75:
-        # "feature `edition2024` is required", cpufeatures 0.3.0's own
-        # crates.io metadata confirms edition="2024"/rust_version=1.85,
-        # every 0.2.x release is edition="2018"). Reuses
-        # _BASE64CT_EDITION2024_FLOOR rather than a new constant since
-        # both share the identical 1.85 threshold.
-        ecosystem_caps += 'cpufeatures = ">=0.2, <0.3.0"\n'
-    if target_t < _BYTESTRING_1_88_FLOOR:
-        ecosystem_caps += 'bytestring = ">=1, <1.5.1"\n'
-    for _icu_crate, _icu_tiers in _ICU4X_TIERS.items():
-        for _icu_threshold, _icu_cap_version in _icu_tiers:
-            if target_t < _icu_threshold:
-                ecosystem_caps += f'{_icu_crate} = ">=0, <{_icu_cap_version}"\n'
-                break
+    if fw_name in ("actix-web", "axum"):
+        # cpufeatures/bytestring/the whole ICU4X hub below are only ever
+        # reachable via actix-web's actix-connect->trust-dns-proto and
+        # axum's own tower-http/hyper->url->idna chains -- Iron/Rocket
+        # (and, unless a future real build proves otherwise, warp) never
+        # pull in any of this modern async/DNS/URL-parsing stack at all.
+        # Confirmed live this MUST be scoped, not applied unconditionally:
+        # declaring `icu_provider = ...` etc. as a bare direct dependency
+        # FORCES cargo to resolve it regardless of whether anything else
+        # in the graph actually needs it -- an Iron combo, which has no
+        # earthly use for icu4x, hit a genuine unrelated version conflict
+        # (`icu_locid = "=0.6.0"` unsatisfiable) purely because these caps
+        # were forcing icu4x's whole 1.x line into a graph that never
+        # needed it, discovered by accident while testing something else
+        # entirely (a cache-mount sharing-mode experiment).
+        if target_t < _BASE64CT_EDITION2024_FLOOR:
+            # cpufeatures (pulled in transitively via sha2/blake2, needed
+            # by bcrypt/argon2's password-hash chain and actix-web 4's own
+            # hasher stack) -- same edition2024 pattern as base64ct/
+            # getrandom/zeroize above (confirmed live via a real build
+            # failure at rustc 1.75: "feature `edition2024` is required",
+            # cpufeatures 0.3.0's own crates.io metadata confirms
+            # edition="2024"/rust_version=1.85, every 0.2.x release is
+            # edition="2018"). Reuses _BASE64CT_EDITION2024_FLOOR rather
+            # than a new constant since both share the identical 1.85
+            # threshold.
+            ecosystem_caps += 'cpufeatures = ">=0.2, <0.3.0"\n'
+        if target_t < _BYTESTRING_1_88_FLOOR:
+            ecosystem_caps += 'bytestring = ">=1, <1.5.1"\n'
+        for _icu_crate, _icu_tiers in _ICU4X_TIERS.items():
+            for _icu_threshold, _icu_cap_version in _icu_tiers:
+                if target_t < _icu_threshold:
+                    ecosystem_caps += f'{_icu_crate} = ">=0, <{_icu_cap_version}"\n'
+                    break
     if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
         # Rocket depends directly on `tempfile`, which is where getrandom
         # 0.4.x actually enters the graph -- confirmed live via `cargo tree
@@ -938,8 +954,23 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
 # ENV, unlike every other language's default-HOME-relative cache path), with
 # the registry cache at $CARGO_HOME/registry and git checkouts at
 # $CARGO_HOME/git.
-_CARGO_REGISTRY_CACHE_MOUNT = "--mount=type=cache,id=cargo-registry-cache,target=/usr/local/cargo/registry,sharing=locked"
-_CARGO_GIT_CACHE_MOUNT = "--mount=type=cache,id=cargo-git-cache,target=/usr/local/cargo/git,sharing=locked"
+# `sharing=locked` (the original choice) serializes EVERY concurrent
+# Rust build's cargo invocation through one global lock per cache ID,
+# regardless of worker count -- confirmed live (Phase 15/18 investigation)
+# that under real parallel batches, only ONE runc sandbox is ever actively
+# compiling at a time while 3+ others sit queued for 15-40+ minutes each,
+# even though the system isn't resource-saturated. Switched to
+# `sharing=shared`, which relies on cargo's OWN internal advisory file
+# locking for concurrent access to its registry cache (the standard,
+# widely-documented approach for Rust+BuildKit caching, since cargo is
+# designed to tolerate multiple simultaneous invocations against the same
+# ~/.cargo directory on one machine). Confirmed live via two concurrent
+# `docker build --no-cache` runs (rustc 1.55 and 1.85, deliberately picked
+# to span old and new toolchains) against a scratch cache id: both showed
+# simultaneously-active runc sandboxes (true parallelism, not queued) and
+# both completed successfully with no corruption.
+_CARGO_REGISTRY_CACHE_MOUNT = "--mount=type=cache,id=cargo-registry-cache,target=/usr/local/cargo/registry,sharing=shared"
+_CARGO_GIT_CACHE_MOUNT = "--mount=type=cache,id=cargo-git-cache,target=/usr/local/cargo/git,sharing=shared"
 # Compiled build artifacts (target/) are NOT shared across combos (each
 # combo has different dependencies -- unlike the registry/git download
 # caches, a shared target/ would mix incompatible incremental-compilation
