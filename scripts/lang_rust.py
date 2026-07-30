@@ -783,7 +783,20 @@ _ICU4X_TIERS = {
     # icu4x's older 1.x line the way they're supposed to.
     "tinystr":             [((1, 69), "0.7.2"), ((1, 75), "0.8.0"), ((1, 85), "0.8.1")],
     "writeable":           [((1, 69), "0.5.3"), ((1, 75), "0.6.0"), ((1, 85), "0.6.1")],
-    "litemap":             [((1, 69), "0.7.1"), ((1, 75), "0.7.4"), ((1, 85), "0.7.5")],
+    "litemap":             [((1, 75), "0.5.0"), ((1, 85), "0.7.5")],
+    # ^ the (1,69)->0.7.1/(1,75)->0.7.4 two-tier split (originally computed
+    # for axum, whose own floor now never reaches below 1.75 anyway after
+    # its later yoke-driven correction) turned out unsafe once warp's OWN
+    # much lower floor (1.56) started actually reaching this hub: litemap
+    # 0.6.1 (satisfying "<0.7.1", a SEPARATE coexisting instance from
+    # whatever else resolves 0.4.0) uses a `const fn` with non-`Sized`
+    # trait bounds (E0658, issue #57563), confirmed live to fail at rustc
+    # 1.56 -- 0.4.0 confirmed live to compile cleanly in isolation at the
+    # same target. Collapsed to a single, more conservative "<0.5.0" cap
+    # covering the whole sub-1.75 range (not individually re-bisected
+    # tier-by-tier below 1.75, since nothing currently needs finer
+    # granularity there) -- 0.4.0 is the newest 0.4.x release and the
+    # newest confirmed-safe one.
     # ^ confirmed live: missing entirely was allowing litemap to resolve
     # to its newest (0.8.2, needing rustc 1.82) uncapped -- and whatever
     # actually needed that newer litemap ALSO pulled in a matching newer
@@ -899,6 +912,16 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
 
     if kind == "rocket-stable":
         fw_dep = f'{fw_crate} = {{ version = "{fw_ver}", features = ["json"] }}\n'
+    elif kind == "warp" and fw_major == "0.4":
+        # warp 0.4's own 2025 rewrite modularized itself behind feature
+        # flags (confirmed via crates.io: default = [], "server" pulls in
+        # hyper/hyper-util/tokio-net) -- warp::serve and the whole Server
+        # type live behind the "server" feature specifically. Confirmed
+        # live via a real build failure (E0425, "the item is gated behind
+        # the `server` feature") that a bare `warp = "0.4.3"` (correct for
+        # every EARLIER warp major, which never had this feature-gating
+        # system at all) leaves warp::serve entirely unreachable.
+        fw_dep = f'{fw_crate} = {{ version = "{fw_ver}", features = ["server"] }}\n'
     else:
         fw_dep = f'{fw_crate} = "{fw_ver}"\n'
 
@@ -918,7 +941,25 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         lib_dep = f'{lib_crate} = "{lib_ver}"\n'
 
     extra_fw_deps = ""
-    if kind in ("axum-old", "axum-new") or (kind == "warp" and fw_major != "0.1"):
+    if kind == "warp" and fw_major == "0.2":
+        # warp 0.2 hard-requires tokio "^0.2" specifically (confirmed via
+        # crates.io dependency metadata) -- unlike warp 0.1 (no async/await
+        # at all, see make_main_rs) or warp 0.3+ (tokio "^1.0", matching
+        # the modern tokio declared below), warp 0.2 DOES use async/await
+        # and #[tokio::main], but that macro's generated runtime-init code
+        # is bound to whichever tokio version WE declare as our own direct
+        # dependency -- declaring modern tokio 1.x here (as every other
+        # non-0.1 warp major correctly does) starts a tokio 1.x runtime
+        # that warp 0.2's own internal tokio-0.2-based reactor can never
+        # see, confirmed live via a real RUNTIME crash (build succeeds,
+        # but the running binary panics: "there is no reactor running,
+        # must be called from the context of a Tokio 0.2.x runtime") --
+        # the build-only verification pass never catches this class of
+        # bug, only a real `docker run` + curl does, per this project's
+        # own established runtime-vs-build-only verification lesson
+        # (compare the codename-mismatch bug found in Phase 13).
+        extra_fw_deps = 'tokio = { version = "0.2", features = ["full"] }\n'
+    elif kind in ("axum-old", "axum-new") or (kind == "warp" and fw_major not in ("0.1", "0.2")):
         # warp 0.1.x runs on its own internal tokio 0.1 (Future-0.1 trait)
         # and never uses #[tokio::main]/.await at all (see make_main_rs) --
         # declaring modern tokio 1.x here would be a genuinely unused,
@@ -999,21 +1040,45 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             'zeroize = ">=1, <1.9.0"\n'
             'zeroize_derive = ">=1, <1.5.0"\n'
         )
-    if fw_name in ("actix-web", "axum"):
+    if fw_name in ("actix-web", "axum") or (fw_name == "warp" and fw_major not in ("0.1", "0.2")):
         # cpufeatures/bytestring/the whole ICU4X hub below are only ever
-        # reachable via actix-web's actix-connect->trust-dns-proto and
-        # axum's own tower-http/hyper->url->idna chains -- Iron/Rocket
-        # (and, unless a future real build proves otherwise, warp) never
-        # pull in any of this modern async/DNS/URL-parsing stack at all.
+        # reachable via actix-web's actix-connect->trust-dns-proto,
+        # axum's own tower-http/hyper->url->idna chain, and warp 0.3+'s
+        # own hyper->url->idna chain. warp 0.1's much older hyper 0.12/
+        # tokio 0.1 stack never reaches this chain at all (confirmed live
+        # via warp 0.1's own extensive real-build testing never once
+        # hitting an icu4x-family failure). warp 0.2 ALSO never reaches
+        # it -- confirmed live the FIRST WAY, before this scoping fix even
+        # existed: a real build at warp 0.2's own corrected floor (1.56)
+        # succeeded completely cleanly, with zero icu4x-family crates
+        # anywhere in the dependency tree at all (warp 0.2's own older
+        # `headers`/`idna` combination avoids this chain entirely on its
+        # own). Applying these caps to warp 0.2 anyway (an earlier,
+        # overly-broad version of this same scoping fix) actively BROKE
+        # that already-working resolution -- confirmed live via a real
+        # build regression (litemap/stable_deref_trait/yoke-derive all
+        # started failing only once these caps were force-applied) --
+        # because the specific version ranges here were only ever
+        # verified against axum's own 1.63-1.85 reachable range, and
+        # warp 0.2's much lower 1.56 floor exposes untested territory
+        # within this same hub with its own further internal breaks
+        # (confirmed live: icu_properties 1.2.0 needing an ancient,
+        # already-broken icu_provider/zerovec combination that no rustc
+        # version fixes, since it's a genuine bug in that OLD release
+        # rather than an MSRV floor at all). Iron/Rocket never pull in any
+        # of this modern async/DNS/URL-parsing stack at all either.
         # Confirmed live this MUST be scoped, not applied unconditionally:
-        # declaring `icu_provider = ...` etc. as a bare direct dependency
-        # FORCES cargo to resolve it regardless of whether anything else
-        # in the graph actually needs it -- an Iron combo, which has no
-        # earthly use for icu4x, hit a genuine unrelated version conflict
-        # (`icu_locid = "=0.6.0"` unsatisfiable) purely because these caps
-        # were forcing icu4x's whole 1.x line into a graph that never
-        # needed it, discovered by accident while testing something else
-        # entirely (a cache-mount sharing-mode experiment).
+        # declaring `icu_provider = ...` etc.
+        # as a bare direct dependency FORCES cargo to resolve it regardless
+        # of whether anything else in the graph actually needs it -- an
+        # Iron combo, which has no earthly use for icu4x, hit a genuine
+        # unrelated version conflict (`icu_locid = "=0.6.0"` unsatisfiable)
+        # purely because these caps were forcing icu4x's whole 1.x line
+        # into a graph that never needed it, discovered by accident while
+        # testing something else entirely (a cache-mount sharing-mode
+        # experiment). warp 0.2/0.3 confirmed live to hit the EXACT same
+        # `yoke 0.7.5` MSRV wall (needs rustc 1.71.1) as axum's own
+        # icu4x-hub findings, unprotected until this scoping fix.
         if target_t < _BASE64CT_EDITION2024_FLOOR:
             # cpufeatures (pulled in transitively via sha2/blake2, needed
             # by bcrypt/argon2's password-hash chain and actix-web 4's own
@@ -1026,6 +1091,22 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             # than a new constant since both share the identical 1.85
             # threshold.
             ecosystem_caps += 'cpufeatures = ">=0.2, <0.3.0"\n'
+        if target_t < _BASE64CT_EDITION2024_FLOOR:
+            # stable_deref_trait (pulled in via yoke, part of the SAME
+            # icu4x hub -- confirmed live via `cargo tree -i
+            # stable_deref_trait` showing `yoke 0.5.0`/`yoke 0.6.2` as its
+            # only real parents) -- 1.2.1 (released 2025-10-09, no
+            # declared rust_version, exactly the "brand new release with
+            # an undeclared floor" class already seen for hashbrown/
+            # tinyvec/subtle) uses `cfg(target_has_atomic = "ptr")`
+            # (E0658), confirmed live via a real build failure at rustc
+            # 1.56. 1.2.0 (2020-07-13, also undeclared) has none of this
+            # and has been safe project-wide for years. Reuses
+            # _BASE64CT_EDITION2024_FLOOR's same 1.85 threshold as a
+            # reasonable, consistent boundary for "this specific release
+            # needs today's era" rather than empirically re-bisecting the
+            # exact target_has_atomic stabilization point.
+            ecosystem_caps += 'stable_deref_trait = ">=1, <1.2.1"\n'
         if target_t < _BYTESTRING_1_88_FLOOR:
             ecosystem_caps += 'bytestring = ">=1, <1.5.1"\n'
         for _icu_crate, _icu_tiers in _ICU4X_TIERS.items():
