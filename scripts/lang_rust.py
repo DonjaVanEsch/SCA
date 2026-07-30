@@ -576,6 +576,32 @@ def make_main_rs(fw_name: str, fw_major: str, lib_name: str, lib_major: str) -> 
         )
 
     if kind == "warp":
+        # warp 0.1.x predates async/await in its own public API entirely --
+        # it's built on tokio 0.1's Future-0.1 trait, not std::future::Future
+        # (confirmed live via a real build failure at rustc 1.54, the first
+        # sparse target where every OTHER transitive dependency finally
+        # compiled cleanly: "`()` is not a future", since warp 0.1's own
+        # `Server::run()` is a BLOCKING call -- it starts its own internal
+        # tokio 0.1 runtime and never returns a Future at all, so `.await`
+        # and `#[tokio::main] async fn main()` are both simply wrong for
+        # this era, not an MSRV issue). warp 0.2+ (2020-01-16 on, the
+        # tokio-0.2/std-async-await rewrite) uses the modern pattern.
+        if fw_major == "0.1":
+            return (
+                "use warp::Filter;\n"
+                f"{imports}\n"
+                f"{_HEX_ENCODE_FN}\n"
+                "fn main() {\n"
+                "    let index = warp::path::end().map(|| {\n"
+                f"        {touch}\n"
+                "        warp::reply::json(&serde_json::json!({\"message\": \"Hello World\", \"touch_len\": touch_result.len()}))\n"
+                "    });\n"
+                "    let version = warp::path(\"version\").map(|| {\n"
+                f"        warp::reply::json(&{version_json})\n"
+                "    });\n"
+                "    warp::serve(index.or(version)).run(([0, 0, 0, 0], 8000));\n"
+                "}\n"
+            )
         return (
             "use warp::Filter;\n"
             f"{imports}\n"
@@ -650,8 +676,49 @@ _ZEROIZE_EDITION2024_FLOOR = (1, 85)  # zeroize 1.9.0+/zeroize_derive 1.5.0+
 # relying on _reconcile_new_pins alone (the original plan, see Phase 9's
 # notes) wasn't actually sufficient; the same lockgen-vs-builder-stage gap
 # as base64ct/getrandom applies here too.
-_TEMPFILE_GETRANDOM04_FLOOR = (1, 85)  # tempfile 3.25.0+ widens its own
-# getrandom range to allow 0.4.x
+# tempfile 3.4.0 switched from libc/redox_syscall/winapi to `rustix ^0.36.0`
+# (confirmed via crates.io dependency history: 3.3.0 has no rustix at all,
+# 3.4.0 introduces it, 3.5.0 bumps to rustix ^0.37.1 AND is the first
+# release to declare its own rust_version=1.48). rustix 0.36.4 (and its own
+# `linux-raw-sys 0.1.3` dependency) declare NO rust_version at all -- same
+# "undeclared floor, only discoverable by real compiling" class as
+# hashbrown above -- confirmed live via a real build failure at rustc 1.36
+# (`linux-raw-sys`: `[u8; N]` doesn't implement Debug, pre-const-generics
+# array-trait-impl limit). tempfile 3.3.0 (pre-rustix, using only
+# libc/redox_syscall/winapi, all old-toolchain-safe bindings) is the safe
+# fallback for any target below tempfile's own declared 1.48 floor for
+# 3.5.0 -- not separately bisected further since 3.5.0's OWN declared
+# rust_version already makes anything >=1.48 metadata-safe on its own.
+_TEMPFILE_MSRV_TIERS = [
+    ((1, 48), "3.4.0"),
+    ((1, 85), "3.25.0"),
+]
+_INDEXMAP_HASHBROWN011_FLOOR = (1, 39)  # `hashbrown` (entered warp's graph
+# for the first time this session) is NEVER our own direct dependency -- it
+# only ever enters via `indexmap`'s own hard, unavoidable requirement on it
+# (confirmed via crates.io dependency history: indexmap 1.9.x -> hashbrown
+# ^0.12, 1.7.0-1.8.2 -> hashbrown ^0.11, 1.6.x -> hashbrown ^0.9). A first
+# attempt at fixing this added a BARE top-level `hashbrown` ecosystem cap --
+# confirmed live this does NOTHING useful: since we never actually use
+# hashbrown ourselves, that cap just resolves a second, unused hashbrown
+# instance satisfying OUR OWN edge, while indexmap's real, unavoidable edge
+# still resolves separately according to ITS OWN requirement, completely
+# unconstrained by our cap. The existing floor-check/cascade mechanism
+# already correctly downgrades indexmap's OWN too-new pin when hashbrown
+# 0.12.x's DECLARED rust_version (1.56+) is exceeded (confirmed live:
+# 1.9.3 -> 1.8.2) -- but 1.8.2 still requires hashbrown ^0.11, which fails
+# to go far enough, because hashbrown 0.11.x declares NO rust_version at
+# all (exactly the same "undeclared floor, only discoverable by real
+# compiling" class as tinyvec/subtle earlier). Confirmed live via direct
+# isolated bisection (matching the real resolved feature set,
+# default-features=false + features=["raw"], per the existing
+# _TRANSITIVE_PIN_OVERRIDES avoiding ahash): hashbrown 0.11.0/0.11.2 use
+# `ptr.cast()` (E0658, unstable until rustc 1.38) and fail at rustc 1.36,
+# but compile cleanly at rustc 1.39 (the next sparse-set value up). The
+# real fix has to cap `indexmap` itself, forcing it down into its OWN
+# older hashbrown-^0.9-requiring 1.6.x line for targets below this floor --
+# a bare `hashbrown` cap can never reach indexmap's own internal edge at
+# all, no matter how it's written.
 _YANSI_ATTR_MACRO_FLOOR = (1, 54)  # yansi 0.5.1's #[doc = concat!(...)]
 # needs "arbitrary expressions in key-value attributes" (rust-lang/rust#78835)
 _BYTESTRING_1_88_FLOOR = (1, 88)  # bytestring 1.5.1+ needs rustc 1.88
@@ -851,7 +918,11 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         lib_dep = f'{lib_crate} = "{lib_ver}"\n'
 
     extra_fw_deps = ""
-    if kind in ("axum-old", "axum-new", "warp"):
+    if kind in ("axum-old", "axum-new") or (kind == "warp" and fw_major != "0.1"):
+        # warp 0.1.x runs on its own internal tokio 0.1 (Future-0.1 trait)
+        # and never uses #[tokio::main]/.await at all (see make_main_rs) --
+        # declaring modern tokio 1.x here would be a genuinely unused,
+        # purely wasteful direct dependency for that era specifically.
         extra_fw_deps = 'tokio = { version = "1", features = ["full"] }\n'
     elif kind == "iron":
         extra_fw_deps = 'router = "0.6"\n'
@@ -962,24 +1033,40 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
                 if target_t < _icu_threshold:
                     ecosystem_caps += f'{_icu_crate} = ">=0, <{_icu_cap_version}"\n'
                     break
-    if target_t < _TEMPFILE_GETRANDOM04_FLOOR:
-        # Rocket depends directly on `tempfile`, which is where getrandom
-        # 0.4.x actually enters the graph -- confirmed live via `cargo tree
-        # -i getrandom@0.4.3` that it comes through tempfile, NOT through
-        # any crypto library or our own declared deps, so this bites EVERY
-        # library paired with Rocket, not just one. The getrandom cap above
-        # can't fix this on its own: our own top-level `getrandom` entry and
-        # tempfile's internal one are different, mutually-INcompatible
-        # semver classes once tempfile allows 0.4.x (0.3 vs 0.4 don't
-        # unify), so capping getrandom directly only ever constrains
-        # whichever edge already matched our own declared range, not
-        # tempfile's separate one. tempfile itself IS the same "^3" class
-        # project-wide, though, so capping IT unifies with Rocket's own
-        # requirement and forces the resolved tempfile back down to a
-        # release confirmed live to depend on "getrandom ^0.3.0" only
-        # (3.18.0-3.23.0) rather than 3.25.0+'s widened
-        # ">=0.3.0, <0.5" range that lets 0.4.x back in.
-        ecosystem_caps += 'tempfile = ">=3, <3.25.0"\n'
+    if fw_name in ("Rocket", "warp"):
+        # tempfile is a REAL dependency for both: Rocket depends on it
+        # directly, warp pulls it in transitively via `multipart` (its own
+        # form-handling dependency) -- confirmed live via `cargo tree -i
+        # rustix` showing `tempfile v3.4.0 -> multipart v0.16.1 -> warp
+        # v0.1.23 -> app`. Explicitly scoped to these two (confirmed live
+        # this MUST be scoped, not applied unconditionally -- same class of
+        # bug as the ICU4X-hub/openssl-sys cap-scoping fixes elsewhere in
+        # this file): Iron/actix-web/axum never reach tempfile at all, so a
+        # bare cap here would FORCE it into their graphs for no reason.
+        #
+        # Two independent, unrelated MSRV walls in tempfile's own history,
+        # both handled via _TEMPFILE_MSRV_TIERS (see its own docstring
+        # above): the 1.48 tier avoids tempfile 3.4.0's introduction of
+        # `rustix` (whose own `linux-raw-sys` dependency has an undeclared
+        # floor that fails at rustc 1.36 -- found via warp's own first-ever
+        # test this session, real build failure: `[u8; N]` doesn't
+        # implement Debug, pre-const-generics); the 1.85 tier avoids
+        # tempfile 3.25.0+ widening its own getrandom range to allow 0.4.x
+        # (edition2024) -- the original Rocket-era finding. Since Rocket's
+        # own effective floor never actually reaches down to the 1.48 tier
+        # in practice, this change is a no-op for Rocket's own previously-
+        # passing combos; the new tier only ever fires for warp.
+        for _tf_threshold, _tf_cap_version in _TEMPFILE_MSRV_TIERS:
+            if target_t < _tf_threshold:
+                ecosystem_caps += f'tempfile = ">=3, <{_tf_cap_version}"\n'
+                break
+    if fw_name == "warp" and target_t < _INDEXMAP_HASHBROWN011_FLOOR:
+        # Scoped to warp (confirmed live this is where indexmap enters the
+        # graph, via `headers`) -- same cap-scoping discipline as
+        # tempfile/openssl-sys/the ICU4X hub elsewhere in this file: a bare
+        # cap here would force indexmap into frameworks that never
+        # actually pull it in at all.
+        ecosystem_caps += 'indexmap = ">=1, <1.7.0"\n'
     if target_t < _YANSI_ATTR_MACRO_FLOOR:
         # Rocket depends directly on yansi (terminal coloring) -- confirmed
         # live via a real build failure (E0658, "arbitrary expressions in
@@ -2023,7 +2110,36 @@ def _reconcile_new_pins(max_rounds=5):
                     else:
                         val = deps[ckey]
                         if isinstance(val, dict):
-                            val["version"] = f"={cnew}"
+                            # A features=[...] qualifier here was computed
+                            # for the OLD (cold) version -- confirmed live
+                            # this is not just a theoretical risk: a
+                            # cascade fix moving percent-encoding 2.3.2 (has
+                            # "alloc"/"std" features, genuinely requested)
+                            # down to 2.1.0 (declares NO features at all)
+                            # via this exact path left the stale
+                            # features=["alloc","std"] in place, which
+                            # cargo then rejected outright the very next
+                            # round ("cargo metadata failed during pin
+                            # verification"), silently aborting reconcile
+                            # with the broken pin baked into the final
+                            # Cargo.toml. The "elif target_version !=
+                            # version" branch below already re-validates
+                            # features via _crate_valid_features when ITS
+                            # OWN candidate_order-based downgrade changes a
+                            # version -- this cascade-fix path needs the
+                            # identical treatment, it was just missed here.
+                            crate = val.get("package", cname)
+                            valid = _crate_valid_features(crate, cnew)
+                            old_feats = val.get("features") or []
+                            kept_feats = [f for f in old_feats if valid is None or f in valid]
+                            new_val = {"version": f"={cnew}"}
+                            if "package" in val:
+                                new_val["package"] = val["package"]
+                            if val.get("default-features") is False:
+                                new_val["default-features"] = False
+                            if kept_feats:
+                                new_val["features"] = kept_feats
+                            deps[ckey] = new_val if (len(new_val) > 1) else f"={cnew}"
                         else:
                             deps[ckey] = f"={cnew}"
                     return
