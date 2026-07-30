@@ -716,6 +716,15 @@ _ICU4X_TIERS = {
     # icu4x's older 1.x line the way they're supposed to.
     "tinystr":             [((1, 69), "0.7.2"), ((1, 75), "0.8.0"), ((1, 85), "0.8.1")],
     "writeable":           [((1, 69), "0.5.3"), ((1, 75), "0.6.0"), ((1, 85), "0.6.1")],
+    "litemap":             [((1, 69), "0.7.1"), ((1, 75), "0.7.4"), ((1, 85), "0.7.5")],
+    # ^ confirmed live: missing entirely was allowing litemap to resolve
+    # to its newest (0.8.2, needing rustc 1.82) uncapped -- and whatever
+    # actually needed that newer litemap ALSO pulled in a matching newer
+    # tinystr (0.8.3) as an UNCAPPED second alias, bypassing tinystr's
+    # OWN existing cap here entirely (same "multiple incompatible majors,
+    # only one alias protected" class of issue as zerovec/icu_properties
+    # earlier -- confirmed live via a real build showing tinystr's cap
+    # correctly declared in Cargo.toml yet still resolving to 0.8.3).
 }
 
 # `time` is pulled in transitively (Rocket's own tokio/tracing stack), and
@@ -755,6 +764,53 @@ _LOG_MSRV_TIERS = [
     ((1, 61), "0.4.28"),
     ((1, 68), "0.4.29"),
     ((1, 71), "0.4.30"),
+]
+
+# base64ct's own MSRV climbed in several steps BEFORE the edition2024 jump
+# handled by _BASE64CT_EDITION2024_FLOOR -- confirmed live via a real build
+# failure at rustc 1.75 ("base64ct v1.7.3 requires rustc 1.81.0") that the
+# old single-tier cap (`<1.8.0`, gated only on the 1.85 edition2024 floor)
+# was too loose for targets below 1.81, where 1.7.1-1.7.3 are already
+# unreachable. Same multi-tier shape as `time`/`log` above -- computed via
+# crates.io version history (1.2.0-1.5.3->1.56, 1.6.0->1.60, 1.7.1-1.7.3
+# ->1.81, 1.8.0+->1.85/edition2024). The last tier here duplicates
+# _BASE64CT_EDITION2024_FLOOR's own threshold/cap intentionally (unifies
+# into one loop below) -- that constant itself is untouched and still used
+# elsewhere to gate cpufeatures's own cap.
+_BASE64CT_MSRV_TIERS = [
+    ((1, 56), "1.2.0"),
+    ((1, 60), "1.6.0"),
+    ((1, 81), "1.7.1"),
+    ((1, 85), "1.8.0"),
+]
+
+# openssl-sys's own MSRV also crept up gradually -- confirmed live via a
+# real build failure at rustc 1.75 ("openssl-sys v0.9.117 requires rustc
+# 1.80.0"), no pre-existing cap at all. Computed via crates.io version
+# history (0.9.104-0.9.109->1.63, 0.9.110-0.9.114->1.70, 0.9.115-0.9.117
+# ->1.80; 0.9.103 and earlier declare no rust_version).
+_OPENSSL_SYS_MSRV_TIERS = [
+    ((1, 63), "0.9.104"),
+    ((1, 70), "0.9.110"),
+    ((1, 80), "0.9.115"),
+]
+
+# The `openssl` crate itself (our OWN direct/extra_lib_dep for lib_name
+# "openssl") tracks openssl-sys's MSRV almost 1:1 -- confirmed live via a
+# real build failure that capping openssl-sys alone isn't enough: `cargo
+# generate-lockfile` failed OUTRIGHT (before msrv_repair.py even runs)
+# because the newest openssl (0.10.81, resolved with no MSRV awareness by
+# _resolve()) hard-requires `openssl-sys ^0.9.117`, which is infeasible
+# against our own ecosystem_caps cap of "<0.9.115". Same class of gap as
+# actix-web 4 (see _actix_web_4_msrv_cap) -- openssl is exact-pinned as our
+# own direct dependency, so a bare ecosystem_caps range can't reach it;
+# must be capped at version-resolution time instead. Computed via
+# crates.io version history (0.10.36-0.10.66->None, 0.10.67-0.10.73->1.63,
+# 0.10.74-0.10.78->1.70, 0.10.79-0.10.81->1.80).
+_OPENSSL_LIB_MSRV_TIERS = [
+    ((1, 63), "0.10.67"),
+    ((1, 70), "0.10.74"),
+    ((1, 80), "0.10.79"),
 ]
 
 
@@ -839,19 +895,23 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
     # unnecessary belt-and-suspenders here, not a hard requirement.
     if target_t < _SUBTLE_COHERENCE_FLOOR:
         ecosystem_caps += 'subtle = ">=2, <2.3"\n'
-    if target_t < _BASE64CT_EDITION2024_FLOOR:
-        # base64ct is a transitive hub crate pulled in by both rsa
-        # (rsa -> pkcs1/pkcs8 -> der -> base64ct) and argon2 (via
-        # password-hash) -- confirmed live via crates.io version metadata
-        # that 1.8.0+ switched to edition="2024" (rust_version 1.85), while
-        # msrv_repair.py's own metadata-snapshot repair loop can end up
-        # resolving an OLDER, floor-compliant base64ct at pin time while the
-        # real `cargo build --release` (a separate, unpinned re-resolution --
-        # only Cargo.toml, not Cargo.lock, crosses the lockgen->builder stage
-        # boundary) picks the newest semver-compatible release instead.
-        # Capping it directly in Cargo.toml removes that gap: every cargo
-        # invocation, pinning or real build, then sees the same constraint.
-        ecosystem_caps += 'base64ct = ">=1, <1.8.0"\n'
+    # base64ct is a transitive hub crate pulled in by both rsa
+    # (rsa -> pkcs1/pkcs8 -> der -> base64ct) and argon2 (via
+    # password-hash) -- confirmed live via crates.io version metadata
+    # that 1.8.0+ switched to edition="2024" (rust_version 1.85), while
+    # msrv_repair.py's own metadata-snapshot repair loop can end up
+    # resolving an OLDER, floor-compliant base64ct at pin time while the
+    # real `cargo build --release` (a separate, unpinned re-resolution --
+    # only Cargo.toml, not Cargo.lock, crosses the lockgen->builder stage
+    # boundary) picks the newest semver-compatible release instead.
+    # Capping it directly in Cargo.toml removes that gap: every cargo
+    # invocation, pinning or real build, then sees the same constraint.
+    # Tiered (see _BASE64CT_MSRV_TIERS above) since base64ct's own MSRV
+    # climbed gradually before the 1.85 edition2024 jump, not just at it.
+    for threshold, cap_version in _BASE64CT_MSRV_TIERS:
+        if target_t < threshold:
+            ecosystem_caps += f'base64ct = ">=1, <{cap_version}"\n'
+            break
     if target_t < _GETRANDOM_EDITION2024_FLOOR:
         # Same edition2024 pattern as base64ct above, confirmed live via a
         # real build failure (argon2's rand_core="0.6",features=["getrandom"]
@@ -939,6 +999,22 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         if target_t < threshold:
             ecosystem_caps += f'log = ">=0.4, <{cap_version}"\n'
             break
+    if lib_name == "openssl":
+        # openssl-sys is only ever reachable via the `openssl` crate itself
+        # (lib_name "openssl") -- confirmed live this MUST be scoped, not
+        # applied unconditionally: declaring it as a bare direct dependency
+        # for combos that never pull it in (e.g. ring, sodiumoxide) FORCES
+        # cargo to resolve AND BUILD it regardless, which then fails
+        # outright ("Could not find directory of OpenSSL installation ...
+        # pkg-config could not be found") since those combos' Dockerfiles
+        # never install libssl-dev/pkg-config at all. Same class of bug as
+        # the ICU4X-hub-caps-leaking-into-Iron/Rocket fix earlier this
+        # session -- a bare ecosystem_caps line always forces resolution,
+        # whether or not anything in the real graph asked for it.
+        for threshold, cap_version in _OPENSSL_SYS_MSRV_TIERS:
+            if target_t < threshold:
+                ecosystem_caps += f'openssl-sys = ">=0.9, <{cap_version}"\n'
+                break
 
     return (
         "[package]\n"
@@ -1420,7 +1496,7 @@ def _satisfies_req(req, version):
         return v[0] == 0 and v[1] == r[1]
     return v[0] == 0 and v[1] == 0 and v[2] == r[2]
 
-def _parent_downgrade_safe(pname, p_candidate, meta):
+def _parent_downgrade_safe(pname, pversion, p_candidate, meta):
     """A cascade fix's candidate parent downgrade is only ever checked
     against the ONE child relationship that triggered it -- but the same
     parent can have OTHER already-resolved dependents with their own,
@@ -1431,9 +1507,21 @@ def _parent_downgrade_safe(pname, p_candidate, meta):
     but silently broke actix-connect's own hard pin instead, a conflict
     that doesn't surface until the BUILDER stage's real `cargo build`,
     well past msrv_repair.py's own pin-verification metadata call. Check
-    every OTHER current dependent of `pname` before accepting a
-    candidate."""
-    for gp_name, gp_version in _dependents_of(meta, pname):
+    every OTHER current dependent of `pname`@`pversion` before accepting a
+    candidate.
+
+    Takes the CURRENT resolved version of `pname` (not just its name) and
+    uses _dependents_of_exact rather than the name-only _dependents_of --
+    confirmed live this distinction matters here too, not just in
+    _cascade_fix: when multiple incompatible majors of `pname` coexist as
+    separate aliased instances (litemap 0.6.1/0.7.5/0.8.2 all resolved at
+    once, each with its own unrelated parent), name-only matching pulled
+    in a completely unrelated parent's requirement (e.g. the 0.8.2
+    instance's own parent needing "^0.8.0") to judge whether downgrading
+    the UNRELATED 0.7.5 instance to 0.7.4 was safe -- rejecting a
+    perfectly safe candidate because of a requirement that was never
+    actually placed on the instance being downgraded at all."""
+    for gp_name, gp_version in _dependents_of_exact(meta, pname, pversion):
         found, req = _crate_dep_req(gp_name, gp_version, pname)
         if not found or req is None:
             continue
@@ -1480,7 +1568,7 @@ def _cascade_fix(name, version, meta):
             found, req = _crate_dep_req(pname, p_candidate, name)
             if not found:
                 continue  # transient failure -- try the next candidate
-            if not _parent_downgrade_safe(pname, p_candidate, meta):
+            if not _parent_downgrade_safe(pname, pversion, p_candidate, meta):
                 continue
             if req is None:
                 return [(pname, pversion, p_candidate)]
@@ -1568,7 +1656,7 @@ def repair_loop():
             # inconsistent pin set that only failed in the BUILDER stage.
             candidates = [c for c in candidate_order(name, version) if c != version]
             safe_candidate = next(
-                (c for c in candidates if _parent_downgrade_safe(name, c, meta)), None)
+                (c for c in candidates if _parent_downgrade_safe(name, version, c, meta)), None)
             if safe_candidate:
                 to_fix.append((name, version, safe_candidate))
                 scheduled_names.add(name)
@@ -1948,7 +2036,7 @@ def _reconcile_new_pins(max_rounds=5):
             if floor is not None and floor > TARGET_T:
                 candidates = [c for c in candidate_order(name, version) if c != version]
                 safe_candidate = next(
-                    (c for c in candidates if _parent_downgrade_safe(name, c, meta)), None)
+                    (c for c in candidates if _parent_downgrade_safe(name, version, c, meta)), None)
                 if safe_candidate:
                     target_version = safe_candidate
                 else:
@@ -2229,6 +2317,25 @@ def _actix_web_4_msrv_cap(resolved: str, lang_ver: str) -> str:
     return candidates[-1] if candidates else resolved
 
 
+def _openssl_lib_msrv_cap(resolved: str, lang_ver: str) -> str:
+    """Same version-resolution-time pattern as _actix_web_4_msrv_cap, for
+    the `openssl` crate's own resolved version -- see _OPENSSL_LIB_MSRV_TIERS
+    for why this is needed alongside (not instead of) the openssl-sys
+    ecosystem_caps tier."""
+    lang_t = _ver_tuple2(lang_ver)
+    for threshold, cap_version in _OPENSSL_LIB_MSRV_TIERS:
+        if lang_t < threshold:
+            if _ver_key(resolved) < _ver_key(cap_version):
+                return resolved
+            versions = _fetch_crates_versions("openssl")
+            candidates = [
+                v for v in versions
+                if v.startswith("0.10.") and _ver_key(v) < _ver_key(cap_version)
+            ]
+            return candidates[-1] if candidates else resolved
+    return resolved
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 def write_context(lang_ver: str, fw_name: str, fw_major: str,
@@ -2259,6 +2366,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     lib_pkg = LIB_META[lib_name]["crate"]
     try:
         lib_resolved = _resolve(lib_pkg, lib_ver)
+        if lib_resolved is not None and lib_name == "openssl":
+            lib_resolved = _openssl_lib_msrv_cap(lib_resolved, lang_ver)
     except CratesIoLookupError as exc:
         print(f"  [WARN] {exc} -- leaving any existing context untouched", flush=True)
         return False
