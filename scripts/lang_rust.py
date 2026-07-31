@@ -1040,18 +1040,15 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
             'zeroize = ">=1, <1.9.0"\n'
             'zeroize_derive = ">=1, <1.5.0"\n'
         )
-    if fw_name in ("actix-web", "axum") or (fw_name == "warp" and fw_major not in ("0.1", "0.2")):
+    _warp01_needs_icu4x = fw_name == "warp" and fw_major == "0.1" and target_t >= (1, 69)
+    if fw_name in ("actix-web", "axum") or (fw_name == "warp" and fw_major not in ("0.1", "0.2")) or _warp01_needs_icu4x:
         # cpufeatures/bytestring/the whole ICU4X hub below are only ever
         # reachable via actix-web's actix-connect->trust-dns-proto,
         # axum's own tower-http/hyper->url->idna chain, and warp 0.3+'s
-        # own hyper->url->idna chain. warp 0.1's much older hyper 0.12/
-        # tokio 0.1 stack never reaches this chain at all (confirmed live
-        # via warp 0.1's own extensive real-build testing never once
-        # hitting an icu4x-family failure). warp 0.2 ALSO never reaches
-        # it -- confirmed live the FIRST WAY, before this scoping fix even
-        # existed: a real build at warp 0.2's own corrected floor (1.56)
-        # succeeded completely cleanly, with zero icu4x-family crates
-        # anywhere in the dependency tree at all (warp 0.2's own older
+        # own hyper->url->idna chain. warp 0.2 never reaches it at all --
+        # confirmed live a real build at warp 0.2's own corrected floor
+        # (1.56) succeeded completely cleanly, with zero icu4x-family
+        # crates anywhere in the dependency tree (warp 0.2's own older
         # `headers`/`idna` combination avoids this chain entirely on its
         # own). Applying these caps to warp 0.2 anyway (an earlier,
         # overly-broad version of this same scoping fix) actively BROKE
@@ -1065,10 +1062,36 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # (confirmed live: icu_properties 1.2.0 needing an ancient,
         # already-broken icu_provider/zerovec combination that no rustc
         # version fixes, since it's a genuine bug in that OLD release
-        # rather than an MSRV floor at all). Iron/Rocket never pull in any
-        # of this modern async/DNS/URL-parsing stack at all either.
-        # Confirmed live this MUST be scoped, not applied unconditionally:
-        # declaring `icu_provider = ...` etc.
+        # rather than an MSRV floor at all).
+        #
+        # warp 0.1 is the trickiest case: it does NOT reach this hub at
+        # its own originally-verified floor (1.54 -- bcrypt/ring-0.16/
+        # sodiumoxide/rust-crypto all confirmed clean there with zero
+        # icu4x-family crates present), but DOES reach it once warp 0.1's
+        # own dense compatibility range climbs to rustc 1.69+ (confirmed
+        # live via a real batch run: multiple libraries -- argon2, bcrypt,
+        # openssl, ring-0.17 -- all hit the identical `yoke 0.7.5` MSRV
+        # wall starting exactly at 1.69, never below it). Root-caused via
+        # debug instrumentation of a scratch msrv_repair.py run: with no
+        # static cap protecting it, `_reconcile_new_pins` oscillates
+        # forever between "drop the unfixable yoke 0.7.5 pin" and
+        # "newly-surfaced yoke -> re-pinned at =0.7.5" (cargo's fresh
+        # metadata just re-resolves the exact same version every time,
+        # since nothing else changed to make a different one reachable),
+        # eventually giving up after max rounds with the violation still
+        # present -- exactly the gap the static icu4x-hub tiers exist to
+        # route around (they encode real, compile-tested safe versions
+        # that crates.io's own declared rust_version metadata alone
+        # doesn't fully capture). Gating this on `target_t >= (1, 69)`
+        # specifically for warp 0.1 preserves its already-verified
+        # 1.54-1.65 behavior untouched (forcing these caps there too would
+        # risk the exact same "breaks an already-working resolution"
+        # regression already hit once for warp 0.2) while finally
+        # protecting the higher range where it's actually needed.
+        #
+        # Iron/Rocket never pull in any of this modern async/DNS/URL-
+        # parsing stack at all either. Confirmed live this MUST be scoped,
+        # not applied unconditionally: declaring `icu_provider = ...` etc.
         # as a bare direct dependency FORCES cargo to resolve it regardless
         # of whether anything else in the graph actually needs it -- an
         # Iron combo, which has no earthly use for icu4x, hit a genuine
@@ -1076,9 +1099,7 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # purely because these caps were forcing icu4x's whole 1.x line
         # into a graph that never needed it, discovered by accident while
         # testing something else entirely (a cache-mount sharing-mode
-        # experiment). warp 0.2/0.3 confirmed live to hit the EXACT same
-        # `yoke 0.7.5` MSRV wall (needs rustc 1.71.1) as axum's own
-        # icu4x-hub findings, unprotected until this scoping fix.
+        # experiment).
         if target_t < _BASE64CT_EDITION2024_FLOOR:
             # cpufeatures (pulled in transitively via sha2/blake2, needed
             # by bcrypt/argon2's password-hash chain and actix-web 4's own
@@ -1325,22 +1346,40 @@ TARGET_T = ver_tuple(TARGET)
 _cache = {}
 
 def _fetch_one(crate):
+    # Confirmed live this MUST raise rather than silently return an empty
+    # list on exhausted retries: a real batch run under sustained crates.io
+    # rate-limiting (many parallel builds each doing their own prefetch at
+    # once) showed dozens of crates -- including ones with genuinely too-new
+    # floors, like syn/proc-macro2/getrandom/yoke/litemap -- all failing
+    # every fetch attempt with HTTP 429. The OLD 3-attempt/1s-delay retry
+    # (nowhere near enough to outlast a sustained rate-limit window) then
+    # silently cached an EMPTY version list for each -- and current_floor()
+    # treats an empty list as "no matching version found, no floor" (NOT as
+    # "unknown, be cautious"), so every one of these crates skipped its
+    # floor check entirely and looked completely safe to the repair loop,
+    # only to fail for real in the separate, independent BUILDER-stage
+    # resolution once the rate-limit window had passed. Silently proceeding
+    # with an incomplete/wrong floor-check dataset is worse than failing the
+    # whole lockgen stage loudly -- a raised exception here crashes this
+    # script with a non-zero exit, failing the Docker build outright so the
+    # batch orchestrator sees a clean, retryable failure instead of a
+    # confusing, seemingly-unrelated error several minutes later in a
+    # completely different build stage.
     req = urllib.request.Request(
         f"https://crates.io/api/v1/crates/{crate}/versions",
         headers={"User-Agent": UA},
     )
-    data = {"versions": []}
-    for attempt in range(3):
+    last_exc = None
+    for attempt in range(8):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 data = json.load(r)
-            break
+            return [v for v in data.get("versions", []) if _STABLE_RE.match(v["num"])]
         except Exception as e:
-            if attempt == 2:
-                print(f"  ! failed to fetch {crate}: {e}", file=sys.stderr)
-            else:
-                time.sleep(1)
-    return [v for v in data.get("versions", []) if _STABLE_RE.match(v["num"])]
+            last_exc = e
+            if attempt < 7:
+                time.sleep(min(2 ** attempt, 30))
+    raise RuntimeError(f"failed to fetch {crate} after 8 attempts: {last_exc}")
 
 def prefetch_all(crates):
     # crates.io lookups are pure I/O -- confirmed live that doing them one
@@ -1399,6 +1438,14 @@ def _sparse_index_path(crate):
     return f"{name[0:2]}/{name[2:4]}/{name}"
 
 def _fetch_schema_versions(crate):
+    # Same rationale as _fetch_one's own retry/raise rewrite: this used to
+    # be a single attempt that silently fell back to "schema v1, no extra
+    # floor" on ANY exception, including sustained crates.io rate-limiting
+    # (confirmed live alongside the same real batch run that exposed the
+    # _fetch_one bug) -- quietly hiding a real schema-v2 floor (the whole
+    # reason this function exists, see _INDEX_SCHEMA2_FLOOR) rather than
+    # surfacing the fetch failure. Retries with backoff first; only falls
+    # back to "unknown" after truly exhausting them, same as _fetch_one.
     if crate in _schema_cache:
         return _schema_cache[crate]
     result = {}
@@ -1406,16 +1453,23 @@ def _fetch_schema_versions(crate):
         f"https://index.crates.io/{_sparse_index_path(crate)}",
         headers={"User-Agent": UA},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            for line in r.read().decode().splitlines():
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                result[entry["vers"]] = entry.get("v", 1)
-    except Exception:
-        pass  # unknown -- treat as schema v1 (no extra floor) rather than
-        # block an otherwise-good candidate on a transient network failure
+    last_exc = None
+    for attempt in range(8):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                for line in r.read().decode().splitlines():
+                    if not line.strip():
+                        continue
+                    entry = json.loads(line)
+                    result[entry["vers"]] = entry.get("v", 1)
+            last_exc = None
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt < 7:
+                time.sleep(min(2 ** attempt, 30))
+    if last_exc is not None:
+        raise RuntimeError(f"failed to fetch schema index for {crate} after 8 attempts: {last_exc}")
     _schema_cache[crate] = result
     return result
 

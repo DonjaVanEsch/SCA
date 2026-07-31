@@ -724,12 +724,6 @@
                 "1.66",
                 "1.67",
                 "1.68",
-                "1.69",
-                "1.70",
-                "1.71",
-                "1.72",
-                "1.73",
-                "1.74",
                 "1.75",
                 "1.76",
                 "1.77",
@@ -754,7 +748,7 @@
                 "1.96",
                 "1.97"
               ],
-              "notes": "Floor corrected 2026-07-30 (was an era-based 1.31-1.38 estimate): warp 0.1.23's own real, unpinned transitive dependency graph (fetched fresh from crates.io, same lockgen-vs-builder-stage gap this whole project's msrv_repair mechanism exists for) hits a genuinely long tail of DIFFERENT undeclared-floor crates in rapid succession as rustc climbs from 1.36 to 1.45 -- hashbrown-via-indexmap (ptr.cast, ~1.38), lazy_static (cfg(doctest), ~1.40), urlencoding (matches! macro, 1.42), zeroize (isize::MAX associated const, ~1.43), opaque-debug (resolver-feature manifest field cargo can't parse, needs ~1.51+) -- each individually cappable in principle, but confirmed live via direct isolated bisection (matching this registry's own real-build-verification standard) that rustc 1.54 is the first sparse-set value where the ENTIRE dependency graph compiles cleanly end-to-end. Same class of correction as Iron's own 1.31->1.55 fix and rsa 0.8's 1.56->1.60 fix -- accepting a real, build-confirmed floor rather than exhaustively chasing every transitive crate's own undeclared MSRV one at a time."
+              "notes": "Floor corrected 2026-07-30 (was an era-based 1.31-1.38 estimate): warp 0.1.23's own real, unpinned transitive dependency graph (fetched fresh from crates.io, same lockgen-vs-builder-stage gap this whole project's msrv_repair mechanism exists for) hits a genuinely long tail of DIFFERENT undeclared-floor crates in rapid succession as rustc climbs from 1.36 to 1.45 -- hashbrown-via-indexmap (ptr.cast, ~1.38), lazy_static (cfg(doctest), ~1.40), urlencoding (matches! macro, 1.42), zeroize (isize::MAX associated const, ~1.43), opaque-debug (resolver-feature manifest field cargo can't parse, needs ~1.51+) -- each individually cappable in principle, but confirmed live via direct isolated bisection (matching this registry's own real-build-verification standard) that rustc 1.54 is the first sparse-set value where the ENTIRE dependency graph compiles cleanly end-to-end. Same class of correction as Iron's own 1.31->1.55 fix and rsa 0.8's 1.56->1.60 fix -- accepting a real, build-confirmed floor rather than exhaustively chasing every transitive crate's own undeclared MSRV one at a time. 1.69-1.74 REMOVED 2026-07-31 (a real user batch run surfaced this, not this session's own earlier verification): at rustc >=1.69, warp 0.1 (via its own idna/url chain) reaches the SAME icu4x hub as axum/warp 0.3+, and hits the EXACT same `yoke 0.7.5` MSRV wall (needs rustc 1.71.1) already found and fixed for axum 0.6/0.7 in this registry -- confirmed via `cargo tree -i yoke` that icu_collections/icu_provider/zerovec (real, published crates.io releases, not something this project controls) hard-require yoke>=0.7.5 directly, so no ecosystem_caps range on our own side can route around it; axum 0.6/0.7 hit the identical wall and were corrected the same way (skip 1.69-1.74 entirely, resume coverage at 1.75 where yoke's own floor is finally satisfied) rather than continuing to chase this narrow, recurring icu4x/zerovec/yoke boundary."
             },
             {
               "nr": "0.2",
