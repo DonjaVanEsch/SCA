@@ -1329,7 +1329,7 @@ _LIB_BUILD_ENV = {
 # (not a synthetic worst-case stress test) hits it -- matching this
 # project's established fix-as-discovered pattern for genuine ecosystem
 # edge cases elsewhere (Slim-2, CherryPy 17, pycryptodome 3.0-3.6, etc).
-_MSRV_REPAIR_PY = '''import sys, re, subprocess, urllib.request, json, time, tomllib
+_MSRV_REPAIR_PY = '''import sys, re, os, subprocess, urllib.request, json, time, tomllib
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -1337,6 +1337,59 @@ TARGET = sys.argv[1]
 UA = "pqc-sca-research/1.0 (+https://github.com/DonjaVanEsch/SCA)"
 
 _STABLE_RE = re.compile(r"^\\d+(\\.\\d+){0,3}$")
+
+# A PERSISTENT, cross-build, on-disk cache for crates.io version lookups,
+# living inside the ALREADY-shared BuildKit cache mount (cargo-registry-
+# cache, sharing=shared -- see _CARGO_REGISTRY_CACHE_MOUNT) so it survives
+# across every concurrent and future build using the same cache ID, not
+# just within this one script invocation. Confirmed live this matters a
+# lot in practice: each lockgen run does its own ~150-200-crate prefetch
+# from scratch, and with several parallel workers all doing the same thing
+# simultaneously, the combined request volume is what actually TRIGGERS the
+# sustained crates.io rate-limiting documented on _fetch_one/
+# _fetch_schema_versions below -- persisting results so the SAME crate only
+# ever needs a real network fetch once per TTL window across an entire
+# batch (not once per individual build) directly reduces that load. A
+# 6-hour TTL balances staleness (crate version lists only ever grow, so a
+# stale read mostly just risks not seeing a brand-new release, which is
+# harmless here since candidate_order() falls back to an older, already-
+# known-safe version anyway) against cache-hit-rate for a multi-hour batch
+# run. One file per crate (not one shared JSON blob) so concurrent writes
+# for DIFFERENT crates from different builds never race each other, with
+# an atomic write-to-temp-then-rename for the write itself.
+_PERSIST_CACHE_DIR = "/usr/local/cargo/registry/.pqc-fetch-cache"
+_PERSIST_TTL = 6 * 60 * 60
+
+def _persist_path(kind, crate):
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", crate)
+    return os.path.join(_PERSIST_CACHE_DIR, f"{kind}-{safe}.json")
+
+def _persist_load(kind, crate):
+    """Returns (fresh_or_none, stale_fallback_or_none). fresh_or_none is the
+    cached value if within TTL; stale_fallback_or_none is the same cached
+    value regardless of age, for use only if a live fetch later fails
+    completely -- degrading to stale-but-real data beats hard-failing the
+    whole build."""
+    try:
+        with open(_persist_path(kind, crate)) as f:
+            entry = json.load(f)
+        value = entry["value"]
+        if time.time() - entry["fetched_at"] < _PERSIST_TTL:
+            return value, value
+        return None, value
+    except Exception:
+        return None, None
+
+def _persist_save(kind, crate, value):
+    try:
+        os.makedirs(_PERSIST_CACHE_DIR, exist_ok=True)
+        path = _persist_path(kind, crate)
+        tmp = f"{path}.tmp{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump({"fetched_at": time.time(), "value": value}, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass  # best-effort -- a failed cache write should never break the build
 
 def ver_tuple(v):
     parts = v.split(".")
@@ -1365,6 +1418,14 @@ def _fetch_one(crate):
     # batch orchestrator sees a clean, retryable failure instead of a
     # confusing, seemingly-unrelated error several minutes later in a
     # completely different build stage.
+    #
+    # Checks the persistent cross-build cache first (see its own docstring
+    # above) -- a fresh hit skips the network entirely, which is what
+    # actually reduces the request volume that triggers rate-limiting in
+    # the first place, rather than just handling it better after the fact.
+    fresh, stale = _persist_load("versions", crate)
+    if fresh is not None:
+        return fresh
     req = urllib.request.Request(
         f"https://crates.io/api/v1/crates/{crate}/versions",
         headers={"User-Agent": UA},
@@ -1374,11 +1435,21 @@ def _fetch_one(crate):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 data = json.load(r)
-            return [v for v in data.get("versions", []) if _STABLE_RE.match(v["num"])]
+            result = [v for v in data.get("versions", []) if _STABLE_RE.match(v["num"])]
+            _persist_save("versions", crate, result)
+            return result
         except Exception as e:
             last_exc = e
             if attempt < 7:
                 time.sleep(min(2 ** attempt, 30))
+    if stale is not None:
+        # Every live attempt failed, but we have SOME real (if aged) data
+        # for this crate from an earlier build in the same batch -- using
+        # it is strictly better than hard-failing the whole build over a
+        # rate-limit window that a completely unrelated crate would have
+        # sailed through with a cache hit moments earlier.
+        print(f"  ! {crate}: live fetch failed after 8 attempts ({last_exc}), falling back to a cached (possibly stale) version list", file=sys.stderr)
+        return stale
     raise RuntimeError(f"failed to fetch {crate} after 8 attempts: {last_exc}")
 
 def prefetch_all(crates):
@@ -1448,6 +1519,10 @@ def _fetch_schema_versions(crate):
     # back to "unknown" after truly exhausting them, same as _fetch_one.
     if crate in _schema_cache:
         return _schema_cache[crate]
+    fresh, stale = _persist_load("schema", crate)
+    if fresh is not None:
+        _schema_cache[crate] = fresh
+        return fresh
     result = {}
     req = urllib.request.Request(
         f"https://index.crates.io/{_sparse_index_path(crate)}",
@@ -1469,7 +1544,12 @@ def _fetch_schema_versions(crate):
             if attempt < 7:
                 time.sleep(min(2 ** attempt, 30))
     if last_exc is not None:
+        if stale is not None:
+            print(f"  ! {crate}: live schema fetch failed after 8 attempts ({last_exc}), falling back to a cached (possibly stale) schema map", file=sys.stderr)
+            _schema_cache[crate] = stale
+            return stale
         raise RuntimeError(f"failed to fetch schema index for {crate} after 8 attempts: {last_exc}")
+    _persist_save("schema", crate, result)
     _schema_cache[crate] = result
     return result
 
