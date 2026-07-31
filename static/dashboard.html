@@ -20,8 +20,8 @@
     --server-accent: #5c7ca6;
     --server-accent-h: #7093ba;
     --btn-text: #051220;
-    --success: #3fb950;
-    --danger: #f85149;
+    --success: #3f8f54;
+    --danger: #cc5049;
     --warning: #e3b341;
     --ignored-c: #4a5568;
     --row-h: #1a2030;
@@ -888,12 +888,12 @@
 
   .badge-ok {
     background: #0d2d12;
-    color: #3fb950
+    color: var(--success)
   }
 
   .badge-fail {
     background: #3d1212;
-    color: #f85149
+    color: var(--danger)
   }
 
   .badge-skip {
@@ -943,15 +943,15 @@
   }
 
   .status-circle-ok {
-    background: rgba(63, 185, 80, .15);
+    background: rgba(63, 143, 84, .15);
     color: var(--success);
-    border: 1px solid rgba(63, 185, 80, .45);
+    border: 1px solid rgba(63, 143, 84, .45);
   }
 
   .status-circle-fail {
-    background: rgba(248, 81, 73, .15);
+    background: rgba(204, 80, 73, .15);
     color: var(--danger);
-    border: 1px solid rgba(248, 81, 73, .45);
+    border: 1px solid rgba(204, 80, 73, .45);
   }
 
   .status-circle-skip {
@@ -1843,8 +1843,8 @@
   }
 
   .detail-output-err {
-    border-color: rgba(248, 81, 73, .4);
-    color: #f85149
+    border-color: rgba(204, 80, 73, .4);
+    color: var(--danger)
   }
 
   /* ── Review panels (selection review / ignore review) ───────────────────── */
@@ -1929,7 +1929,7 @@
   }
 
   .review-table tr.pending-flag td {
-    background: rgba(248, 81, 73, .08);
+    background: rgba(204, 80, 73, .08);
   }
 
   .review-badge-toggle {
@@ -2443,18 +2443,18 @@
       <span class="stat-sep">·</span>
       <span class="stat"><b id="s-built-fail" style="color:var(--danger)">–</b> failed</span>
       <span class="stat-sep">·</span>
-      <span class="stat"><b id="s-not-built" style="color:var(--muted2)">–</b> not built</span>
+      <span class="stat"><b id="s-not-built" style="color:var(--warning)">–</b> not built</span>
     </span>
 
     <span class="stat-group">
       <span class="stat-group-label">Test</span>
-      <span class="stat"><b id="s-tested" style="color:var(--accent)">–</b> OK</span>
+      <span class="stat"><b id="s-tested" style="color:var(--success)">–</b> OK</span>
       <span class="stat-sep">·</span>
       <span class="stat"><b id="s-tested-fail" style="color:var(--danger)">–</b> failed</span>
     </span>
 
     <span class="stat-group">
-      <span class="stat"><b id="s-not-tested" style="color:var(--muted2)">–</b> not tested</span>
+      <span class="stat"><b id="s-not-tested" style="color:var(--warning)">–</b> not tested</span>
       <span class="stat-sep">·</span>
       <span class="stat"><b id="s-ignored" style="color:var(--muted2)">–</b> ignored</span>
     </span>
@@ -2468,18 +2468,18 @@
       <span class="stat-sep">·</span>
       <span class="stat"><b id="cs-built-fail" style="color:var(--danger)">–</b> failed</span>
       <span class="stat-sep">·</span>
-      <span class="stat"><b id="cs-not-built" style="color:var(--muted2)">–</b> not built</span>
+      <span class="stat"><b id="cs-not-built" style="color:var(--warning)">–</b> not built</span>
     </span>
 
     <span class="stat-group">
       <span class="stat-group-label">Test</span>
-      <span class="stat"><b id="cs-tested" style="color:var(--accent)">–</b> OK</span>
+      <span class="stat"><b id="cs-tested" style="color:var(--success)">–</b> OK</span>
       <span class="stat-sep">·</span>
       <span class="stat"><b id="cs-tested-fail" style="color:var(--danger)">–</b> failed</span>
     </span>
 
     <span class="stat-group">
-      <span class="stat"><b id="cs-not-tested" style="color:var(--muted2)">–</b> not tested</span>
+      <span class="stat"><b id="cs-not-tested" style="color:var(--warning)">–</b> not tested</span>
       <span class="stat-sep">·</span>
       <span class="stat"><b id="cs-ignored" style="color:var(--muted2)">–</b> ignored</span>
     </span>
