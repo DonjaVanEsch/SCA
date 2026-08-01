@@ -1490,16 +1490,6 @@
                 "1.97"
               ],
               "notes": "Corrected 2026-08-01: this bucket resolves to bcrypt 0.18.0 (2026-01-11), the ONLY patch ever published for this minor -- and it ships edition=\"2024\" (confirmed via crates.io version metadata), a real floor of rustc 1.85, unlike 0.15/0.16/0.17 (all edition=\"2021\"). The compatibility range originally inherited from the 0.15 bucket via the dashboard Include action (1.63-1.97, an explicitly unverified placeholder per that action own notice) was wrong -- confirmed live via a real docker build failure at rustc 1.63 (msrv_repair.py silently dropped bcrypt as an unfixable pin, producing a confusing unresolved import bcrypt compile error instead of a clear floor message). Narrowed to 1.85+."
-            },
-            {
-              "nr": "0.19",
-              "release_date": "2026-07-27",
-              "compatibility": [
-                "1.85",
-                "1.90",
-                "1.97"
-              ],
-              "notes": "Corrected 2026-08-01: same wall as bcrypt \"0.18\" -- this bucket resolves to bcrypt 0.19.3 (2026-07-27), which ships edition=\"2024\" (confirmed via crates.io version metadata), a real floor of rustc 1.85. The compatibility range inherited via the dashboard Include action (1.63-1.97, explicitly unverified until build/test) was wrong -- confirmed live via a real docker build failure at rustc 1.63/1.68/1.75 (msrv_repair.py correctly raised a loud RuntimeError this time instead of silently dropping bcrypt, per the Phase 27 fix). Narrowed to 1.85+. Also excluded from Rocket 0.4 specifically (see _INCOMPATIBLE_COMBOS in lang_rust.py) -- Rocket 0.4s own pinned nightly toolchain caps its real build floor at 1.68 regardless of nominal rust_ver, permanently below this buckets 1.85 floor."
             }
           ],
           "notes": "Pure-Rust bcrypt implementation (Keats/rust-bcrypt), no true \"majors\" -- a continuously incrementing 0.x line since 2015. Three representative points chosen for density rather than genuine API-era boundaries (this library's API has stayed relatively stable across these)."
