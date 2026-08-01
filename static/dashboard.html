@@ -412,6 +412,18 @@
     margin-top: 12px
   }
 
+  /* .filter-section only gets its own padding-bottom when it's the LAST
+     section (avoids doubling the gap between adjacent sections) -- but
+     that leaves a NON-last section ending in .filter-actions (e.g. the
+     lone "Clear filters" button) flush against its own section's bottom
+     edge with nothing below it, while still carrying .filter-actions's
+     12px margin-top above. Scoped to non-last sections specifically so a
+     LAST section (which already gets 14px from the rule above) doesn't
+     end up double-padded. */
+  .filter-section:not(:last-child) > .filter-actions:last-child {
+    padding-bottom: 12px
+  }
+
   .btn {
     /* Equal top/bottom padding on purpose: an earlier attempt at a fixed-px
        asymmetric offset (to compensate for perceived font-metric skew)
