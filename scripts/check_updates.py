@@ -38,6 +38,7 @@ _REGISTRY_FILES = {
     "node":   "registry node.json",
     "java":   "registry java.json",
     "dotnet": "registry dotnet.json",
+    "rust":   "registry rust.json",
 }
 
 # How a framework/library's own registry.json "module" value marks "no real
@@ -127,6 +128,7 @@ _ENUMERATORS = {
     "php":    lambda d: _enumerate_registry_module(d, "packagist"),
     "java":   lambda d: _enumerate_registry_module(d, "maven"),
     "dotnet": lambda d: _enumerate_registry_module(d, "nuget"),
+    "rust":   lambda d: _enumerate_registry_module(d, "crates"),
     "python": _enumerate_python,
 }
 
@@ -152,6 +154,9 @@ def _fetch(fetch_kind: str, package_id: str) -> list:
     if fetch_kind == "nuget":
         import lang_dotnet
         return lang_dotnet._fetch_nuget_versions(package_id)
+    if fetch_kind == "crates":
+        import lang_rust
+        return lang_rust._fetch_crates_versions(package_id)
     raise ValueError(f"unknown fetch kind: {fetch_kind}")
 
 
@@ -179,6 +184,9 @@ def _fetch_date(fetch_kind: str, package_id: str, version: str) -> str | None:
         if fetch_kind == "nuget":
             import lang_dotnet
             return lang_dotnet._release_date(package_id, version)
+        if fetch_kind == "crates":
+            import lang_rust
+            return lang_rust._release_date(package_id, version)
     except Exception as exc:
         print(f"  [WARN] release-date lookup failed for {package_id} {version}: {exc}", flush=True)
     return None
