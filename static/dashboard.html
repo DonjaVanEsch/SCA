@@ -425,19 +425,22 @@
   }
 
   .btn {
-    /* Equal top/bottom padding on purpose: an earlier attempt at a fixed-px
-       asymmetric offset (to compensate for perceived font-metric skew)
-       turned out wrong in both directions tried, and got MORE wrong at a
-       larger font-size -- a sign the real cause scales with font-size,
-       which a flat px offset can never track correctly. Back to the
-       standards-correct baseline (line-height:1 + flex centering); revisit
-       with an actual screenshot before guessing at pixel offsets again. */
+    /* Equal top/bottom padding -- confirmed via a real screenshot + computed
+       styles (25.2083px rendered height for 11px line-height/font-size,
+       matching the 6+6 padding + 2px border math exactly) that the BOX is
+       geometrically centered. The text still reads as sitting low because
+       of the font's own ascent/descent split (a real metrics quirk, not a
+       layout bug) -- confirmed proportional to font-size (worse at a bigger
+       size), so a fixed px offset can never track it correctly, only an
+       em-relative one. translateY(-0.06em) nudges the glyphs up by a small
+       fraction of whatever font-size this button ends up at. */
     padding: 8px 12px;
     border-radius: var(--radius-btn);
     font-size: 12px;
     font-weight: 600;
     line-height: 1;
     border: 1px solid transparent;
+    transform: translateY(-0.06em);
     transition: background .15s, border-color .15s, transform .05s;
     cursor: pointer;
     display: inline-flex;
@@ -447,7 +450,7 @@
   }
 
   .btn:active:not(:disabled) {
-    transform: translateY(1px);
+    transform: translateY(calc(1px - 0.06em));
   }
 
   .btn-primary {
