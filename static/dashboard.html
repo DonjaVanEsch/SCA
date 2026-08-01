@@ -6024,6 +6024,11 @@
           await loadUpdatesBadge();
           await loadImages(state.page);
           await loadStats();
+          // Same rationale as the Registry Editor's own Apply completion:
+          // the new bucket lands in the DB's reference tables before the
+          // regenerate step even starts, so the Reference tab's version
+          // list is already stale the moment Include finishes.
+          await loadReference();
         });
     } catch (e) {
       toast(`Include failed: ${e.message}`, 'err');
