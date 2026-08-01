@@ -413,15 +413,14 @@
   }
 
   .btn {
-    /* Asymmetric top/bottom padding, not a layout bug: the --sans stack
-       (Segoe UI/system-ui) has a heavy descent baked into its line-box
-       metrics, so flexbox's align-items:center (which centers the LINE BOX,
-       not the glyphs' actual ink) still visually reads as text sitting low
-       even at line-height:1 with equal padding. LESS padding-top (pulls
-       text up) / MORE padding-bottom compensates, same total height.
-       (A prior attempt here had top/bottom backwards -- pushed text down
-       instead of up.) */
-    padding: 6px 12px 10px;
+    /* Equal top/bottom padding on purpose: an earlier attempt at a fixed-px
+       asymmetric offset (to compensate for perceived font-metric skew)
+       turned out wrong in both directions tried, and got MORE wrong at a
+       larger font-size -- a sign the real cause scales with font-size,
+       which a flat px offset can never track correctly. Back to the
+       standards-correct baseline (line-height:1 + flex centering); revisit
+       with an actual screenshot before guessing at pixel offsets again. */
+    padding: 8px 12px;
     border-radius: var(--radius-btn);
     font-size: 12px;
     font-weight: 600;
@@ -511,7 +510,7 @@
   }
 
   .btn-sm {
-    padding: 4px 9px 8px;
+    padding: 6px 9px;
     font-size: 11px
   }
 
