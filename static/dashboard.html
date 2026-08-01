@@ -29,6 +29,7 @@
     --sel-border: #3d5c7c;
     --radius: 5px;
     --radius-lg: 8px;
+    --radius-btn: 9px;
     --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     --sans: -apple-system, 'Segoe UI', system-ui, sans-serif;
     --log-h: 240px;
@@ -413,14 +414,16 @@
 
   .btn {
     padding: 6px 12px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-btn);
     font-size: 12px;
     font-weight: 600;
+    line-height: 1;
     border: 1px solid transparent;
     transition: background .15s, border-color .15s, transform .05s;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 5px;
   }
 
@@ -2272,13 +2275,20 @@
   #updates-badge {
     display: none;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    margin: 8px 14px;
-    padding: 8px 14px;
+    /* Sized (margin+padding+line-height:1 text) to stay at or under a
+       collapsed #log-console's own rendered height (~34px: its 6px+6px
+       header padding plus a 21px .btn-sm) -- both sit in #bottom-dock's
+       same flex row, so a taller badge used to visibly bulge the whole
+       bar above the collapsed log's compact height. */
+    margin: 5px 12px;
+    padding: 4px 12px;
+    line-height: 1;
     border-radius: 999px;
     background: var(--accent);
     color: #04121f;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 600;
     font-family: inherit;
     border: none;
