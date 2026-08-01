@@ -1980,6 +1980,34 @@
     color: var(--muted2);
   }
 
+  /* ── Confirm dialog (replaces native confirm()) ──────────────────────────── */
+  /* Shares #confirm-dialog-overlay's backdrop/centering with .review-overlay
+     above, but its own box is a small, auto-height card -- .review-panel is
+     sized for a full table/editor view and would look absurd for a plain
+     yes/no prompt. */
+  .confirm-dialog {
+    width: min(420px, 90vw);
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  }
+
+  .confirm-dialog-message {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    margin-bottom: 18px;
+  }
+
+  .confirm-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
   /* ── Registry editor panel ───────────────────────────────────────────────── */
   .registry-editor-panel {
     width: min(1200px, 95vw);
@@ -3610,6 +3638,17 @@
   </div>
 </div>
 
+<!-- ── Confirm dialog (replaces the browser's native confirm()) ─────────── -->
+<div id="confirm-dialog-overlay" class="review-overlay">
+  <div class="confirm-dialog">
+    <p class="confirm-dialog-message" id="confirm-dialog-message"></p>
+    <div class="confirm-dialog-actions">
+      <button class="btn btn-ghost btn-sm" id="confirm-dialog-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="confirm-dialog-ok">OK</button>
+    </div>
+  </div>
+</div>
+
 <style>
   @keyframes pulse {
 
@@ -3690,6 +3729,40 @@
     document.getElementById('toast-container').appendChild(el);
     setTimeout(() => el.remove(), 3500);
   }
+
+  // ── Confirm dialog (replaces the browser's native confirm()) ───────────────
+  // One shared overlay reused for every call -- confirmDialog() returns a
+  // Promise, so every existing `if (!confirm(...)) return;` call site becomes
+  // `if (!(await confirmDialog(...))) return;` (the enclosing function must be
+  // async, same as everything else here that already awaits api()).
+  let _confirmDialogResolve = null;
+
+  function confirmDialog(message, { okLabel = 'OK', danger = false } = {}) {
+    document.getElementById('confirm-dialog-message').textContent = message;
+    const okBtn = document.getElementById('confirm-dialog-ok');
+    okBtn.textContent = okLabel;
+    okBtn.className = `btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`;
+    document.getElementById('confirm-dialog-overlay').classList.add('open');
+    return new Promise(resolve => { _confirmDialogResolve = resolve; });
+  }
+
+  function _settleConfirmDialog(result) {
+    document.getElementById('confirm-dialog-overlay').classList.remove('open');
+    const resolve = _confirmDialogResolve;
+    _confirmDialogResolve = null;
+    if (resolve) resolve(result);
+  }
+
+  document.getElementById('confirm-dialog-ok').addEventListener('click', () => _settleConfirmDialog(true));
+  document.getElementById('confirm-dialog-cancel').addEventListener('click', () => _settleConfirmDialog(false));
+  document.getElementById('confirm-dialog-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'confirm-dialog-overlay') _settleConfirmDialog(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('confirm-dialog-overlay').classList.contains('open')) return;
+    if (e.key === 'Escape') _settleConfirmDialog(false);
+    if (e.key === 'Enter') _settleConfirmDialog(true);
+  });
 
   // ── Stats bar ─────────────────────────────────────────────────────────────
   // Backs the Select-menu status quick-filters' disabled state -- global,
@@ -4602,7 +4675,8 @@
     if (clientState.selected.size === 0) { toast('No client images selected', 'err'); return; }
     const ids = [...clientState.selected];
     const noun = ids.length === 1 ? 'this client image' : `these ${ids.length} client images`;
-    if (!confirm(`Remove ${noun} from Docker? This deletes the built image(s) permanently and cannot be undone.`)) {
+    if (!(await confirmDialog(`Remove ${noun} from Docker? This deletes the built image(s) permanently and cannot be undone.`,
+      { okLabel: 'Remove', danger: true }))) {
       return;
     }
     document.getElementById('btn-client-remove').disabled = true;
@@ -4982,7 +5056,8 @@
     if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
     const ids = [...state.selected];
     const noun = ids.length === 1 ? 'this image' : `these ${ids.length} images`;
-    if (!confirm(`Remove ${noun} from Docker? This deletes the built image(s) permanently and cannot be undone.`)) {
+    if (!(await confirmDialog(`Remove ${noun} from Docker? This deletes the built image(s) permanently and cannot be undone.`,
+      { okLabel: 'Remove', danger: true }))) {
       return;
     }
     document.getElementById('btn-remove').disabled = true;
@@ -5932,8 +6007,9 @@
   async function includeSelectedUpdates() {
     const ids = Array.from(_updatesSelected);
     if (!ids.length) return;
-    if (!confirm(`Add ${ids.length} new version(s) to the registry and regenerate images? `
-      + `Compatibility is inherited from the nearest lower tracked major — unverified until you build/test.`)) return;
+    if (!(await confirmDialog(`Add ${ids.length} new version(s) to the registry and regenerate images? `
+      + `Compatibility is inherited from the nearest lower tracked major — unverified until you build/test.`,
+      { okLabel: 'Include' }))) return;
     try {
       const r = await api('/api/updates/include', { method: 'POST', body: JSON.stringify({ ids }) });
       _updatesSelected.clear();
@@ -5974,7 +6050,7 @@
 
   async function discardRegistryEditorChanges() {
     if (!_regEditorPending.size) return;
-    if (!confirm(`Discard ${_regEditorPending.size} unsaved change(s)?`)) return;
+    if (!(await confirmDialog(`Discard ${_regEditorPending.size} unsaved change(s)?`, { okLabel: 'Discard' }))) return;
     _regEditorPending.clear();
     _updateRegistryApplyState();
     await loadRegistryEditorData();
@@ -6149,9 +6225,10 @@
   async function applyRegistryEditorChanges() {
     const changes = Array.from(_regEditorPending.values());
     if (!changes.length) return;
-    if (!confirm(`Apply ${changes.length} change(s) to ${_regEditorLang}? `
+    if (!(await confirmDialog(`Apply ${changes.length} change(s) to ${_regEditorLang}? `
       + `This takes effect immediately and triggers a full regenerate, which can delete or `
-      + `rebuild large numbers of image contexts for this language.`)) return;
+      + `rebuild large numbers of image contexts for this language.`,
+      { okLabel: 'Apply', danger: true }))) return;
     try {
       const r = await api(`/api/registry/${_regEditorLang}/apply`, {
         method: 'POST', body: JSON.stringify({ changes }),
@@ -7516,7 +7593,7 @@
   document.getElementById('btn-client-launch').addEventListener('click', launchSelectedClients);
   document.getElementById('btn-client-stop').addEventListener('click', stopSelectedClients);
   document.getElementById('btn-client-stop-all').addEventListener('click', async () => {
-    if (!confirm('Stop all running pqc-* containers?')) return;
+    if (!(await confirmDialog('Stop all running pqc-* containers?', { okLabel: 'Stop all' }))) return;
     try {
       const r = await api('/api/stop-all', { method: 'POST' });
       openLog('Stop all containers', r.job_id, 'stop-all', () => loadClientImages(clientState.page));
@@ -7597,7 +7674,7 @@
   });
 
   document.getElementById('btn-init').addEventListener('click', async () => {
-    if (!confirm('Reload registry metadata and sync sources from disk?')) return;
+    if (!(await confirmDialog('Reload registry metadata and sync sources from disk?', { okLabel: 'Reload' }))) return;
     try {
       const r = await api('/api/init', { method: 'POST' });
       toast(`Init complete: ${r.images.total.toLocaleString()} sources`, 'ok');
@@ -7624,7 +7701,7 @@
   });
 
   document.getElementById('btn-stop-all').addEventListener('click', async () => {
-    if (!confirm('Stop all running pqc-* containers?')) return;
+    if (!(await confirmDialog('Stop all running pqc-* containers?', { okLabel: 'Stop all' }))) return;
     try {
       const r = await api('/api/stop-all', { method: 'POST' });
       openLog('Stop all containers', r.job_id, 'stop-all');
@@ -7769,8 +7846,9 @@
   document.getElementById('mnu-cleanup-normal').addEventListener('click', () => {
     dockerCleanup(false, false);
   });
-  document.getElementById('mnu-cleanup-full').addEventListener('click', () => {
-    if (!confirm('Full cleanup: removes all unused images and volumes. Continue?')) return;
+  document.getElementById('mnu-cleanup-full').addEventListener('click', async () => {
+    if (!(await confirmDialog('Full cleanup: removes all unused images and volumes. Continue?',
+      { okLabel: 'Clean up', danger: true }))) return;
     dockerCleanup(true, false);
   });
   document.getElementById('mnu-cleanup-dry').addEventListener('click', () => {
@@ -7819,12 +7897,13 @@
     }
   }
 
-  document.getElementById('mnu-buildcache-prune').addEventListener('click', () => {
-    if (!confirm(
+  document.getElementById('mnu-buildcache-prune').addEventListener('click', async () => {
+    if (!(await confirmDialog(
       'This removes the ENTIRE build cache, including the shared Maven/npm/pip/' +
       'Composer/NuGet package caches every build reuses. Registry rate-limiting ' +
-      '(e.g. Maven Central 429s) can return on the next big batch. Continue?'
-    )) return;
+      '(e.g. Maven Central 429s) can return on the next big batch. Continue?',
+      { okLabel: 'Prune', danger: true }
+    ))) return;
     pruneBuildCache(false);
   });
   document.getElementById('mnu-buildcache-dry').addEventListener('click', () => {
@@ -7845,8 +7924,9 @@
     }
   }
 
-  document.getElementById('mnu-orphans-remove').addEventListener('click', () => {
-    if (!confirm('Remove all Docker images not present in the current registry/images tree?')) return;
+  document.getElementById('mnu-orphans-remove').addEventListener('click', async () => {
+    if (!(await confirmDialog('Remove all Docker images not present in the current registry/images tree?',
+      { okLabel: 'Remove', danger: true }))) return;
     removeOrphans(false);
   });
   document.getElementById('mnu-orphans-dry').addEventListener('click', () => {
