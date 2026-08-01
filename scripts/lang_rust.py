@@ -950,6 +950,37 @@ def _real_crate_floor(crate: str, version: str) -> tuple:
     return floor
 
 
+def _bucket_min_floor(crate: str, bucket: str) -> tuple:
+    """The LOWEST real floor achievable across every crates.io version
+    within this registry BUCKET's own semver range -- NOT just the latest
+    resolved patch's floor. Uses the exact same prefix-then-exact-match
+    scoping as _resolve() itself (so "the bucket" means the same thing in
+    both places): a bucket like ed25519-dalek "2" or openssl "0.10" can
+    span many patches, and msrv_repair.py's own downgrade mechanism can
+    fall back to an OLDER one within that same bucket if the latest
+    resolved patch's floor is too high (confirmed already, Phase 11:
+    ed25519-dalek 2.2.0 needs rustc 1.81, but 2.1.1 -- still within the "2"
+    bucket -- only needs 1.65, and msrv_repair.py finds and uses it
+    automatically). Checking only the latest patch would flag that whole
+    bucket as a permanent impossibility for any effective target between
+    1.65 and 1.81 -- wrong, since a real build there succeeds fine. Only
+    when EVERY version in the bucket's own range exceeds the target is
+    this bucket a genuine, permanent impossibility for that target (e.g.
+    bcrypt "0.18", which has exactly one published patch, ever, so its
+    "lowest across the bucket" floor is simply that one patch's own)."""
+    try:
+        versions = _fetch_crates_versions(crate)
+    except CratesIoLookupError:
+        return (1, 0)
+    prefix = bucket + "."
+    matching = [v for v in versions if v.startswith(prefix)]
+    if not matching and bucket in versions:
+        matching = [bucket]
+    if not matching:
+        return (1, 0)
+    return min(_real_crate_floor(crate, v) for v in matching)
+
+
 def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
                     lib_name: str, lib_ver: str, msrv_target: str, lib_major: str) -> str:
     kind = _fw_kind(fw_name, fw_major)
@@ -2821,18 +2852,22 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
 
     msrv_target = _effective_msrv_target(lang_ver, _fw_kind(fw_name, fw_major))
     target_t = _ver_tuple2(msrv_target)
-    # _real_crate_floor() never raises (fails open to (1, 0) on a lookup
-    # miss) -- by this point _resolve() already succeeded for both pkg/
-    # resolved pairs below, so their /versions data is already cached;
-    # a fresh CratesIoLookupError here would be unreachable in practice.
-    for pkg, resolved, axis in ((fw_pkg, fw_resolved, f"{fw_name} {fw_major}"),
-                                (lib_pkg, lib_resolved, f"{lib_name} {lib_ver}")):
-        real_floor = _real_crate_floor(pkg, resolved)
+    # Checked against the BUCKET's own lowest achievable floor (across every
+    # matching crates.io patch), not just the one resolved/latest patch --
+    # msrv_repair.py can and does downgrade within the same bucket at build
+    # time, so only a bucket where EVERY patch exceeds the target is a real,
+    # permanent impossibility. _bucket_min_floor() never raises (fails open
+    # to (1, 0) on a lookup miss) -- by this point _resolve() already
+    # succeeded for both crates below, so their /versions data is cached.
+    for pkg, bucket, axis in ((fw_pkg, fw_major, f"{fw_name} {fw_major}"),
+                              (lib_pkg, lib_ver, f"{lib_name} {lib_ver}")):
+        real_floor = _bucket_min_floor(pkg, bucket)
         if real_floor > target_t:
             print(f"  [SKIP] {fw_name} {fw_major} + {lib_name} {lib_ver}: "
-                  f"{axis} (resolved {resolved}) needs rustc {'.'.join(map(str, real_floor))}, "
-                  f"but this combo's effective build target is {msrv_target} -- a permanent "
-                  f"impossibility, not a repairable version-floor issue", flush=True)
+                  f"{axis} needs rustc {'.'.join(map(str, real_floor))} at best (every published "
+                  f"patch in this bucket), but this combo's effective build target is "
+                  f"{msrv_target} -- a permanent impossibility, not a repairable version-floor "
+                  f"issue", flush=True)
             if out.exists():
                 shutil.rmtree(out)
             return False
