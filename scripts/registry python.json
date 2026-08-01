@@ -555,6 +555,13 @@
               "compatibility": [
                 "3.9+"
               ]
+            },
+            {
+              "nr": "50.0",
+              "release_date": "2026-07-31",
+              "compatibility": [
+                "3.9+"
+              ]
             }
           ],
           "notes": "Widely used library with support for modern cryptographic primitives, including post-quantum algorithms. Actively maintained and regularly updated with security patches."
@@ -1108,10 +1115,11 @@
         {
           "name": "liboqs-python",
           "version": [
-            { "nr": "0.14", "release_date": "2025-02-25", "compatibility": [ "3.9+" ] },
-            { "nr": "0.15", "release_date": "2026-05-06", "compatibility": [ "3.10+" ] }
+            { "nr": "0.14", "release_date": "2025-02-25", "available": false, "compatibility": [ "3.9+" ] },
+            { "nr": "0.15", "release_date": "2026-05-06", "available": false, "compatibility": [ "3.10+" ] },
+            { "nr": "0.16", "release_date": "2026-07-23", "compatibility": [ "3.10+" ] }
           ],
-          "notes": "The official Open Quantum Safe project's Python binding (github.com/open-quantum-safe/liboqs-python), a ctypes wrapper around the liboqs C library -- the Python equivalent of Go's liboqs-go / PHP's php-liboqs / .NET's LibOQS.NET / Node's liboqs-node, and the one language in this project that previously had NO liboqs binding tracked at all despite every other language having one. Requires the liboqs C library built from source in the same Dockerfile stage (git clone + cmake + ninja, the same recipe already used for the other languages' liboqs bindings) plus `LD_LIBRARY_PATH=/usr/local/lib` so the ctypes loader can find the resulting shared library at runtime -- no compilation of the Python package itself (it's pure ctypes, not a C extension). Confirmed working end-to-end via a real docker build+run: `import oqs; oqs.KeyEncapsulation('ML-KEM-768').generate_keypair()` returns a real 1184-byte ML-KEM-768 public key -- unlike Node's liboqs-node, this binding is built against a current liboqs release and exposes the final NIST algorithm names directly, no draft-name caveat needed. '0.15's compatibility floor was originally (wrongly) recorded as '3.9+', the same as '0.14' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own per-file `requires_python` metadata directly: 0.14.1 declares `>=3.9`, but 0.15.0 raised it to `>=3.10` (same bug class as this file's Authlib entry above). Corrected to '3.10+'; Python 3.9 now only gets the 0.14 bucket for this library."
+          "notes": "The official Open Quantum Safe project's Python binding (github.com/open-quantum-safe/liboqs-python), a ctypes wrapper around the liboqs C library -- the Python equivalent of Go's liboqs-go / PHP's php-liboqs / .NET's LibOQS.NET / Node's liboqs-node, and the one language in this project that previously had NO liboqs binding tracked at all despite every other language having one. Requires the liboqs C library built from source in the same Dockerfile stage (git clone + cmake + ninja, the same recipe already used for the other languages' liboqs bindings) plus `LD_LIBRARY_PATH=/usr/local/lib` so the ctypes loader can find the resulting shared library at runtime -- no compilation of the Python package itself (it's pure ctypes, not a C extension). Confirmed working end-to-end via a real docker build+run: `import oqs; oqs.KeyEncapsulation('ML-KEM-768').generate_keypair()` returns a real 1184-byte ML-KEM-768 public key -- unlike Node's liboqs-node, this binding is built against a current liboqs release and exposes the final NIST algorithm names directly, no draft-name caveat needed. '0.15's compatibility floor was originally (wrongly) recorded as '3.9+', the same as '0.14' -- a real `pip install` failure on Python 3.9 surfaced PyPI's own per-file `requires_python` metadata directly: 0.14.1 declares `>=3.9`, but 0.15.0 raised it to `>=3.10` (same bug class as this file's Authlib entry above). Corrected to '3.10+'; Python 3.9 now only gets the 0.14 bucket for this library. 2026-08-02: '0.14' and '0.15' marked available:false -- confirmed via both PyPI's JSON API and its authoritative PEP-503 simple-index (`https://pypi.org/simple/liboqs-python/`) that these two releases have been fully removed from PyPI, not just yanked (`versions` now lists only `0.16.0`; a yanked release would still appear, flagged) -- so this project's own generator correctly stopped resolving/building them and cleaned up their now-unbuildable image contexts, this is real upstream removal, not a bug. Kept as reference rows (their own compatibility arrays preserved) rather than deleted from the registry entirely, matching this project's standing convention for any other historically-real-but-no-longer-installable version."
         },
         {
           "name": "pyOpenSSL",
@@ -1247,7 +1255,8 @@
             { "nr": "46.0", "release_date": "2025-09-16", "compatibility": [ "3.8+" ] },
             { "nr": "47.0", "release_date": "2026-04-24", "compatibility": [ "3.8+" ] },
             { "nr": "48.0", "release_date": "2026-05-04", "compatibility": [ "3.9+" ] },
-            { "nr": "49.0", "release_date": null, "compatibility": [ "3.9+" ] }
+            { "nr": "49.0", "release_date": null, "compatibility": [ "3.9+" ] },
+            { "nr": "50.0", "release_date": "2026-07-31", "compatibility": [ "3.9+" ] }
           ],
           "notes": "RSA-2048 PSS/SHA-256 via cryptography.hazmat -- deliberately a different algorithm family from pynacl-sign/ecdsa-sign for discovery diversity; RSA signatures are ~256 bytes vs. Ed25519's fixed 64 or ECDSA's ~70-72 DER-encoded."
         },
@@ -1300,10 +1309,11 @@
           "name": "liboqs-sign",
           "module": null,
           "version": [
-            { "nr": "0.14", "release_date": "2025-02-25", "compatibility": [ "3.9+" ] },
-            { "nr": "0.15", "release_date": "2026-05-06", "compatibility": [ "3.10+" ] }
+            { "nr": "0.14", "release_date": "2025-02-25", "available": false, "compatibility": [ "3.9+" ] },
+            { "nr": "0.15", "release_date": "2026-05-06", "available": false, "compatibility": [ "3.10+" ] },
+            { "nr": "0.16", "release_date": "2026-07-23", "compatibility": [ "3.10+" ] }
           ],
-          "notes": "ML-DSA-65 (Dilithium3) signature via oqs.Signature -- the star of the discovery story: a post-quantum signature is on the order of ~3.3KB, dwarfing every classical signature here (64-256 bytes), so it should be the easiest of all these to tell apart purely by header size. Needs the same liboqs C-library build stage as this project's other liboqs bindings (git clone + cmake/ninja, LD_LIBRARY_PATH)."
+          "notes": "ML-DSA-65 (Dilithium3) signature via oqs.Signature -- the star of the discovery story: a post-quantum signature is on the order of ~3.3KB, dwarfing every classical signature here (64-256 bytes), so it should be the easiest of all these to tell apart purely by header size. Needs the same liboqs C-library build stage as this project's other liboqs bindings (git clone + cmake/ninja, LD_LIBRARY_PATH). 2026-08-02: '0.14'/'0.15' marked available:false, mirroring the same correction on the server-side liboqs-python entry -- both PyPI's JSON API and its PEP-503 simple-index confirm these two releases were fully removed from PyPI (only 0.16.0 remains), not just yanked."
         },
         {
           "name": "authlib-jwt",
