@@ -1334,6 +1334,10 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 TARGET = sys.argv[1]
+# The framework/library crate names THIS combo directly depends on (passed
+# by make_dockerfile, e.g. "iron bcrypt") -- see the ROOT_CRATES check
+# below for why this distinction matters.
+ROOT_CRATES = set(sys.argv[2:])
 UA = "pqc-sca-research/1.0 (+https://github.com/DonjaVanEsch/SCA)"
 
 _STABLE_RE = re.compile(r"^\\d+(\\.\\d+){0,3}$")
@@ -1977,6 +1981,30 @@ def repair_loop():
                 continue
 
             print(f"  ! {name} {version} needs rust {floor} > {TARGET}, no compatible version found in the same semver range -- genuine floor")
+            if name in ROOT_CRATES:
+                # A genuinely unfixable floor on one of OUR OWN direct
+                # dependencies (the framework/library crate itself, not a
+                # transitive one) is a real registry problem, not something
+                # to quietly work around -- confirmed live: bcrypt 0.18.0
+                # shipped edition="2024" (real floor rustc 1.85) while the
+                # registry's own compatibility range for that bucket
+                # (inherited from bcrypt "0.15" via the dashboard's Include
+                # action) still claimed 1.63+. Without this check, this
+                # exact scenario silently fell through to
+                # _reconcile_new_pins()'s "no fix -- drop the pin" path
+                # (correct for a purely transitive crate that might vanish
+                # once its parent's fixed, wrong here since dropping OUR
+                # OWN dependency just produces a confusing downstream
+                # E0432 "unresolved import" instead of a clear error).
+                # Fail loudly and immediately instead -- fix the
+                # registry's compatibility range for this bucket, don't
+                # try to repair around a real floor.
+                raise RuntimeError(
+                    f"{name} {version} is a direct dependency of this combo and needs rust "
+                    f"{floor} > {TARGET}, with no compatible version available -- this is a "
+                    f"genuine registry floor problem, not a repairable pin. Narrow this "
+                    f"bucket's compatibility range in the registry instead of building it here."
+                )
             given_up.add((name, version))
 
         if not to_fix:
@@ -2394,6 +2422,22 @@ def _reconcile_new_pins(max_rounds=5):
                         continue
                     no_fix = True
                     print(f"  ! newly-surfaced {name} {version} needs rust {floor} > {TARGET}, no compatible version -- leaving as-is")
+                    if name in ROOT_CRATES:
+                        # Same reasoning as repair_loop()'s own ROOT_CRATES
+                        # check -- this is a second checkpoint in case a
+                        # root crate's own floor only becomes unfixable
+                        # AFTER repair_loop()'s pass (e.g. some other
+                        # crate's downgrade changes what's reachable).
+                        # Without this, the code below this loop would
+                        # silently `del deps[key]` our own direct
+                        # dependency -- correct for a purely transitive
+                        # crate, wrong for one we explicitly require.
+                        raise RuntimeError(
+                            f"{name} {version} is a direct dependency of this combo and needs rust "
+                            f"{floor} > {TARGET}, with no compatible version available -- this is a "
+                            f"genuine registry floor problem, not a repairable pin. Narrow this "
+                            f"bucket's compatibility range in the registry instead of building it here."
+                        )
 
             if name not in by_crate:
                 # Same bare-pin risk as rewrite_pinned_toml()'s transitive
@@ -2493,6 +2537,11 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
     kind = _fw_kind(fw_name, fw_major)
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(rust_ver)
     sys_deps = LIB_META[lib_name]["sys_deps"]
+    # Passed to msrv_repair.py as ROOT_CRATES (see _MSRV_REPAIR_PY) so it
+    # can tell "our own direct dependency" apart from a purely transitive
+    # crate when deciding whether an unfixable floor is safe to just drop.
+    fw_crate = _FW_PACKAGE[fw_name]
+    lib_crate = LIB_META[lib_name]["crate"]
 
     apt_block = ""
     if sys_deps:
@@ -2587,7 +2636,7 @@ def make_dockerfile(rust_ver: str, fw_name: str, fw_major: str, fw_ver: str,
         # fixes interact. Pinning the hash seed makes the whole repair
         # process fully reproducible for the same dependency graph, not
         # just usually-correct.
-        f"    cargo generate-lockfile && PYTHONHASHSEED=0 python3 msrv_repair.py {msrv_target}\n"
+        f"    cargo generate-lockfile && PYTHONHASHSEED=0 python3 msrv_repair.py {msrv_target} {fw_crate} {lib_crate}\n"
         "\n"
     )
 
