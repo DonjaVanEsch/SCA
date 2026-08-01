@@ -2326,11 +2326,15 @@
     display: none;
     align-items: center;
     justify-content: center;
-    /* #bottom-dock's own align-items:flex-end bottom-aligns its flex
-       children by default (right for #pagination/#log-console, which fill
-       the row's full height) -- override just for this child so the badge
-       sits vertically centered in the row instead of flush at the bottom. */
-    align-self: center;
+    /* Deliberately NOT align-self:center -- #log-console's own header sits
+       flush at its BOTTOM edge (it uses flex-direction:column-reverse, so
+       #log-body renders on top and #log-header below it), and #log-console
+       itself fills #bottom-dock's full row height via the dock's own
+       align-items:flex-end. So the dock's default bottom alignment already
+       lines the badge up with the header specifically, at any row height
+       (collapsed ~38px or open 240px) -- centering the badge in the whole
+       ROW instead (tried first) put it in the middle of the entire
+       expanded log panel once it was open, not next to the header. */
     gap: 6px;
     /* Sized (margin+padding+line-height:1 text) to stay at or under a
        collapsed #log-console's own rendered height (~38px: its 6px+6px
