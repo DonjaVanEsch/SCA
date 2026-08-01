@@ -2728,12 +2728,16 @@ def _openssl_lib_msrv_cap(resolved: str, lang_ver: str) -> str:
 # This is a genuine, permanent (fw_major, lib_major) impossibility, not a
 # version-floor issue any registry compatibility-range edit could route
 # around -- same category as PHP's Laravel-4 x phpseclib exclusion.
-# bcrypt "0.19" is edition="2024" too (confirmed via crates.io metadata)
-# and will need the identical entry added the moment it's build-tested and
-# confirmed to hit the same wall -- not preemptively added here without a
-# real failing build to confirm it, per this project's own
-# verify-by-executing discipline.
-_INCOMPATIBLE_COMBOS = {("Rocket", "0.4", "bcrypt", "0.18")}
+# bcrypt "0.19" hits the identical wall (edition="2024" too) -- confirmed
+# live 2026-08-01 via a real failing build (rust-rocket-0.4-bcrypt-0.19 @
+# nominal 1.63, msrv_repair.py's own error correctly reporting target 1.68
+# > TARGET), added the moment it was actually build-tested and confirmed,
+# per this project's own verify-by-executing discipline (not preemptively
+# guessed ahead of a real failure).
+_INCOMPATIBLE_COMBOS = {
+    ("Rocket", "0.4", "bcrypt", "0.18"),
+    ("Rocket", "0.4", "bcrypt", "0.19"),
+}
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
