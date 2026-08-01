@@ -48,6 +48,13 @@ _CRATES_IO_UA = "pqc-sca-research/1.0 (+https://github.com/DonjaVanEsch/SCA)"
 
 _CRATES_VERSIONS: dict = {}
 _CRATES_RELEASE_DATES: dict = {}
+# crate -> {version: {"edition": str|None, "rust_version": str|None}} --
+# populated from the SAME /versions response _fetch_crates_versions()
+# already fetches, no extra request. Used by _real_crate_floor() to catch
+# an already-doomed combo (e.g. a library whose real edition/rust_version
+# floor exceeds what a framework can ever build under) at generation time,
+# before ever starting a Docker build -- see _real_crate_floor's docstring.
+_CRATES_MSRV_META: dict = {}
 
 # Cargo/SemVer prereleases use a literal hyphen (-rc.1, -beta.2, -dev) --
 # same convention as NuGet/Packagist, a "no hyphen" regex is sufficient.
@@ -81,6 +88,11 @@ def _fetch_crates_versions(crate: str) -> list:
         ]
         versions = sorted((v for v, _ in stable), key=_ver_key)
         _CRATES_RELEASE_DATES[crate] = {v: d for v, d in stable if d}
+        _CRATES_MSRV_META[crate] = {
+            e["num"]: {"edition": e.get("edition"), "rust_version": e.get("rust_version")}
+            for e in raw
+            if not e.get("yanked") and _STABLE_RE.match(e["num"])
+        }
     except (URLError, OSError, ValueError, KeyError) as exc:
         raise CratesIoLookupError(f"{crate}: {exc}") from exc
 
@@ -897,6 +909,45 @@ _OPENSSL_LIB_MSRV_TIERS = [
 def _ver_tuple2(v: str) -> tuple:
     parts = v.split(".")
     return tuple(int(p) for p in parts[:2])
+
+
+# Same mapping msrv_repair.py's own _EDITION_FLOOR uses at build time (a
+# separate copy -- that one runs standalone inside a Docker container, this
+# one runs here in generate_images.py's own process; no way to share the
+# literal dict between the two, just keep them in sync if either changes).
+_EDITION_FLOOR = {"2015": (1, 0), "2018": (1, 31), "2021": (1, 56), "2024": (1, 85)}
+
+
+def _real_crate_floor(crate: str, version: str) -> tuple:
+    """This exact resolved version's own real compile-time floor, per its
+    declared edition/rust_version on crates.io (fetched for free from the
+    exact same /versions response _resolve() already triggered -- see
+    _CRATES_MSRV_META). NOT a full replica of msrv_repair.py's own
+    effective_floor() (that also checks the crates.io INDEX's schema
+    version for namespaced/weak-dependency features, a rarer signal) --
+    this is a cheap pre-flight check that can catch the common case (a
+    library/framework whose real floor was never verified against the
+    specific rust_ver bucket it inherited via the dashboard's Include
+    action) BEFORE ever starting a Docker build, not a replacement for
+    msrv_repair.py's own more thorough check at build time. Returns (1, 0)
+    (no constraint) if the version/metadata can't be found -- an unknown
+    floor is treated as "no evidence of a problem", not as blocking;
+    matches current_floor()'s own fail-open shape inside msrv_repair.py."""
+    try:
+        _fetch_crates_versions(crate)
+    except CratesIoLookupError:
+        return (1, 0)
+    meta = _CRATES_MSRV_META.get(crate, {}).get(version, {})
+    floor = _EDITION_FLOOR.get(meta.get("edition"), (1, 0))
+    rv = meta.get("rust_version")
+    if rv:
+        try:
+            rvt = _ver_tuple2(rv)
+            if rvt > floor:
+                floor = rvt
+        except ValueError:
+            pass
+    return floor
 
 
 def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
@@ -2716,30 +2767,6 @@ def _openssl_lib_msrv_cap(resolved: str, lang_ver: str) -> str:
     return resolved
 
 
-# Rocket 0.4's own pinned nightly toolchain caps its REAL build-time floor
-# at _ROCKET_04_NIGHTLY_MSRV (1.68) no matter which nominal rust_ver bucket
-# is selected (confirmed in Phase 16: Rocket-0.4 Dockerfiles at nominal
-# 1.85 vs 1.97 are byte-identical except the runtime stage's Debian
-# codename) -- so a library whose OWN real floor exceeds 1.68 can NEVER
-# build under Rocket 0.4, at any nominal rust_ver. Confirmed live (Phase
-# 27): bcrypt 0.18.0 (edition="2024", real floor rustc 1.85) fails this
-# way regardless of nominal rust_ver, correctly caught now by
-# msrv_repair.py's ROOT_CRATES guard instead of silently dropping bcrypt.
-# This is a genuine, permanent (fw_major, lib_major) impossibility, not a
-# version-floor issue any registry compatibility-range edit could route
-# around -- same category as PHP's Laravel-4 x phpseclib exclusion.
-# bcrypt "0.19" hits the identical wall (edition="2024" too) -- confirmed
-# live 2026-08-01 via a real failing build (rust-rocket-0.4-bcrypt-0.19 @
-# nominal 1.63, msrv_repair.py's own error correctly reporting target 1.68
-# > TARGET), added the moment it was actually build-tested and confirmed,
-# per this project's own verify-by-executing discipline (not preemptively
-# guessed ahead of a real failure).
-_INCOMPATIBLE_COMBOS = {
-    ("Rocket", "0.4", "bcrypt", "0.18"),
-    ("Rocket", "0.4", "bcrypt", "0.19"),
-}
-
-
 # ── Public interface ──────────────────────────────────────────────────────────
 
 def write_context(lang_ver: str, fw_name: str, fw_major: str,
@@ -2747,21 +2774,22 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     """Write Cargo.toml / src/main.rs / Dockerfile for one image context.
 
     Returns False (and removes any stale directory) when a required
-    crates.io package version cannot be resolved, or when the
-    framework/library pairing is a known, permanent build impossibility
-    (see _INCOMPATIBLE_COMBOS). Returns False WITHOUT touching any
-    existing directory when the lookup itself failed (network/rate-limit)
-    -- see CratesIoLookupError.
+    crates.io package version cannot be resolved, or when the resolved
+    framework/library's own real MSRV floor (edition/rust_version) exceeds
+    this combo's EFFECTIVE build target (see _real_crate_floor,
+    _effective_msrv_target) -- a permanent impossibility no registry
+    compatibility-range edit could route around (e.g. Rocket 0.4's pinned
+    nightly caps its real floor at 1.68 regardless of nominal rust_ver, so
+    ANY library whose real floor exceeds that can never build under it;
+    confirmed live via bcrypt 0.18/0.19, both edition="2024"/floor 1.85).
+    This check is dynamic (fetched from crates.io at generation time, not
+    a hardcoded per-version exclusion list) specifically so a FUTURE
+    library version hitting the identical wall is caught automatically,
+    without needing a new hardcoded entry each time. Returns False WITHOUT
+    touching any existing directory when the lookup itself failed
+    (network/rate-limit) -- see CratesIoLookupError.
     """
     out = images_base / "rust" / lang_ver / fw_name / fw_major / lib_name / lib_ver
-
-    if (fw_name, fw_major, lib_name, lib_ver) in _INCOMPATIBLE_COMBOS:
-        print(f"  [SKIP] {fw_name} {fw_major} + {lib_name} {lib_ver}: "
-              f"{fw_name} {fw_major}'s pinned nightly toolchain floor is below "
-              f"this library's own real MSRV, at any nominal rust_ver", flush=True)
-        if out.exists():
-            shutil.rmtree(out)
-        return False
 
     fw_pkg = _FW_PACKAGE[fw_name]
     try:
@@ -2791,10 +2819,26 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
             shutil.rmtree(out)
         return False
 
+    msrv_target = _effective_msrv_target(lang_ver, _fw_kind(fw_name, fw_major))
+    target_t = _ver_tuple2(msrv_target)
+    # _real_crate_floor() never raises (fails open to (1, 0) on a lookup
+    # miss) -- by this point _resolve() already succeeded for both pkg/
+    # resolved pairs below, so their /versions data is already cached;
+    # a fresh CratesIoLookupError here would be unreachable in practice.
+    for pkg, resolved, axis in ((fw_pkg, fw_resolved, f"{fw_name} {fw_major}"),
+                                (lib_pkg, lib_resolved, f"{lib_name} {lib_ver}")):
+        real_floor = _real_crate_floor(pkg, resolved)
+        if real_floor > target_t:
+            print(f"  [SKIP] {fw_name} {fw_major} + {lib_name} {lib_ver}: "
+                  f"{axis} (resolved {resolved}) needs rustc {'.'.join(map(str, real_floor))}, "
+                  f"but this combo's effective build target is {msrv_target} -- a permanent "
+                  f"impossibility, not a repairable version-floor issue", flush=True)
+            if out.exists():
+                shutil.rmtree(out)
+            return False
+
     out.mkdir(parents=True, exist_ok=True)
     (out / "src").mkdir(exist_ok=True)
-
-    msrv_target = _effective_msrv_target(lang_ver, _fw_kind(fw_name, fw_major))
 
     (out / "src" / "main.rs").write_text(
         make_main_rs(fw_name, fw_major, lib_name, lib_ver), encoding="utf-8"
