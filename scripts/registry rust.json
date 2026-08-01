@@ -1223,6 +1223,16 @@
                 "1.97"
               ],
               "notes": "Corrected 2026-07-26 from the originally-cited GitHub issue #194 MSRV (1.60.0) after real builds surfaced two more layers: (1) our own Cargo.toml was missing ed25519-dalek's own \"rand_core\" feature, without which SigningKey::generate() (used by our touch code) doesn't even exist -- confirmed via source (signing.rs: `#[cfg(feature = \"rand_core\")]`), not an MSRV issue at all, now fixed in lang_rust.py; (2) even with that fixed, the resolved der/pkcs8/spki chain (pulled in via the `ed25519` crate's optional pkcs8 feature-unification) uniformly requires rustc 1.65 with no same-class candidate below it. 1.65 confirmed via a real build + run (curl-verified touch output) after both fixes; 1.60-1.64 do NOT work despite issue #194's claim. Genuine breaking API rewrite (signing-context/verify changes) from 1.x still applies as the reason this is a distinct bucket from \"1\"."
+            },
+            {
+              "nr": "3",
+              "release_date": "2026-07-06",
+              "compatibility": [
+                "1.85",
+                "1.90",
+                "1.97"
+              ],
+              "notes": "Corrected 2026-08-01: this bucket resolves to ed25519-dalek 3.0.0 (2026-07-06), which ships edition=\"2024\" and rust-version=\"1.85\" (confirmed via a real GitHub source diff, dalek-cryptography/curve25519-dalek tags ed25519-2.2.0...ed25519-3.0.0 -- this crate now lives in that monorepo, not its own repo). The compatibility range inherited via the dashboard Include action (1.65-1.97, from bucket \"2\") was wrong the same way bcrypt 0.18/0.19 were -- narrowed to 1.85+. Separately, 3.0.0 is also a real API break, not just an MSRV bump: SigningKey::generate() changed its RNG trait bound from rand_core 0.6s CryptoRngCore to rand_core 0.10s CryptoRng, and the crates own doc examples replaced rand::rngs::OsRng with getrandom::SysRng wrapped in UnwrapErr -- see _ED25519_DALEK_3_IMPORTS/_TOUCH in lang_rust.py."
             }
           ],
           "notes": "Pure-Rust Ed25519 signing implementation with a confirmed, real 1.x->2.x API break -- policy since 2.x is that any MSRV bump gets its own minor version bump."

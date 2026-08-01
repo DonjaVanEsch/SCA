@@ -428,13 +428,46 @@ _ED25519_DALEK_1_TOUCH = (
     '    let touch_result = format!("ed25519:{}", hex_encode(&signature.to_bytes()));'
 )
 
+# ed25519-dalek 3.0.0's own real ecosystem shift, confirmed via a real
+# GitHub source diff (dalek-cryptography/curve25519-dalek, tags
+# ed25519-2.2.0...ed25519-3.0.0 -- this crate lives in that monorepo now,
+# not its own repo): `SigningKey::generate()` still exists, but its RNG
+# trait bound changed from rand_core 0.6's `CryptoRngCore` to rand_core
+# 0.10's `CryptoRng` (ed25519-dalek's own `rand_core` dependency jumped
+# "0.6.4" -> "0.10" between these tags). The crate's own updated doc
+# examples replace `rand::rngs::OsRng` (from bucket "2"'s `rand = "0.8"`
+# extra_dep, which only implements the OLDER rand_core 0.6 traits) with
+# `getrandom::SysRng` (a fallible `TryRng`) wrapped in `UnwrapErr` to
+# satisfy the new infallible `CryptoRng` bound -- confirmed via a real
+# build failure (E0599, "no function or associated item named `generate`
+# found") that the old rand-crate-based OsRng no longer satisfies it at
+# all, not just a version mismatch warning.
+_ED25519_DALEK_3_IMPORTS = (
+    "use ed25519_dalek::{SigningKey, Signer};\n"
+    "use getrandom::{SysRng, rand_core::{TryRng, UnwrapErr}};"
+)
+_ED25519_DALEK_3_TOUCH = (
+    'let mut csprng = UnwrapErr(SysRng);\n'
+    '    let signing_key = SigningKey::generate(&mut csprng);\n'
+    '    let signature = signing_key.sign(b"pqc-sca probe");\n'
+    '    let touch_result = format!("ed25519:{}", hex_encode(&signature.to_bytes()));'
+)
+
 
 def _ed25519_dalek_imports(lib_major: str) -> str:
-    return _ED25519_DALEK_1_IMPORTS if lib_major == "1" else LIB_META["ed25519-dalek"]["imports"]
+    if lib_major == "1":
+        return _ED25519_DALEK_1_IMPORTS
+    if lib_major == "3":
+        return _ED25519_DALEK_3_IMPORTS
+    return LIB_META["ed25519-dalek"]["imports"]
 
 
 def _ed25519_dalek_touch(lib_major: str) -> str:
-    return _ED25519_DALEK_1_TOUCH if lib_major == "1" else LIB_META["ed25519-dalek"]["touch"]
+    if lib_major == "1":
+        return _ED25519_DALEK_1_TOUCH
+    if lib_major == "3":
+        return _ED25519_DALEK_3_TOUCH
+    return LIB_META["ed25519-dalek"]["touch"]
 
 
 def _ed25519_dalek_extra_deps(lib_major: str) -> str:
@@ -445,7 +478,16 @@ def _ed25519_dalek_extra_deps(lib_major: str) -> str:
     # mismatch (rand_core 0.5's CryptoRng/RngCore are distinct types from
     # rand_core 0.6's, even though same-named) -- confirmed live via
     # E0277 "trait bound OsRng: CryptoRng is not satisfied".
-    return 'rand = "0.7"\n' if lib_major == "1" else LIB_META["ed25519-dalek"]["extra_deps"]
+    if lib_major == "1":
+        return 'rand = "0.7"\n'
+    if lib_major == "3":
+        # Replaces "2"'s `rand = "0.8"` entirely -- "3"'s own doc examples
+        # no longer use the `rand` crate at all, just getrandom's own
+        # SysRng directly (see _ED25519_DALEK_3_IMPORTS). "sys_rng" gates
+        # SysRng's availability (confirmed via getrandom's crates.io
+        # feature list).
+        return 'getrandom = { version = "0.4", features = ["sys_rng"] }\n'
+    return LIB_META["ed25519-dalek"]["extra_deps"]
 
 
 # ── App template (main.rs) ────────────────────────────────────────────────────
@@ -1007,7 +1049,7 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
     else:
         fw_dep = f'{fw_crate} = "{fw_ver}"\n'
 
-    if lib_name == "ed25519-dalek" and lib_major == "2":
+    if lib_name == "ed25519-dalek" and lib_major in ("2", "3"):
         # SigningKey::generate() (used by our touch code) is gated behind
         # ed25519-dalek's own "rand_core" feature -- confirmed live via a
         # real build (E0599, "no function or associated item named
@@ -1018,6 +1060,9 @@ def make_cargo_toml(fw_name: str, fw_major: str, fw_ver: str,
         # in our own dependency declaration, not an MSRV/floor issue --
         # confirmed by reproducing the identical failure across multiple
         # rustc targets (1.61, 1.65, 1.85), including the newest one.
+        # Still true for "3" -- confirmed via the same cfg attribute
+        # surviving unchanged in the 3.0.0 source, just with a different
+        # RNG trait bound (see _ED25519_DALEK_3_IMPORTS/_TOUCH).
         lib_dep = f'{lib_crate} = {{ version = "{lib_ver}", features = ["rand_core"] }}\n'
     else:
         lib_dep = f'{lib_crate} = "{lib_ver}"\n'
