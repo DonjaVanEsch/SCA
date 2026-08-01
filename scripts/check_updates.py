@@ -1,9 +1,9 @@
 """
 Periodic update-availability scanner.
 
-For every framework/library tracked across all 5 language registries,
+For every framework/library tracked across all 6 language registries,
 queries the real upstream package registry (npm / PyPI / Packagist /
-Maven Central / NuGet) for its full release history and flags any major
+Maven Central / NuGet / crates.io) for its full release history and flags any major
 version that exists upstream but isn't yet tracked as a registry.json
 bucket ("nr"). Purely a detection/notification layer -- it never builds,
 tests, or edits a registry itself; a human reviews the result and decides
@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -137,7 +138,33 @@ _ENUMERATORS = {
 #    the exact same functions generate_images.py itself relies on to resolve
 #    a bucket to "latest patch" -- no separate/duplicate registry client) ───
 
-def _fetch(fetch_kind: str, package_id: str) -> list:
+# A brief real-network blip used to silently sink an entire scheduled scan:
+# confirmed live that 2 consecutive weekly cron runs on the actual server
+# failed EVERY single package lookup with "Temporary failure in name
+# resolution" (DNS), while the identical script run interactively minutes
+# later succeeded cleanly -- a one-off local-network hiccup, not a cron-
+# environment/DNS-config bug (resolv.conf, nsswitch, PATH all checked and
+# fine). Each lookup was a single attempt with no retry, so one bad moment
+# for one package -> logged as a [WARN] and skipped -- and the whole run
+# still exits 0 reporting "0 new version(s) found", indistinguishable from
+# a real "nothing new" result. Retrying a few times with a short delay is
+# cheap insurance against exactly that; it does NOT touch the per-language
+# modules' own resolution functions (used far more heavily by
+# generate_images.py's real build-time resolution), only this scanner's use
+# of them.
+_FETCH_RETRIES = 3
+_FETCH_RETRY_DELAY = 5  # seconds between attempts
+
+# How often check_language() prints a "still working" progress line -- see
+# its own comment. Not per-package (too noisy for a healthy, fast run) and
+# not silent for minutes at a time either (the original complaint: a slow
+# or stalled-looking run gives no indication anything is happening).
+_PROGRESS_INTERVAL = 8  # seconds
+
+_KNOWN_FETCH_KINDS = {"npm", "pypi", "packagist", "maven", "nuget", "crates"}
+
+
+def _fetch_once(fetch_kind: str, package_id: str) -> list:
     if fetch_kind == "npm":
         import lang_node
         return lang_node._fetch_releases(package_id)
@@ -160,35 +187,66 @@ def _fetch(fetch_kind: str, package_id: str) -> list:
     raise ValueError(f"unknown fetch kind: {fetch_kind}")
 
 
+def _fetch(fetch_kind: str, package_id: str) -> list:
+    """Retries a transient failure up to _FETCH_RETRIES times (see the note
+    above) before re-raising for check_language()'s own per-package
+    [WARN]+skip handling. An unknown fetch_kind is a programming error, not
+    a network blip -- raised immediately, never retried."""
+    if fetch_kind not in _KNOWN_FETCH_KINDS:
+        raise ValueError(f"unknown fetch kind: {fetch_kind}")
+    last_exc = None
+    for attempt in range(_FETCH_RETRIES):
+        try:
+            return _fetch_once(fetch_kind, package_id)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _FETCH_RETRIES - 1:
+                time.sleep(_FETCH_RETRY_DELAY)
+    raise last_exc
+
+
+def _fetch_date_once(fetch_kind: str, package_id: str, version: str) -> str | None:
+    if fetch_kind == "npm":
+        import lang_node
+        return lang_node._release_date(package_id, version)
+    if fetch_kind == "pypi":
+        import lang_python
+        return lang_python._release_date(package_id, version)
+    if fetch_kind == "packagist":
+        import lang_php
+        return lang_php._release_date(package_id, version)
+    if fetch_kind == "maven":
+        import lang_java
+        group, artifact = package_id.split(":", 1)
+        return lang_java._release_date(group, artifact, version)
+    if fetch_kind == "nuget":
+        import lang_dotnet
+        return lang_dotnet._release_date(package_id, version)
+    if fetch_kind == "crates":
+        import lang_rust
+        return lang_rust._release_date(package_id, version)
+    return None
+
+
 def _fetch_date(fetch_kind: str, package_id: str, version: str) -> str | None:
     """release_date for one already-resolved version -- a newly detected
     major's winning release, not the whole history. Best-effort: PyPI/npm/
     Packagist read it straight out of the same response _fetch() already
     cached; Maven/NuGet need one small supplementary request (see each
-    module's own _release_date). Any failure here just means the bucket
-    gets written with release_date=None, same as before this existed."""
-    try:
-        if fetch_kind == "npm":
-            import lang_node
-            return lang_node._release_date(package_id, version)
-        if fetch_kind == "pypi":
-            import lang_python
-            return lang_python._release_date(package_id, version)
-        if fetch_kind == "packagist":
-            import lang_php
-            return lang_php._release_date(package_id, version)
-        if fetch_kind == "maven":
-            import lang_java
-            group, artifact = package_id.split(":", 1)
-            return lang_java._release_date(group, artifact, version)
-        if fetch_kind == "nuget":
-            import lang_dotnet
-            return lang_dotnet._release_date(package_id, version)
-        if fetch_kind == "crates":
-            import lang_rust
-            return lang_rust._release_date(package_id, version)
-    except Exception as exc:
-        print(f"  [WARN] release-date lookup failed for {package_id} {version}: {exc}", flush=True)
+    module's own _release_date). Retries transient failures the same way
+    _fetch() does; any failure still standing after that just means the
+    bucket gets written with release_date=None, same as before this
+    existed."""
+    last_exc = None
+    for attempt in range(_FETCH_RETRIES):
+        try:
+            return _fetch_date_once(fetch_kind, package_id, version)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _FETCH_RETRIES - 1:
+                time.sleep(_FETCH_RETRY_DELAY)
+    print(f"  [WARN] release-date lookup failed for {package_id} {version} "
+          f"after {_FETCH_RETRIES} attempts: {last_exc}", flush=True)
     return None
 
 
@@ -205,16 +263,33 @@ def check_language(lang_id: str) -> list:
         for entry in section:
             entries_by_name[entry["name"]] = entry
 
+    items = _ENUMERATORS[lang_id](lang_data)
+    total = len(items)
+    print(f"Checking {lang_id} ({total} frameworks/libraries) ...", flush=True)
+
     results = []
-    for kind, name, (fetch_kind, package_id) in _ENUMERATORS[lang_id](lang_data):
+    last_progress = time.monotonic()
+    for i, (kind, name, (fetch_kind, package_id)) in enumerate(items, 1):
         tracked = _tracked_majors(entries_by_name.get(name))
         depth = _dominant_depth(tracked)
 
         try:
             releases = _fetch(fetch_kind, package_id)
         except Exception as exc:
-            print(f"  [WARN] {lang_id}/{name}: fetch failed ({exc})", flush=True)
-            continue
+            print(f"  [WARN] {lang_id}/{name}: fetch failed after {_FETCH_RETRIES} attempts ({exc})", flush=True)
+            releases = None
+
+        # A periodic "still working" heartbeat, not a per-package line --
+        # only prints if _PROGRESS_INTERVAL seconds have actually passed
+        # since the last one, so a fast/healthy run (a handful of seconds
+        # per language) stays silent, while a slow one (retries kicking in
+        # under a real network blip) doesn't look hung for minutes at a
+        # stretch with zero output.
+        now = time.monotonic()
+        if now - last_progress >= _PROGRESS_INTERVAL:
+            print(f"  ... {lang_id}: {i}/{total} checked so far", flush=True)
+            last_progress = now
+
         if not releases:
             continue
 
@@ -260,7 +335,6 @@ def check_all(languages: list | None = None) -> list:
     languages = languages or list(_REGISTRY_FILES)
     all_results = []
     for lang_id in languages:
-        print(f"Checking {lang_id} ...", flush=True)
         results = check_language(lang_id)
         print(f"  {len(results)} new version(s) found", flush=True)
         all_results.extend(results)
