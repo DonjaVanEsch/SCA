@@ -2716,6 +2716,26 @@ def _openssl_lib_msrv_cap(resolved: str, lang_ver: str) -> str:
     return resolved
 
 
+# Rocket 0.4's own pinned nightly toolchain caps its REAL build-time floor
+# at _ROCKET_04_NIGHTLY_MSRV (1.68) no matter which nominal rust_ver bucket
+# is selected (confirmed in Phase 16: Rocket-0.4 Dockerfiles at nominal
+# 1.85 vs 1.97 are byte-identical except the runtime stage's Debian
+# codename) -- so a library whose OWN real floor exceeds 1.68 can NEVER
+# build under Rocket 0.4, at any nominal rust_ver. Confirmed live (Phase
+# 27): bcrypt 0.18.0 (edition="2024", real floor rustc 1.85) fails this
+# way regardless of nominal rust_ver, correctly caught now by
+# msrv_repair.py's ROOT_CRATES guard instead of silently dropping bcrypt.
+# This is a genuine, permanent (fw_major, lib_major) impossibility, not a
+# version-floor issue any registry compatibility-range edit could route
+# around -- same category as PHP's Laravel-4 x phpseclib exclusion.
+# bcrypt "0.19" is edition="2024" too (confirmed via crates.io metadata)
+# and will need the identical entry added the moment it's build-tested and
+# confirmed to hit the same wall -- not preemptively added here without a
+# real failing build to confirm it, per this project's own
+# verify-by-executing discipline.
+_INCOMPATIBLE_COMBOS = {("Rocket", "0.4", "bcrypt", "0.18")}
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 def write_context(lang_ver: str, fw_name: str, fw_major: str,
@@ -2723,11 +2743,21 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     """Write Cargo.toml / src/main.rs / Dockerfile for one image context.
 
     Returns False (and removes any stale directory) when a required
-    crates.io package version cannot be resolved. Returns False WITHOUT
-    touching any existing directory when the lookup itself failed
-    (network/rate-limit) -- see CratesIoLookupError.
+    crates.io package version cannot be resolved, or when the
+    framework/library pairing is a known, permanent build impossibility
+    (see _INCOMPATIBLE_COMBOS). Returns False WITHOUT touching any
+    existing directory when the lookup itself failed (network/rate-limit)
+    -- see CratesIoLookupError.
     """
     out = images_base / "rust" / lang_ver / fw_name / fw_major / lib_name / lib_ver
+
+    if (fw_name, fw_major, lib_name, lib_ver) in _INCOMPATIBLE_COMBOS:
+        print(f"  [SKIP] {fw_name} {fw_major} + {lib_name} {lib_ver}: "
+              f"{fw_name} {fw_major}'s pinned nightly toolchain floor is below "
+              f"this library's own real MSRV, at any nominal rust_ver", flush=True)
+        if out.exists():
+            shutil.rmtree(out)
+        return False
 
     fw_pkg = _FW_PACKAGE[fw_name]
     try:
