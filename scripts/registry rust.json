@@ -697,6 +697,35 @@
                 "1.97"
               ],
               "notes": "http crate 0.2->1.0 + hyper 0.14->1.0 -- the single biggest breaking change in axum's history, confirmed via the first research pass. Vendor-estimated MSRV floor (1.70) turned out to be wrong once actually built: the same idna/icu4x chain axum-0.6 hits (see its own notes) affects 0.7 too -- some dependent in that chain hard-requires yoke >=0.7.5, needing rustc 1.71.1, confirmed live via a real build failure at 1.70 (a combo that had passed clean earlier the same day, before this same family shifted again). Corrected to 1.75, matching axum-0.6's own corrected floor and the value already repeatedly verified stable across this whole session."
+            },
+            {
+              "nr": "0.8",
+              "release_date": "2026-04-14",
+              "compatibility": [
+                "1.75",
+                "1.76",
+                "1.77",
+                "1.78",
+                "1.79",
+                "1.80",
+                "1.81",
+                "1.82",
+                "1.83",
+                "1.84",
+                "1.85",
+                "1.86",
+                "1.87",
+                "1.88",
+                "1.89",
+                "1.90",
+                "1.91",
+                "1.92",
+                "1.93",
+                "1.94",
+                "1.95",
+                "1.96",
+                "1.97"
+              ]
             }
           ],
           "notes": "axum's own API shape (extractor-based) stays fairly consistent release to release -- confirmed via research this is the WEAKEST multi-era framework in this registry, included for density/popularity (397M downloads) rather than a sharp API break like Rocket's."
@@ -1490,6 +1519,15 @@
                 "1.97"
               ],
               "notes": "Corrected 2026-08-01: this bucket resolves to bcrypt 0.18.0 (2026-01-11), the ONLY patch ever published for this minor -- and it ships edition=\"2024\" (confirmed via crates.io version metadata), a real floor of rustc 1.85, unlike 0.15/0.16/0.17 (all edition=\"2021\"). The compatibility range originally inherited from the 0.15 bucket via the dashboard Include action (1.63-1.97, an explicitly unverified placeholder per that action own notice) was wrong -- confirmed live via a real docker build failure at rustc 1.63 (msrv_repair.py silently dropped bcrypt as an unfixable pin, producing a confusing unresolved import bcrypt compile error instead of a clear floor message). Narrowed to 1.85+."
+            },
+            {
+              "nr": "0.19",
+              "release_date": "2026-07-27",
+              "compatibility": [
+                "1.85",
+                "1.90",
+                "1.97"
+              ]
             }
           ],
           "notes": "Pure-Rust bcrypt implementation (Keats/rust-bcrypt), no true \"majors\" -- a continuously incrementing 0.x line since 2015. Three representative points chosen for density rather than genuine API-era boundaries (this library's API has stayed relatively stable across these)."
