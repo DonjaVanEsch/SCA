@@ -213,16 +213,21 @@ _ALWAYS_RACKUP = {("Sinatra", "4"), ("Grape", "2"), ("Grape", "3"),
                   ("Hanami", "3"), ("Padrino", "0"),
                   ("Rails", "7"), ("Rails", "8")}
 _NEVER_RACKUP = {("Sinatra", "1"), ("Sinatra", "2"), ("Sinatra", "3"),
-                 ("Grape", "1"), ("Hanami", "0"), ("Hanami", "1"), ("Hanami", "2"),
+                 ("Grape", "0"), ("Grape", "1"),
+                 ("Hanami", "0"), ("Hanami", "1"), ("Hanami", "2"),
                  ("Rails", "3"), ("Rails", "4"), ("Rails", "5"), ("Rails", "6")}
-# Grape 0.x ("rack, >= 1.3.0", no upper bound) and Roda 3.x ("rack" with
-# NO version constraint at all, confirmed via roda.gemspec) leave Rack
-# fully up to whatever else is in the bundle -- since nothing else pins
-# it for these two, Bundler resolves the newest Rack compatible with the
-# INSTALLED RUBY ITSELF, so whether Rack 3 (Ruby floor >=2.4.0, confirmed
-# via rack.gemspec at v3.0.0) is reachable depends on lang_ver, not on
-# the framework major.
-_RUBY_DEPENDENT_RACKUP = {("Grape", "0"), ("Roda", "3")}
+# Grape bucket 0 now gets Rack explicitly pinned to "~> 1.6" in
+# make_gemfile() (a real Rack 3/2.1+ incompatibility, see its own
+# comment there) -- always pre-Rack-3, so it never needs `rackup`,
+# moved out of the ruby-version-dependent set below.
+#
+# Roda 3.x ("rack" with NO version constraint at all, confirmed via
+# roda.gemspec) leaves Rack fully up to whatever else is in the bundle
+# -- since nothing else pins it, Bundler resolves the newest Rack
+# compatible with the INSTALLED RUBY ITSELF, so whether Rack 3 (Ruby
+# floor >=2.4.0, confirmed via rack.gemspec at v3.0.0) is reachable
+# depends on lang_ver, not on the framework major.
+_RUBY_DEPENDENT_RACKUP = {("Roda", "3")}
 
 
 def _needs_rackup(fw_name: str, fw_major: str, lang_ver: str) -> bool:
@@ -741,11 +746,30 @@ run Hanami.app
 
 # ── Gemfile generation ───────────────────────────────────────────────────────
 
-def make_gemfile(fw_name: str, fw_resolved: str, lib_name: str, lib_resolved: str,
-                 needs_rackup: bool) -> str:
+def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
+                 lib_resolved: str, needs_rackup: bool) -> str:
     lines = ['source "https://rubygems.org"', ""]
     fw_pkg = _FW_PACKAGE[fw_name]
     lines.append(f'gem "{fw_pkg}", "{fw_resolved}"')
+    # Grape bucket 0 (resolves to its final patch, 0.19.2, released 2017)
+    # leaves Rack completely unconstrained in its own gemspec ("rack, >=
+    # 1.3.0") -- left to float, Bundler picks whatever's newest for the
+    # installed Ruby (e.g. Rack 2.1.4.4 on Ruby 2.2), which breaks Grape's
+    # OWN router at runtime: confirmed via a real crash (NoMethodError:
+    # undefined method '[]' for nil:NilClass in Grape::Router#cascade?,
+    # on every request). Pinning to Rack's own last 1.x release (the
+    # actual era Grape 0.19.2 was built/tested against) fixes it --
+    # confirmed via a real successful request on both Ruby 2.2 and 4.0.
+    if (fw_name, fw_major) == ("Grape", "0"):
+        lines.append('gem "rack", "~> 1.6"')
+        # Grape 0.19.2 depends on virtus (parameter coercion, a feature
+        # later dropped), which itself requires 'ostruct' -- a real
+        # stdlib-turned-default-gem removal on Ruby 4.0+ (same class of
+        # change as webrick's own 3.0 removal below), confirmed via a
+        # real crash (LoadError: cannot load such file -- ostruct).
+        # Added unconditionally: harmless on every older Ruby where
+        # ostruct is already bundled.
+        lines.append('gem "ostruct"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
@@ -979,7 +1003,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     needs_rackup = _needs_rackup(fw_name, fw_major, lang_ver)
 
     (out / "Gemfile").write_text(
-        make_gemfile(fw_name, fw_resolved, lib_name, lib_resolved, needs_rackup),
+        make_gemfile(fw_name, fw_major, fw_resolved, lib_name, lib_resolved, needs_rackup),
         encoding="utf-8",
     )
     (out / "versions.rb").write_text(_versions_rb(fw_resolved, lib_resolved), encoding="utf-8")
