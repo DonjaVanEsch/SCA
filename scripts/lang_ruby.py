@@ -287,6 +287,8 @@ LIB_META: dict = {
     },
     "argon2": {
         "imports": 'require "argon2"',
+        # Only valid for buckets 1/2 -- bucket 0's real API predates
+        # `.create` entirely, see _argon2_touch() below.
         "touch": 'Argon2::Password.create("pqc-sca probe")',
     },
     "digest": {
@@ -340,6 +342,19 @@ LIB_META: dict = {
 # name (unlike PHP's paragonie/phpseclib/secudoc-namespaced packages) --
 # no separate name-mapping dict needed.
 _LIB_GEM = {name: name for name in LIB_META}
+
+
+def _argon2_touch(lib_ver: str) -> str:
+    """argon2 bucket 0 (resolves to its final patch, 0.1.4) predates the
+    `Argon2::Password.create` class method entirely -- confirmed by
+    reading lib/argon2.rb straight out of the real 0.1.4/1.0.0 gems:
+    0.1.4 only exposes `.hash(pass)`/`.verify_password`, `.create` was
+    added starting at 1.0.0. Found via a real failing build (NoMethodError:
+    undefined method 'create' for Argon2::Password:Class, Ruby 2.2 + Grape
+    bucket 0 + argon2 bucket 0)."""
+    if lib_ver == "0":
+        return 'Argon2::Password.hash("pqc-sca probe")'
+    return 'Argon2::Password.create("pqc-sca probe")'
 
 # rbnacl is a pure-FFI binding (confirmed via its own gemspec: only
 # depends on 'ffi', no C-extension compile of its own) needing the real
@@ -965,7 +980,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
 
     meta = LIB_META[lib_name]
     imports = meta["imports"]
-    touch = meta["touch"]
+    touch = _argon2_touch(lib_ver) if lib_name == "argon2" else meta["touch"]
     version_obj = _sub(_VERSION_OBJ_RB, FW_NAME=fw_name, LIB_NAME=lib_name)
     needs_rackup = _needs_rackup(fw_name, fw_major, lang_ver)
 
