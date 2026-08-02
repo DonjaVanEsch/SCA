@@ -134,14 +134,6 @@
     padding: 0 16px;
     height: 52px;
     border-bottom: 3px solid var(--accent);
-    /* Same treatment as .ref-card's own accent border-top + border-radius:
-       round just the bottom corners (the top ones sit flush against the
-       viewport's own top edge, nothing to round there) and clip with
-       overflow so the accent line actually curves at the ends instead of
-       meeting the rounded box corner at a hard angle. */
-    border-bottom-left-radius: var(--radius-lg);
-    border-bottom-right-radius: var(--radius-lg);
-    overflow: hidden;
     flex-shrink: 0;
     background: var(--surface);
   }
@@ -1075,7 +1067,7 @@
        sitting right next to pagination with a big empty gap. */
     justify-content: space-between;
     pointer-events: none;
-    background: var(--surface3);
+    background: var(--border2);
     border-radius: 10px 10px 0 0;
     overflow: hidden;
     border-top: 1px solid var(--border2);
@@ -1088,7 +1080,7 @@
     gap: 6px;
     padding: 8px 14px;
     border-right: 1px solid var(--border2);
-    background: var(--surface3);
+    background: var(--border2);
     flex-shrink: 0;
     font-size: 12px;
     pointer-events: all;
