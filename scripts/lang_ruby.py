@@ -428,6 +428,25 @@ _ARCHIVE_CODENAME_BY_VER = {
 }
 
 
+# libsodium's own Debian package name is tied to its SONAME, which has
+# bumped across these codenames -- confirmed live via `apt-cache search
+# libsodium` in each: jessie ships 1.0.0 as libsodium13, stretch ships
+# libsodium18, buster and every later codename (bullseye/bookworm/trixie,
+# confirmed on ruby:2.6-slim) ship libsodium23. Hardcoding "libsodium23"
+# unconditionally (as this module used to) is a real bug on jessie/
+# stretch: "E: Unable to locate package libsodium23", confirmed via a
+# real failing build.
+_LIBSODIUM_PKG_BY_CODENAME = {
+    "jessie": "libsodium13",
+    "stretch": "libsodium18",
+}
+
+
+def _libsodium_pkg(ruby_ver: str) -> str:
+    codename = _ARCHIVE_CODENAME_BY_VER.get(ruby_ver)
+    return _LIBSODIUM_PKG_BY_CODENAME.get(codename, "libsodium23")
+
+
 def _debian_archive_apt(ruby_ver: str) -> tuple:
     codename = _ARCHIVE_CODENAME_BY_VER.get(ruby_ver)
     apt_sources = (
@@ -904,7 +923,7 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
 
     final_apt = []
     if libsodium_needed:
-        final_apt.append("libsodium23")
+        final_apt.append(_libsodium_pkg(ruby_ver))
 
     bundler_install = (
         f"RUN gem install bundler -v \"{bundler_ver}\" --no-document\n"
