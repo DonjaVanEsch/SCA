@@ -1,0 +1,187 @@
+{
+  "languages": [
+    {
+      "id": "ruby",
+      "display_name": "Ruby",
+      "_comment_docker_repo": "Uses the single official docker.io/library/ruby image throughout (no repo-path migration the way .NET/Java needed) -- confirmed live via the Docker Hub Registry API's tag-list endpoint across the whole tracked range (1.9.3 through 4.0.6). The '-slim' tag suffix is used throughout, matching this project's other Debian-based language images. Real, live-verified Debian codename history per minor (via which '-slim-<codename>' suffixed tags exist for each X.Y line, not guessed/estimated): wheezy (1.9, 2.0, 2.1 -- these three minors' bare '-slim' tag was NEVER rebuilt onto a newer codename after Ruby itself stopped patching them, so it still resolves to wheezy today), jessie (2.2), stretch (2.3), buster (2.4, 2.5), bullseye (2.6, 2.7, 3.0), bookworm (3.1 -- no trixie rebuild exists for 3.1 either, since Ruby 3.1 reached its own EOL 2025-03-31 before trixie became the default base), trixie (3.2, 3.3, 3.4, 4.0, the current default for every still-patched minor). The bare 'X.Y-slim' floating tag for a minor that has stopped receiving new Ruby patches stays frozen at whatever codename it was last built under -- it is NOT automatically rebuilt onto newer Debian bases the way an actively-patched minor's tag is. jessie/stretch/buster are all long past deb.debian.org/security.debian.org cutoff (confirmed via the same class of live 404 this project already hit for Go/Node/PHP's own EOL-era images) and need the SAME archive.debian.org sources.list redirect + '-o Acquire::Check-Valid-Until=false' + '--allow-unauthenticated' fix already established in lang_go.py/lang_node.py/lang_php.py -- this affects every minor whose bare tag currently resolves to wheezy/jessie/stretch/buster, i.e. 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, and 2.5 (seven of the fifteen tracked minors). 2.6 and newer currently resolve to bullseye or later, not yet needing this fix as of this writing.",
+      "_comment_35_renamed_to_40": "'3.5' never shipped as a real, numbered stable Ruby release -- confirmed live via both the Docker Hub tags API (only '3.5.0-preview1'/'3.5-rc' pre-release tags exist, pushed 2025-11-19; no bare '3.5.0' or '3.5-slim' GA tag was ever published) and ruby-lang.org's own official release announcement: the version developed under the '3.5' working name during 2025 was renamed to Ruby 4.0.0 before General Availability, released 2025-12-25 as the traditional Christmas release marking Ruby's 30th anniversary (www.ruby-lang.org/en/news/2025/12/25/ruby-4-0-0-released/). Listed below with include:false and a null release_date purely as an explicit 'this number was working-name-only, never a real GA release' reference row, matching this registry's convention (already used elsewhere in this project, e.g. PHP's '6.0') of documenting numbering gaps rather than silently omitting them.",
+      "versions": [
+        { "nr": "1.9", "release_date": "2011-10-31", "include": true },
+        { "nr": "2.0", "release_date": "2013-02-24", "include": true },
+        { "nr": "2.1", "release_date": "2013-12-25", "include": true },
+        { "nr": "2.2", "release_date": "2014-12-25", "include": true },
+        { "nr": "2.3", "release_date": "2015-12-25", "include": true },
+        { "nr": "2.4", "release_date": "2016-12-25", "include": true },
+        { "nr": "2.5", "release_date": "2017-12-25", "include": true },
+        { "nr": "2.6", "release_date": "2018-12-25", "include": true },
+        { "nr": "2.7", "release_date": "2019-12-25", "include": true },
+        { "nr": "3.0", "release_date": "2020-12-25", "include": true },
+        { "nr": "3.1", "release_date": "2021-12-25", "include": true },
+        { "nr": "3.2", "release_date": "2022-12-25", "include": true },
+        { "nr": "3.3", "release_date": "2023-12-25", "include": true },
+        { "nr": "3.4", "release_date": "2024-12-25", "include": true },
+        { "nr": "3.5", "release_date": null, "include": false },
+        { "nr": "4.0", "release_date": "2025-12-25", "include": true }
+      ],
+      "frameworks": [
+        {
+          "name": "Rails",
+          "module": "rails",
+          "version": [
+            { "nr": "0", "release_date": "2004-07-24", "compatibility": [] },
+            { "nr": "1", "release_date": "2005-12-14", "compatibility": [] },
+            { "nr": "2", "release_date": "2007-12-07", "compatibility": [] },
+            { "nr": "3", "release_date": "2010-08-29", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "4", "release_date": "2013-06-25", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "5", "release_date": "2016-06-30", "compatibility": [ "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "6", "release_date": "2019-08-16", "compatibility": [ "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "7", "release_date": "2021-12-15", "compatibility": [ "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "8", "release_date": "2024-11-07", "compatibility": [ "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Version history and every Ruby-floor value pulled directly from RubyGems.org's own /api/v1/versions/rails.json (519 published version entries; live-verified 2026-08). Majors 0-2 are kept as compatibility:[] REFERENCE-ONLY rows: RubyGems.org's own created_at timestamp for every 0.x/1.x entry (and most of 2.x) is an identical '2009-07-25' bulk-migration artifact (RubyGems.org itself launched in 2009 and backfilled pre-existing gems with its own launch date, not the gem's real release date) -- confirmed NOT real history by cross-checking against Rails' own release history: the real first Rails release was 0.5 (2004-07-24), Rails 1.0 shipped 2005-12-14, and Rails 2.0 shipped 2007-12-07. All three majors also predate Rails' own adoption of Bundler/Gemfile-based dependency management (introduced at 3.0, 2010-08-29) -- structurally the same 'no dependency-manager era' reasoning this project already uses for PHP's Laravel 1/2/3 (pre-Composer). Every floor value for majors 3-8 is each major's LATEST patch's declared required_ruby_version (this registry's standard convention, matching PHP's), confirmed live via RubyGems, not the framework's own release-announcement page. Rails 5+ also ships a real, lighter '--api'-only mode ('rails new --api', a genuine reduced middleware/routing stack skipping views/assets/sessions) -- a real touch-code-level difference worth noting for whoever writes lang_ruby.py, but not a separate registry bucket since it is a boot flag on the same gem version, not a different dependency."
+        },
+        {
+          "name": "Sinatra",
+          "module": "sinatra",
+          "version": [
+            { "nr": "0", "release_date": "2007-09-09", "compatibility": [] },
+            { "nr": "1", "release_date": "2010-03-23", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "2", "release_date": "2017-05-07", "compatibility": [ "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3", "release_date": "2022-09-26", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "4", "release_date": "2024-01-19", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Every date/floor pulled live from RubyGems.org's versions API (108 published entries). Major 0's RubyGems-recorded date (2009-07-25) is the same bulk-migration artifact documented on Rails' major 0/1/2 above -- Sinatra's real first release was 2007-09-09 (Blake Mizerany's original release), kept here as the documented real date but not load-bearing since major 0 declares no required_ruby_version at all (ancient, predates RubyGems' own floor metadata) and is tracked compatibility:[] reference-only. Major 1's own gemspec declares an unrestricted '>=0' floor across its entire run (2010-2017) -- given the full tracked Ruby range rather than guessing a floor. Majors 2-4 each have a real, RubyGems-verified floor bump (2.3.0 -> 2.6.0 -> 2.7.0), confirmed exactly matching this registry's own pre-research dates (1.0=2010-03-23, 2.0.0=2017-05-07, 3.0.0=2022-09-26, 4.0.0=2024-01-19)."
+        },
+        {
+          "name": "Grape",
+          "module": "grape",
+          "version": [
+            { "nr": "0", "release_date": "2010-11-13", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "1", "release_date": "2017-07-03", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "2", "release_date": "2023-11-11", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3", "release_date": "2025-11-15", "compatibility": [ "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Every date/floor confirmed live via RubyGems.org (86 published entries). Major 0's own gemspec declares an unrestricted '>=0' floor across its whole run (2010-11-13 first stable 0.1.0, through 2017) -- given the full tracked Ruby range. Majors 1-3 each raise the floor for real (2.6.0 -> 2.7.0 -> 3.3), every date/version confirmed exactly matching this registry's own pre-research figures (1.0.0=2017-07-03, 2.0.0=2023-11-11, 3.0.0=2025-11-15, latest 3.x = 3.3.5 as of 2026-07-30)."
+        },
+        {
+          "name": "Hanami",
+          "module": "hanami",
+          "version": [
+            { "nr": "0", "release_date": "2016-01-20", "compatibility": [ "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "1", "release_date": "2017-04-06", "compatibility": [ "2.3", "2.4", "2.5", "2.6", "2.7" ] },
+            { "nr": "2", "release_date": "2022-11-22", "compatibility": [ "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3", "release_date": "2026-07-01", "compatibility": [ "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Confirmed via RubyGems (72 published entries) + hanamirb.org: Hanami 1->2 (2022-11-22) is a genuine full-stack rewrite -- Hanami 1.x's classic Rack-app-object model (a single Hanami::Application/Hanami::Action subclassed monolith) was fully replaced by Hanami 2's slice-based, dry-rb-stack architecture, confirmed via the gem's own runtime dependency list (2.x pulls in the whole dry-configurable/dry-core/dry-inflector/dry-logger/dry-monitor/dry-system family plus hanami-cli and zeitwerk-based autoloading; 1.x does not) -- not a compatible upgrade path, apps must be rewritten rather than bumped. Hanami 1's own declared floor is '>=2.3.0, <3' -- a real, explicit UPPER bound confirmed live via RubyGems, not assumed: Hanami 1 does not run on Ruby 3.x at all. Hanami 3 (2026-07-01) is very new (latest patch 3.0.1, 2026-07-03), floor '>=3.3'. Every date confirmed exactly matching this registry's own pre-research figures (1.0.0=2017-04-06, 2.0.0=2022-11-22, 3.0.0=2026-07-01)."
+        },
+        {
+          "name": "Roda",
+          "module": "roda",
+          "version": [
+            { "nr": "3", "release_date": "2017-09-15", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Tracked as a SINGLE bucket ('3'), mirroring this project's established precedent for other single-long-lived-major libraries (e.g. Rust's Iron) -- Roda has stayed on major 3 continuously since 3.0.0 (2017-09-15) via serial minor bumps (currently 3.106.0, 2026-07-13, confirmed live via RubyGems -- exactly matching this registry's own pre-research figure) rather than ever bumping a semver major again. Roda's real 0.x/1.x/2.x history (2014-2017, 145 total published entries across all four majors) was genuine early pre-stabilization churn before the project settled permanently on major 3 -- not tracked as separate buckets here per this registry's scope decision, the same way Padrino's own single-major history below needs only one bucket. A thin routing-tree toolkit (a single 'rack' runtime dependency, confirmed via RubyGems) -- the direct Ruby analog of PHP's Slim or Go's Chi/httprouter in this project's other registries. Declared floor '>=1.9.2' the whole major-3 line, satisfied by every tracked Ruby minor including the 1.9 bucket (1.9.3)."
+        },
+        {
+          "name": "Padrino",
+          "module": "padrino",
+          "version": [
+            { "nr": "0", "release_date": "2009-11-17", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Tracked as a SINGLE bucket ('0'), for the same single-long-lived-major reasoning as Roda above -- Padrino has never left major 0.x since its first release (0.1.0, 2009-11-17, confirmed live via RubyGems -- exactly matching this registry's own pre-research date) through its current latest (0.16.1, 2026-03-27, also exact match; 126 total published entries). A full-stack meta-gem built directly on top of Sinatra -- its own RubyGems description literally calls itself 'The Godfather of Sinatra provides a full-stack agnostic framework on top of Sinatra', confirmed live. Its OWN top-level runtime dependencies (confirmed live) are seven padrino-* sub-gems all hard-pinned to the exact same version as itself (padrino-core, padrino-admin, padrino-cache, padrino-gen, padrino-helpers, padrino-mailer, padrino-support) -- Sinatra itself is pulled in transitively via padrino-core, not listed directly. Latest patch's declared floor is '>=2.7.8' -- a PATCH-level floor tighter than this registry's minor-level granularity (this bucket's compatibility list uses the whole '2.7' minor), the same kind of patch-vs-minor floor mismatch already flagged in this project's PHP registry for Symfony 8 (officially '>=8.4.0' but really '>=8.4.1' on the latest patch)."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "openssl",
+          "module": "openssl",
+          "version": [
+            { "nr": "2", "release_date": "2016-11-30", "compatibility": [ "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3.0", "release_date": "2021-12-24", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3.1", "release_date": "2022-12-23", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3.2", "release_date": "2023-09-21", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3.3", "release_date": "2024-12-21", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "4", "release_date": "2025-12-15", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Ruby's openssl gem -- unlike PHP's ext-openssl (a core, always-compiled Docker-image extension), this is a real, independently Bundler-installable gem (ruby/openssl on GitHub, RubyGems-published) that ALSO ships as a Ruby 'default gem' bundled with the interpreter itself; this registry tracks explicit Gemfile-pinned versions the same way it tracks every other library, not the interpreter's own bundled copy. Every date/floor confirmed live via RubyGems' versions API (55 published entries). Split into 6 buckets rather than just the 3 real majors (2/3/4) because the required_ruby_version floor genuinely changes WITHIN major 3 partway through its own line -- 3.0.x/3.1.x declare '>=2.6.0', 3.2.x/3.3.x raise it to '>=2.7.0' -- confirmed directly from each minor's own latest-patch gemspec, not assumed uniform across the major the way major 2 genuinely is (every 2.x minor declares the identical '>=2.3.0' the whole time, so major 2 stays a single bucket). Two real, confirmed API breaks: 3.0.0 (2021-12-24) disallows the old no-argument '{DH,DSA,EC,RSA}.new' constructor forms that 2.x allowed; 4.0.0 (2025-12-15) drops ENGINE support and SSLv3 entirely. No PQC support in any version -- confirmed no ML-KEM/ML-DSA/Kyber/Dilithium references in the gem's own source or release notes."
+        },
+        {
+          "name": "rbnacl",
+          "module": "rbnacl",
+          "version": [
+            { "nr": "1", "release_date": "2013-03-08", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "2", "release_date": "2013-11-07", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3", "release_date": "2014-04-23", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "4", "release_date": "2016-12-23", "compatibility": [ "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "5", "release_date": "2017-06-13", "compatibility": [ "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "6", "release_date": "2018-11-08", "compatibility": [ "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "7", "release_date": "2019-05-23", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "A pure-FFI binding to the real libsodium C library (RubyCrypto/rbnacl on GitHub, confirmed via its own gemspec: single runtime dependency on the 'ffi' gem, no C-extension compile step of its own) -- needs libsodium itself present as a genuine SYSTEM dependency (apt-get install libsodium-dev / libsodium23 equivalent), the same system-level requirement already tracked for this project's other libsodium bindings in other languages (e.g. Node's sodium-native). Confirmed via RubyGems all 7 real majors (1 through 7, 2013-2019, 24 published entries) -- majors 1/2 never declared a required_ruby_version at all (RubyGems shows ruby_version:null for both, an old-gemspec-era gap, not a real absence of restriction), so this registry gives them the full tracked Ruby range rather than guessing a floor. Majors 3+ progressively raise the declared floor (>=0 at 3, >=2.2.6 at 4-6, >=2.6.0 at 7, latest 7.1.2 2024-10-15 -- exactly matching this registry's own pre-research figures). Classical-only (X25519/Ed25519/XSalsa20-Poly1305/Argon2, libsodium's own primitive set) -- no PQC support at any version, matching libsodium's own upstream scope."
+        },
+        {
+          "name": "bcrypt",
+          "module": "bcrypt",
+          "version": [
+            { "nr": "3", "release_date": "2014-02-21", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "A native C-extension gem (ext/mri/bcrypt_ext.c, compiled via the standard extconf.rb/mkmf toolchain at install time -- confirmed via the gem's own GitHub source, not an FFI binding like rbnacl/argon2 below) wrapping OpenBSD's original bcrypt() password-hashing algorithm. Needs a real C compiler + Ruby development headers present at build time (gcc, make, the ruby-dev/ruby-headers equivalent) unless a precompiled platform-specific gem is available for the target Ruby/OS/arch combination -- bcrypt-ruby has shipped precompiled native gems for common platforms since around 3.1.19 via rake-compiler-dock, but this project's own generated Dockerfiles should not assume one is always available and should keep the compiler toolchain installed as a fallback, the same 'prebuilt binary with a source-compile fallback' pattern already used for this project's other native-extension libraries (e.g. Node's bcrypt/sodium-native). A single flat 3.x line since 2014-02-21 (3.1.3, the first stable release under this gem name) -- every published patch, including the latest (3.1.22, 2026-03-18, confirmed live matching this registry's own pre-research figures), still declares an unrestricted '>=0' floor, so this registry gives it the full tracked Ruby range."
+        },
+        {
+          "name": "jwt",
+          "module": "jwt",
+          "version": [
+            { "nr": "0", "release_date": "2011-02-23", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "1", "release_date": "2014-05-07", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "2", "release_date": "2017-09-03", "compatibility": [ "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3", "release_date": "2025-06-14", "compatibility": [ "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Confirmed live via RubyGems (56 published version entries): majors 2 and 3 are being BOTH actively, independently published in parallel right now, a genuine dual-maintained-branch situation -- 2.10.3 (2026-05-22) is actually NEWER than 3.2.0 (2026-05-13), not an artifact of stale data, exactly matching this registry's own pre-research finding. 3.0.0 (2025-06-14) is a real, intentional new major, but the maintainers are still shipping 2.x patches concurrently rather than treating 2.x as dead -- both majors declare the identical '>=2.5' floor, so this is a genuine maintenance choice, not a Ruby-version-driven split. Majors 0/1 (2011-2016) both declared an unrestricted '>=0' floor their entire run -- full tracked Ruby range. This is the SAME 'jwt' gem the jwt-pq library below depends on (hard-pinned to '~>3.0' specifically -- jwt-pq cannot pair with the still-actively-published jwt 2.x branch)."
+        },
+        {
+          "name": "argon2",
+          "module": "argon2",
+          "version": [
+            { "nr": "0", "release_date": "2015-11-04", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "1", "release_date": "2016-03-10", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "2", "release_date": "2019-01-06", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "An FFI binding (confirmed via its own gemspec: runtime deps on 'ffi' + 'ffi-compiler', not a bare C extension) around a vendored copy of the reference Argon2 C implementation -- ffi-compiler compiles that vendored C source at gem-install time, so (like bcrypt above) a real C compiler toolchain (gcc, make) must be present in the build image; unlike bcrypt there is no precompiled-platform-gem fallback path confirmed for this one. Majors 0/1 (2015-2018) both declared an unrestricted '>=0' floor -- full tracked Ruby range. Major 2 (2019-01-06, confirmed exact date live) raised the floor to '>=2.6.0' and is still the current line (latest 2.3.3, 2026-01-10, confirmed live -- exactly matching this registry's own pre-research figures). No PQC support -- Argon2 itself is a classical (non-PQC) password-hashing KDF, included here for password-hashing breadth alongside bcrypt, not as a PQC entry."
+        },
+        {
+          "name": "digest",
+          "module": "digest",
+          "version": [
+            { "nr": "1", "release_date": "2020-12-03", "compatibility": [ "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "3", "release_date": "2020-12-18", "compatibility": [ "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "Confirmed live via RubyGems (and its own GitHub repo, ruby/digest) that 'digest' really is an independently gemified DEFAULT GEM -- Ruby's Digest module (MD5/SHA1/SHA2/etc.) has shipped bundled into the interpreter itself since very early Ruby, but as a 'default gem' its RubyGems-published version can ALSO be explicitly Gemfile-pinned to get a newer release than whatever shipped with a given Ruby interpreter -- the same 'default gem' pattern this registry already documents for openssl above. Confirmed live and genuinely real, not a data-fetch gap: version numbers jump directly from 1.0.0 (2020-12-03) to 3.0.0 (2020-12-18, one day later) -- no 2.x release was EVER published (RubyGems' own versions API returns zero major-2 entries). Latest is 3.2.1 (2025-10-31), exactly matching this registry's own pre-research figures. Floors: '>=2.3.0' for the 1.x bucket, '>=2.5.0' for 3.x. Pure hashing (MD5/SHA/RMD160) -- no PQC-relevant primitives, included for completeness alongside openssl/rbnacl as the project's classical-crypto baseline."
+        },
+        {
+          "name": "roqs",
+          "module": "roqs",
+          "version": [
+            { "nr": "0", "release_date": "2023-11-24", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "The Ruby-equivalent-of-Go's-liboqs-go / Node's-liboqs-node / PHP's-php-liboqs slot for this project (github.com/chrisliaw/roqs, confirmed via RubyGems' own homepage/source_code_uri fields) -- a direct FFI binding calling a PRE-BUILT liboqs shared library via direct method invocation (confirmed via its own RubyGems description: 'Ruby wrapper for liboqs via direct shared library method invocation... any upgrade to the liboqs, after compiled to a shared library, roqs can immediately utilize'), NOT a bundled/vendored liboqs of its own. Needs the same liboqs C-library build-from-source recipe already established elsewhere in this project (git clone + cmake + ninja, mirroring lang_go.py's/php-liboqs' own liboqs stage) as a real system/build dependency, with the resulting .so discoverable at runtime -- this gem's own runtime deps (teLogger, toolrack) are unrelated pure-Ruby logging/utility helpers, not the liboqs binding mechanism itself. Confirmed live via RubyGems: 5 real published versions, 0.1.0 (2023-11-24) through 0.1.4 (2025-06-24), floor '>=2.6.0' the whole time -- single major, no breaking-change history yet, exactly matching this registry's own pre-research figures. MATURITY CAVEAT, stated the same way this project flags its other young liboqs bindings (.NET's LibOQS.NET, Node's liboqs-node, PHP's php-liboqs): single-maintainer, pre-1.0, included for PQC-research breadth rather than production maturity."
+        },
+        {
+          "name": "jwt-pq",
+          "module": "jwt-pq",
+          "version": [
+            { "nr": "0", "release_date": "2026-04-05", "compatibility": [ "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "github.com/marcelopazzo/jwt-pq, confirmed via RubyGems -- adds ML-DSA-44/ML-DSA-65/ML-DSA-87 post-quantum signature algorithms on top of the ruby-jwt ecosystem, with an optional hybrid EdDSA+ML-DSA signing mode (confirmed via the gem's own RubyGems description). Its own runtime dependencies (confirmed live) HARD-PIN 'jwt ~>3.0' (the dual-maintained major documented in this registry's own jwt entry above -- jwt-pq cannot pair with the still-actively-published jwt 2.x branch) plus 'ffi ~>1.15' (liboqs FFI, the same class of system dependency as roqs above) and its own 'pqc_asn1 ~>0.1.0' helper gem (ASN.1 encoding for the PQ signature material). Very young: 8 published versions, 0.1.0 (2026-04-05) through the current 0.6.1 (2026-07-13), confirmed live -- exactly matching this registry's own pre-research figures. Declared floor '>=3.2' the whole time -- single-bucket major so far ('0'), no breaking-change history yet to split on."
+        },
+        {
+          "name": "pqc_rails",
+          "module": "pqc_rails",
+          "version": [
+            { "nr": "0", "release_date": "2026-07-23", "compatibility": [ "3.2", "3.3", "3.4", "4.0" ] }
+          ],
+          "notes": "github.com/mabutast/pqc_rails, confirmed via RubyGems -- native FFI bindings to liboqs exposing NIST-standardized ML-KEM/ML-DSA specifically for existing Rails applications (confirmed via the gem's own description: 'zero-downtime-friendly post-quantum cryptography primitives... for existing Rails applications'). UNLIKE every other crypto library tracked in this registry, this one's own runtime dependencies (confirmed live) hard-require a HOST Rails application specifically -- 'actionpack'/'activerecord'/'railties', each constrained '>=7.1, <9' -- meaning this library can only be meaningfully exercised paired with the Rails 7 or 8 framework bucket above, not standalone or with any other framework/no-framework combination; flagged here explicitly for whoever wires this into lang_ruby.py/generate_images.py next, since this project's images/<lang>/<lang_ver>/<framework>/<fw_ver>/<lib_name>/<lib_ver> structure otherwise treats the framework and crypto-library axes as fully independent. Extremely new: a single published version, 0.1.0 (2026-07-23, confirmed live -- exactly matching this registry's own pre-research figure). Also needs liboqs itself built as a system/build dependency, the same as roqs/jwt-pq above."
+        }
+      ]
+    }
+  ]
+}

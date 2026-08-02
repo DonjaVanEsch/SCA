@@ -1,9 +1,9 @@
 """
 Periodic update-availability scanner.
 
-For every framework/library tracked across all 6 language registries,
+For every framework/library tracked across all 7 language registries,
 queries the real upstream package registry (npm / PyPI / Packagist /
-Maven Central / NuGet / crates.io) for its full release history and flags any major
+Maven Central / NuGet / crates.io / RubyGems) for its full release history and flags any major
 version that exists upstream but isn't yet tracked as a registry.json
 bucket ("nr"). Purely a detection/notification layer -- it never builds,
 tests, or edits a registry itself; a human reviews the result and decides
@@ -40,6 +40,7 @@ _REGISTRY_FILES = {
     "java":   "registry java.json",
     "dotnet": "registry dotnet.json",
     "rust":   "registry rust.json",
+    "ruby":   "registry ruby.json",
 }
 
 # How a framework/library's own registry.json "module" value marks "no real
@@ -130,6 +131,7 @@ _ENUMERATORS = {
     "java":   lambda d: _enumerate_registry_module(d, "maven"),
     "dotnet": lambda d: _enumerate_registry_module(d, "nuget"),
     "rust":   lambda d: _enumerate_registry_module(d, "crates"),
+    "ruby":   lambda d: _enumerate_registry_module(d, "rubygems"),
     "python": _enumerate_python,
 }
 
@@ -161,7 +163,7 @@ _FETCH_RETRY_DELAY = 5  # seconds between attempts
 # or stalled-looking run gives no indication anything is happening).
 _PROGRESS_INTERVAL = 8  # seconds
 
-_KNOWN_FETCH_KINDS = {"npm", "pypi", "packagist", "maven", "nuget", "crates"}
+_KNOWN_FETCH_KINDS = {"npm", "pypi", "packagist", "maven", "nuget", "crates", "rubygems"}
 
 
 def _fetch_once(fetch_kind: str, package_id: str) -> list:
@@ -184,6 +186,9 @@ def _fetch_once(fetch_kind: str, package_id: str) -> list:
     if fetch_kind == "crates":
         import lang_rust
         return lang_rust._fetch_crates_versions(package_id)
+    if fetch_kind == "rubygems":
+        import lang_ruby
+        return lang_ruby._fetch_gem_versions(package_id)
     raise ValueError(f"unknown fetch kind: {fetch_kind}")
 
 
@@ -225,6 +230,9 @@ def _fetch_date_once(fetch_kind: str, package_id: str, version: str) -> str | No
     if fetch_kind == "crates":
         import lang_rust
         return lang_rust._release_date(package_id, version)
+    if fetch_kind == "rubygems":
+        import lang_ruby
+        return lang_ruby._release_date(package_id, version)
     return None
 
 
