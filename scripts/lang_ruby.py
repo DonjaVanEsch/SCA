@@ -799,6 +799,15 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     builder_apt = ["build-essential"]
     if liboqs_needed:
         builder_apt += ["git", "cmake", "ninja-build", "build-essential", "pkg-config", "libssl-dev"]
+    if lib_name == "openssl":
+        # The standalone 'openssl' gem (unlike Ruby's own bundled openssl
+        # stdlib copy) is a real native extension linking against system
+        # libssl -- confirmed via a real failing build ("checking for
+        # pkg-config for openssl... not found", "checking for
+        # openssl/ssl.h... no"). Needs pkg-config + libssl-dev at INSTALL
+        # time only, same as liboqs; never at runtime (every ruby:X-slim
+        # base already ships libssl/libcrypto itself).
+        builder_apt += ["pkg-config", "libssl-dev"]
     # de-dupe while preserving order
     builder_apt = list(dict.fromkeys(builder_apt))
 
