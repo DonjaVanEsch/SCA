@@ -1746,7 +1746,7 @@ def _capture_client_fingerprint(client_tag: str, target_container: str, network:
 
 
 def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, workers=4,
-                     target_override=""):
+                     target_override="", retry_on_failure=False):
     """Test each client image: run it once, for real, from the actual built
     image against the persistent target app -- same one-shot container
     Fingerprint uses, just without the tcpdump capture. Success is just "did
@@ -1830,11 +1830,12 @@ def _do_client_test(entries, log_fn=print, save_fn=None, stop_event=None, worker
 
         result, status_code = _attempt()
 
-        # One automatic retry on failure -- see _do_test()'s identical
+        # Optional automatic retry on failure -- see _do_test()'s identical
         # comment for the reasoning (a rare shared build-cache race under
         # heavy concurrency, confirmed real for server images, not assumed
-        # to also affect client images but cheap enough to guard here too).
-        if not result["success"] and not (stop_event is not None and stop_event.is_set()):
+        # to also affect client images but cheap enough to guard here too)
+        # and for why this is opt-in rather than default-on.
+        if retry_on_failure and not result["success"] and not (stop_event is not None and stop_event.is_set()):
             log_fn(f"         ⚠ failed -- retrying once with a fresh rebuild ...")
             _do_client_build([e], no_cache=True, skip_existing=False, log_fn=log_fn,
                              stop_event=stop_event, workers=1)
@@ -1994,7 +1995,7 @@ def _do_fingerprint(entries, log_fn=print, save_fn=None, stop_event=None):
 # ── Test ─────────────────────────────────────────────────────────────────────
 
 def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event=None,
-             fingerprint=False, save_fingerprint_fn=None, workers=4):
+             fingerprint=False, save_fingerprint_fn=None, workers=4, retry_on_failure=False):
     """Start each container, test / and /version, stop it.
 
     save_fn(entry, result_dict) is called immediately after each image completes.
@@ -2173,19 +2174,26 @@ def _do_test(entries, build_results=None, log_fn=print, save_fn=None, stop_event
 
         result, port = _attempt()
 
-        # One automatic retry on failure (2026-07-22): a build succeeding
-        # but its test failing with a symptom that doesn't match this
-        # combo's own dependencies -- confirmed as a real, reproduced case
-        # (a Slim 2 image crashing with "Class 'Slim\Slim' not found", a
-        # class Slim 2.6.3 genuinely has; the exact same context built and
-        # ran correctly standalone) -- is the signature of a rare shared
-        # package-cache race under heavy build concurrency, not a real
-        # incompatibility. Manually rebuilding + retesting always fixed it
-        # (confirmed twice by the user); this automates exactly that
-        # instead of requiring a human to notice and redo it by hand.
-        # no_cache=True forces genuine fresh execution on the retry rather
-        # than potentially replaying whatever got cached the first time.
-        if not result["success"] and not (stop_event is not None and stop_event.is_set()):
+        # Optional automatic retry on failure (2026-07-22, opt-in since
+        # 2026-08-02): a build succeeding but its test failing with a
+        # symptom that doesn't match this combo's own dependencies --
+        # confirmed as a real, reproduced case (a Slim 2 image crashing
+        # with "Class 'Slim\Slim' not found", a class Slim 2.6.3 genuinely
+        # has; the exact same context built and ran correctly standalone)
+        # -- is the signature of a rare shared package-cache race under
+        # heavy build concurrency, not a real incompatibility. Manually
+        # rebuilding + retesting always fixed it (confirmed twice by the
+        # user); this automates exactly that instead of requiring a human
+        # to notice and redo it by hand. no_cache=True forces genuine
+        # fresh execution on the retry rather than potentially replaying
+        # whatever got cached the first time.
+        #
+        # Made opt-in (default off): on a real bulk run this can silently
+        # multiply total run time (every genuine failure now costs a full
+        # extra no-cache rebuild+retest, not just a flake), which isn't
+        # obvious from the outside -- the user should choose that tradeoff
+        # explicitly rather than have it happen by default.
+        if retry_on_failure and not result["success"] and not (stop_event is not None and stop_event.is_set()):
             log_fn(f"         ⚠ failed -- retrying once with a fresh rebuild "
                    f"(shared build caches can occasionally race under heavy "
                    f"concurrency; a clean rebuild usually resolves it) ...")
@@ -2336,6 +2344,14 @@ examples:
         action="store_true",
         dest="skip_existing",
         help="Skip build if the Docker image already exists",
+    )
+    actions.add_argument(
+        "--retry-failed",
+        action="store_true",
+        dest="retry_on_failure",
+        help="On a test failure, automatically rebuild with --no-cache and retest once "
+             "before giving up (guards against a rare shared build-cache race under heavy "
+             "concurrency; off by default since it can silently multiply total run time)",
     )
     actions.add_argument(
         "-T", "--test",
@@ -2560,7 +2576,7 @@ def main():
     # ── Test ──────────────────────────────────────────────────────────────────
     if args.test:
         _require_docker()
-        _do_test(entries, build_results, workers=args.workers)
+        _do_test(entries, build_results, workers=args.workers, retry_on_failure=args.retry_on_failure)
 
     # ── Remove images ─────────────────────────────────────────────────────────
     if args.remove:

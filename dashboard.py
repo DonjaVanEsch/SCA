@@ -721,6 +721,7 @@ def action():
                     fingerprint=fingerprint,
                     save_fingerprint_fn=_save_fp if fingerprint else None,
                     workers=int(opts.get("workers", 4)),
+                    retry_on_failure=bool(opts.get("retry_on_failure")),
                 )
 
             elif action_str == "fingerprint":
@@ -925,6 +926,7 @@ def client_action():
                     save_fn=_save_ctest,
                     stop_event=stop_event,
                     target_override=fingerprint_target,
+                    retry_on_failure=bool(opts.get("retry_on_failure")),
                 )
 
             elif action_str == "fingerprint":

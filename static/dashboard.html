@@ -2715,6 +2715,8 @@
               <input type="checkbox" id="opt-no-cache"> no-cache <span class="no-cache-warn">⚠</span></label>
             <label class="opt-label" title="Skip sources that are already built"><input type="checkbox"
                 id="opt-skip-existing"> skip-existing</label>
+            <label class="opt-label" title="On a test failure, automatically rebuild with --no-cache and retest once before giving up (guards against a rare shared build-cache race under heavy concurrency). Off by default -- this can silently multiply total run time for genuine failures, not just flakes.">
+              <input type="checkbox" id="opt-retry-failed"> retry failed once</label>
             <div class="action-sep"></div>
             <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
               <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Batch</label>
@@ -2866,6 +2868,8 @@
               <input type="checkbox" id="client-opt-no-cache"> no-cache <span class="no-cache-warn">⚠</span></label>
             <label class="opt-label" title="Skip clients that are already built"><input type="checkbox"
                 id="client-opt-skip-existing"> skip-existing</label>
+            <label class="opt-label" title="On a test failure, automatically rebuild with --no-cache and retest once before giving up (guards against a rare shared build-cache race under heavy concurrency). Off by default -- this can silently multiply total run time for genuine failures, not just flakes.">
+              <input type="checkbox" id="client-opt-retry-failed"> retry failed once</label>
             <div class="action-sep"></div>
             <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
               <label style="font-size:11px;color:var(--muted2);white-space:nowrap">Batch</label>
@@ -4685,6 +4689,7 @@
     const opts = {
       no_cache: document.getElementById('client-opt-no-cache').checked,
       skip_existing: document.getElementById('client-opt-skip-existing').checked,
+      retry_on_failure: document.getElementById('client-opt-retry-failed').checked,
       workers: _defaultWorkers,
     };
     const run_name = document.getElementById('client-run-name').value.trim() || generateClientRunName();
@@ -5024,6 +5029,7 @@
     const opts = {
       no_cache: document.getElementById('opt-no-cache').checked,
       skip_existing: document.getElementById('opt-skip-existing').checked,
+      retry_on_failure: document.getElementById('opt-retry-failed').checked,
       workers: _defaultWorkers,
       fingerprint: fingerprintChecked,
     };
