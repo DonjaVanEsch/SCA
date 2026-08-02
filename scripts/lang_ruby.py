@@ -529,6 +529,11 @@ __LIB_IMPORTS__
 
 set :bind, "0.0.0.0"
 set :port, 8000
+# See make_dockerfile()'s own comment on WEBrick's default reverse-DNS
+# lookup stall -- confirmed real all the way back to Sinatra 1.4.8's
+# identical run!() (server_settings merged straight into the handler's
+# own options).
+set :server_settings, { DoNotReverseLookup: true }
 
 __LIB_TOUCH__
 
@@ -930,14 +935,39 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     # /usr/local liboqs build already installs it, no extra copy/env
     # needed beyond ldconfig.
 
+    # WEBrick (the Rack handler every combo here ends up using, added
+    # unconditionally to every Gemfile) does a REVERSE DNS lookup of the
+    # connecting client by default (webrick/server.rb's own
+    # `sock.do_not_reverse_lookup = config[:DoNotReverseLookup]`, and
+    # WEBrick's own default config value for that IS nil/false) -- for a
+    # Docker-bridge client address (no PTR record) that lookup runs
+    # against this container's real resolv.conf nameservers and stalls
+    # for ~10s per connection before WEBrick will even start processing
+    # the request. Confirmed via a real, exactly-reproducible ~10.0-10.1s
+    # delay on every fresh connection (curl -v: TCP connects instantly,
+    # then nothing for ~10s), and confirmed FIXED by passing
+    # DoNotReverseLookup: true straight to the handler. `bundle exec
+    # rackup` itself has no CLI flag for this WEBrick-specific option,
+    # so config.ru-based combos boot via a small inline Rack::Builder +
+    # Rack::Handler::WEBrick.run script instead. This is a real,
+    # deterministic per-connection cost, not a flake -- it only showed up
+    # as an intermittent "test failed, build succeeded" symptom because
+    # this project's own test harness uses a 2s-per-attempt timeout,
+    # which sometimes falls before vs after the container/network had
+    # "warmed" a request naturally during build/port-detection overhead.
+    _webrick_boot = (
+        "require 'rack'; app, _ = Rack::Builder.parse_file('config.ru'); "
+        "Rack::Handler::WEBrick.run(app, Host: '0.0.0.0', Port: 8000, "
+        "DoNotReverseLookup: true)"
+    )
     if fw_name == "Sinatra":
         cmd = 'CMD ["ruby", "app.rb"]\n'
         app_copy = "COPY app.rb versions.rb ./\n"
     elif fw_name == "Hanami" and fw_major in ("2", "3"):
-        cmd = 'CMD ["bundle", "exec", "rackup", "-o", "0.0.0.0", "-p", "8000", "config.ru"]\n'
+        cmd = f'CMD ["bundle", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
         app_copy = "COPY config.ru versions.rb ./\nCOPY config ./config\n"
     else:
-        cmd = 'CMD ["bundle", "exec", "rackup", "-o", "0.0.0.0", "-p", "8000", "config.ru"]\n'
+        cmd = f'CMD ["bundle", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
         app_copy = "COPY config.ru versions.rb ./\n"
 
     final_apt = []
