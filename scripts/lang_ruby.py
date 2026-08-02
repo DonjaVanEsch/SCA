@@ -359,16 +359,14 @@ def _argon2_touch(lib_ver: str) -> str:
 # rbnacl is a pure-FFI binding (confirmed via its own gemspec: only
 # depends on 'ffi', no C-extension compile of its own) needing the real
 # libsodium shared library present as a SYSTEM (not build) dependency.
-# bcrypt/argon2 are real native-extension gems needing a C compiler at
-# INSTALL time only (bcrypt: ext/mri/bcrypt_ext.c via extconf.rb/mkmf;
-# argon2: ffi-compiler compiling a vendored reference Argon2 C source) --
-# not at runtime, so both benefit from a multi-stage split. roqs/jwt-pq/
-# pqc_rails all need the real liboqs C library built from source (see
-# _LIBOQS_TAG below) -- also a build-time-only cost once liboqs.so exists.
+# roqs/jwt-pq/pqc_rails all need the real liboqs C library built from
+# source (see _LIBOQS_TAG below) -- a build-time-only cost once
+# liboqs.so exists. Every combo now goes through the same multi-stage
+# builder (see make_dockerfile()) since a C compiler turned out to be
+# needed far more broadly than just these libraries' own native
+# extensions -- see builder_apt's own comment there.
 _NEEDS_LIBSODIUM = {"rbnacl"}
-_NEEDS_COMPILER  = {"bcrypt", "argon2"}
 _NEEDS_LIBOQS    = {"roqs", "jwt-pq", "pqc_rails"}
-_MULTI_STAGE_LIBS = _NEEDS_COMPILER | _NEEDS_LIBOQS
 
 
 # ── Pre-fetch ────────────────────────────────────────────────────────────────
@@ -781,15 +779,24 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     # + lib_name is a real, previously-confirmed-elsewhere risk class.
     cache_bust = f'ARG PQC_COMBO_ID="{fw_name}-{fw_major}-{lib_name}@{lib_resolved}"\n'
 
-    compiler_needed = lib_name in _NEEDS_COMPILER
     liboqs_needed = lib_name in _NEEDS_LIBOQS
     libsodium_needed = lib_name in _NEEDS_LIBSODIUM
 
+    # A C compiler is needed FAR more often than just bcrypt/argon2's own
+    # native extension: every framework here (Grape via activesupport's
+    # own bigdecimal/json/cgi deps; Rails directly the same way) pulls in
+    # native-extension gems as part of its OWN transitive dependency
+    # graph, completely independent of which crypto library is chosen --
+    # confirmed via real failing builds ("You have to install development
+    # tools first") on combos with NO compiler-needing library at all
+    # (Rails 7 + openssl, Grape + openssl/jwt/digest/rbnacl/...). Always
+    # installing build-essential in the (discarded) builder stage is a
+    # trivial cost next to a broken build; the final image never carries
+    # the compiler toolchain either way.
+    #
     # git is only needed to clone liboqs -- bcrypt/argon2's own native
     # compile steps (mkmf/ffi-compiler) never shell out to git.
-    builder_apt = []
-    if compiler_needed:
-        builder_apt.append("build-essential")
+    builder_apt = ["build-essential"]
     if liboqs_needed:
         builder_apt += ["git", "cmake", "ninja-build", "build-essential", "pkg-config", "libssl-dev"]
     # de-dupe while preserving order
@@ -852,47 +859,23 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         f"    bundle _{bundler_ver}_ install --jobs 4 --retry 3\n"
     )
 
-    if not _MULTI_STAGE_LIBS.intersection({lib_name}):
-        # Single-stage: no compiler / liboqs build needed for this combo
-        # (openssl/jwt/digest are pure-Ruby-or-stdlib; rbnacl is pure FFI
-        # needing only the runtime libsodium .so, no compiler, no git) --
-        # mirrors PHP's own "no compiler needed, multi-stage saves almost
-        # nothing" reasoning for its equivalent plain-composer-install
-        # combos. Only one apt-get layer, and only when there's actually
-        # something to install (rbnacl's libsodium23; openssl/jwt/digest
-        # need nothing beyond the base ruby:slim image).
-        apt_block = (
-            f"{apt_sources}"
-            f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
-            f"    {' '.join(final_apt)} \\\n"
-            "    && rm -rf /var/lib/apt/lists/*\n"
-            if final_apt else ""
-        )
-        return (
-            "# syntax=docker/dockerfile:1\n"
-            f"FROM ruby:{ruby_ver}-slim\n"
-            f"{apt_block}"
-            f"{bundler_install}"
-            "WORKDIR /app\n"
-            f"{cache_bust}"
-            "COPY Gemfile .\n"
-            f"{bundle_install_cmd}"
-            f"{app_copy}"
-            "EXPOSE 8000\n"
-            f"{cmd}"
-        )
-
-    # Multi-stage: bcrypt/argon2 (native-extension compile) and roqs/
-    # jwt-pq/pqc_rails (liboqs cmake/ninja build) all need a real compiler
-    # toolchain ONLY to produce compiled artifacts (the *.so gem
-    # extensions, or liboqs.so itself) -- never to run them. `builder`
-    # keeps cmake/ninja-build/build-essential/pkg-config/libssl-dev (only
-    # the liboqs combos need the last three) and runs `bundle install`;
-    # the final stage starts fresh from the same `ruby:{ver}-slim` base
-    # and copies over just the installed gem tree (/usr/local/bundle,
-    # which also holds the compiled bcrypt_ext.so/argon2 native bits) plus
-    # liboqs's own compiled shared library where relevant. No apt-get
-    # compiler packages at all are needed in the final stage.
+    # Always multi-stage: bcrypt/argon2/roqs/jwt-pq/pqc_rails need a real
+    # compiler toolchain to produce their own compiled artifacts, but so
+    # does virtually every OTHER combo now (see builder_apt's own comment
+    # above) -- `builder` keeps cmake/ninja-build/build-essential/
+    # pkg-config/libssl-dev (only the liboqs combos need the last three)
+    # and runs `bundle install`; the final stage starts fresh from the
+    # same `ruby:{ver}-slim` base and copies over just the installed gem
+    # tree (/usr/local/bundle, which also holds any compiled native
+    # extensions) plus liboqs's own compiled shared library where
+    # relevant. No compiler toolchain at all ends up in the final image.
+    final_apt_block = (
+        f"{apt_sources}"
+        f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
+        f"    {' '.join(final_apt)} \\\n"
+        "    && rm -rf /var/lib/apt/lists/*\n"
+        if final_apt else ""
+    )
     return (
         "# syntax=docker/dockerfile:1\n"
         f"FROM ruby:{ruby_ver}-slim AS builder\n"
@@ -917,7 +900,9 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         # liboqs multi-stage final image in this project: every ruby:X-slim
         # base already ships libssl/libcrypto (Ruby's own bundled openssl
         # support links against it), and liboqs.so's own runtime needs
-        # nothing beyond that.
+        # nothing beyond that. rbnacl's own runtime need (libsodium23) is
+        # installed here via final_apt_block instead.
+        + f"{final_apt_block}"
         + (f"COPY --from=builder /usr/local/lib/liboqs* /usr/local/lib/\nRUN ldconfig\n" if liboqs_needed else "")
         # roqs_native_copy must run AFTER liboqs.so has landed in
         # /usr/local/lib/ above (it copies FROM there), not before.
