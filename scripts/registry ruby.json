@@ -57,12 +57,12 @@
           "name": "Grape",
           "module": "grape",
           "version": [
-            { "nr": "0", "release_date": "2010-11-13", "compatibility": [ "1.9", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
+            { "nr": "0", "release_date": "2010-11-13", "compatibility": [ "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
             { "nr": "1", "release_date": "2017-07-03", "compatibility": [ "2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
             { "nr": "2", "release_date": "2023-11-11", "compatibility": [ "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "4.0" ] },
             { "nr": "3", "release_date": "2025-11-15", "compatibility": [ "3.3", "3.4", "4.0" ] }
           ],
-          "notes": "Every date/floor confirmed live via RubyGems.org (86 published entries). Major 0's own gemspec declares an unrestricted '>=0' floor across its whole run (2010-11-13 first stable 0.1.0, through 2017) -- given the full tracked Ruby range. Majors 1-3 each raise the floor for real (2.6.0 -> 2.7.0 -> 3.3), every date/version confirmed exactly matching this registry's own pre-research figures (1.0.0=2017-07-03, 2.0.0=2023-11-11, 3.0.0=2025-11-15, latest 3.x = 3.3.5 as of 2026-07-30)."
+          "notes": "Every date/floor confirmed live via RubyGems.org (86 published entries). Major 0's own gemspec declares an unrestricted '>=0' floor across its whole run (2010-11-13 first stable 0.1.0, through 2017), but this registry resolves each bucket to its LATEST patch (0.19.2), which depends on 'mustermann-grape ~> 1.0.0' -- and EVERY published mustermann-grape/mustermann 1.0.x release (confirmed live via RubyGems, all the way back to 1.0.0/2017-03-04) declares 'ruby_version >= 2.2.0'. So bucket 0's real, resolved floor is 2.2, not grape's own unrestricted gemspec floor -- confirmed via a real failing build on Ruby 2.1 ('Bundler could not find compatible versions for gem \"ruby\"': mustermann 1.0.3 needs >= 2.2.0). Majors 1-3 each raise the floor further for real (2.6.0 -> 2.7.0 -> 3.3), every date/version confirmed exactly matching this registry's own pre-research figures (1.0.0=2017-07-03, 2.0.0=2023-11-11, 3.0.0=2025-11-15, latest 3.x = 3.3.5 as of 2026-07-30)."
         },
         {
           "name": "Hanami",
