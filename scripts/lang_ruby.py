@@ -197,10 +197,17 @@ _FW_PACKAGE: dict = {
 #     and does NOT itself depend on the `rackup` gem (confirmed: its own
 #     Sinatra::Base#run! prints "bundle add rackup puma" and exits when
 #     Rackup::Handler isn't defined) -- must be added ourselves.
-#   - Grape 1.x explicitly excludes Rack 3 ("rack, >= 1.3.0, < 3"); Grape
-#     2.x/3.x relax to "rack, >= 2" (no upper bound) and both only support
-#     Ruby >=2.7/>=3.3 respectively (already >= Rack 3's own >=2.4.0 Ruby
-#     floor) -- always resolves Rack 3.
+#   - Grape 1.x: an earlier pass found grape.gemspec excluding Rack 3
+#     ("rack, >= 1.3.0, < 3") -- WRONG for the patch this bucket actually
+#     resolves to. Re-checked live against the real 1.8.0 gemspec (the
+#     latest 1.x patch): 'rack, >= 1.3.0', no upper bound at all -- the
+#     `< 3` constraint must have applied to an earlier 1.x patch and was
+#     dropped since. Confirmed via a real crash ("bundler: command not
+#     found: rackup") once Bundler resolved Rack 3.2.6 with no separate
+#     `rackup` gem in the Gemfile. Grape 2.x/3.x relax to "rack, >= 2"
+#     (no upper bound) and both only support Ruby >=2.7/>=3.3
+#     respectively (already >= Rack 3's own >=2.4.0 Ruby floor) --
+#     always resolves Rack 3.
 #   - Hanami 1.x/2.x pin hanami-router (and thus rack) to "~> 2.0"
 #     (confirmed via hanami-router's own gemspec at v1.3.2 and v2.0.0);
 #     Hanami 3.x's hanami-router relaxes to "rack, >= 2.2.16" (no upper
@@ -209,11 +216,11 @@ _FW_PACKAGE: dict = {
 #     directly depends on both "sinatra, ~> 4" and "rackup, ~> 2.1" --
 #     always Rack 3, and `rackup` is already pulled in transitively, but
 #     adding it explicitly too is harmless and keeps this table uniform.
-_ALWAYS_RACKUP = {("Sinatra", "4"), ("Grape", "2"), ("Grape", "3"),
+_ALWAYS_RACKUP = {("Sinatra", "4"), ("Grape", "1"), ("Grape", "2"), ("Grape", "3"),
                   ("Hanami", "3"), ("Padrino", "0"),
                   ("Rails", "7"), ("Rails", "8")}
 _NEVER_RACKUP = {("Sinatra", "1"), ("Sinatra", "2"), ("Sinatra", "3"),
-                 ("Grape", "0"), ("Grape", "1"),
+                 ("Grape", "0"),
                  ("Hanami", "0"), ("Hanami", "1"), ("Hanami", "2"),
                  ("Rails", "3"), ("Rails", "4"), ("Rails", "5"), ("Rails", "6")}
 # Grape bucket 0 now gets Rack explicitly pinned to "~> 1.6" in
@@ -943,11 +950,30 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     # tree (/usr/local/bundle, which also holds any compiled native
     # extensions) plus liboqs's own compiled shared library where
     # relevant. No compiler toolchain at all ends up in the final image.
+    # rbnacl's own FFI loader (RbNaCl::Sodium, "ffi_lib \"sodium\"") needs
+    # an UNVERSIONED libsodium.so to resolve on old rbnacl/ffi gem pairs
+    # -- the runtime libsodium*/libsodium-dev split only installs the
+    # versioned SONAME symlink (libsodium.so.13/18/23), never the bare
+    # libsodium.so one (that's libsodium-dev's job, which we don't want
+    # just for this). Confirmed via a real crash on Ruby 2.2/jessie +
+    # libsodium13 + rbnacl 3.4.0/ffi-1.12.2 ("Could not open library
+    # 'sodium'... libsodium.so: cannot open shared object file") even
+    # though `ldconfig -p` already resolves libsodium.so.13 correctly --
+    # that old an ffi gem doesn't fall back to a versioned-SONAME search
+    # the way newer ffi releases do. Creating the symlink ourselves,
+    # unconditionally, sidesteps needing to know which ffi versions do
+    # and don't have that fallback.
+    libsodium_symlink = (
+        "RUN ln -sf \"$(find /usr/lib -name 'libsodium.so.*' | head -1)\" "
+        "/usr/lib/$(uname -m)-linux-gnu/libsodium.so\n"
+        if libsodium_needed else ""
+    )
     final_apt_block = (
         f"{apt_sources}"
         f"RUN apt-get {apt_flag}update && apt-get {apt_flag}install -y --no-install-recommends {allow_unauth}\\\n"
         f"    {' '.join(final_apt)} \\\n"
         "    && rm -rf /var/lib/apt/lists/*\n"
+        f"{libsodium_symlink}"
         if final_apt else ""
     )
     return (
