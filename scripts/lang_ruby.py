@@ -198,16 +198,19 @@ _FW_PACKAGE: dict = {
 #     Sinatra::Base#run! prints "bundle add rackup puma" and exits when
 #     Rackup::Handler isn't defined) -- must be added ourselves.
 #   - Grape 1.x: an earlier pass found grape.gemspec excluding Rack 3
-#     ("rack, >= 1.3.0, < 3") -- WRONG for the patch this bucket actually
-#     resolves to. Re-checked live against the real 1.8.0 gemspec (the
-#     latest 1.x patch): 'rack, >= 1.3.0', no upper bound at all -- the
-#     `< 3` constraint must have applied to an earlier 1.x patch and was
-#     dropped since. Confirmed via a real crash ("bundler: command not
-#     found: rackup") once Bundler resolved Rack 3.2.6 with no separate
-#     `rackup` gem in the Gemfile. Grape 2.x/3.x relax to "rack, >= 2"
-#     (no upper bound) and both only support Ruby >=2.7/>=3.3
-#     respectively (already >= Rack 3's own >=2.4.0 Ruby floor) --
-#     always resolves Rack 3.
+#     ("rack, >= 1.3.0, < 3") -- the LATEST patch this bucket resolves to
+#     (1.8.0) has since dropped that gemspec ceiling, but its own SOURCE
+#     (lib/grape.rb) still `require`s 'rack/auth/digest/md5', a file
+#     Rack 3.0 deleted outright -- confirmed via a real crash (LoadError)
+#     once Rack 3 got resolved. Now explicitly pinned to Rack "~> 2.2" in
+#     make_gemfile() instead (same real-incompatibility-not-fixable-via-
+#     gemspec-alone class as Grape bucket 0's own Rack pin) -- so it
+#     still never needs the separate `rackup` gem. Grape 2.x/3.x relax
+#     to "rack, >= 2" (no upper bound) and both only support Ruby
+#     >=2.7/>=3.3 respectively (already >= Rack 3's own >=2.4.0 Ruby
+#     floor) -- always resolves Rack 3, and don't share bucket 1's
+#     rack/auth/digest/md5 require (confirmed: neither 2.x's nor 3.x's
+#     lib/grape.rb references it).
 #   - Hanami 1.x/2.x pin hanami-router (and thus rack) to "~> 2.0"
 #     (confirmed via hanami-router's own gemspec at v1.3.2 and v2.0.0);
 #     Hanami 3.x's hanami-router relaxes to "rack, >= 2.2.16" (no upper
@@ -216,11 +219,11 @@ _FW_PACKAGE: dict = {
 #     directly depends on both "sinatra, ~> 4" and "rackup, ~> 2.1" --
 #     always Rack 3, and `rackup` is already pulled in transitively, but
 #     adding it explicitly too is harmless and keeps this table uniform.
-_ALWAYS_RACKUP = {("Sinatra", "4"), ("Grape", "1"), ("Grape", "2"), ("Grape", "3"),
+_ALWAYS_RACKUP = {("Sinatra", "4"), ("Grape", "2"), ("Grape", "3"),
                   ("Hanami", "3"), ("Padrino", "0"),
                   ("Rails", "7"), ("Rails", "8")}
 _NEVER_RACKUP = {("Sinatra", "1"), ("Sinatra", "2"), ("Sinatra", "3"),
-                 ("Grape", "0"),
+                 ("Grape", "0"), ("Grape", "1"),
                  ("Hanami", "0"), ("Hanami", "1"), ("Hanami", "2"),
                  ("Rails", "3"), ("Rails", "4"), ("Rails", "5"), ("Rails", "6")}
 # Grape bucket 0 now gets Rack explicitly pinned to "~> 1.6" in
@@ -786,6 +789,15 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
     # on every request). Pinning to Rack's own last 1.x release (the
     # actual era Grape 0.19.2 was built/tested against) fixes it --
     # confirmed via a real successful request on both Ruby 2.2 and 4.0.
+    # Grape bucket 1 (resolves to its final patch, 1.8.0): its gemspec
+    # dropped the earlier "< 3" ceiling (confirmed live: 'rack, >= 1.3.0',
+    # no upper bound), but 1.8.0's OWN source (lib/grape.rb) still
+    # `require`s 'rack/auth/digest/md5' -- a file Rack 3.0 deleted
+    # outright. Confirmed via a real crash (LoadError: cannot load such
+    # file -- rack/auth/digest/md5) once Rack 3.2.6 got resolved, and via
+    # a real successful request once pinned to Rack's own last 2.x line.
+    if (fw_name, fw_major) == ("Grape", "1"):
+        lines.append('gem "rack", "~> 2.2"')
     if (fw_name, fw_major) == ("Grape", "0"):
         lines.append('gem "rack", "~> 1.6"')
         # Grape 0.19.2 depends on virtus (parameter coercion, a feature
