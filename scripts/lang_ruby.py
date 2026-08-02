@@ -791,7 +791,25 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
 
 # ── Dockerfile generation ────────────────────────────────────────────────────
 
-_BUNDLE_CACHE_MOUNT = "--mount=type=cache,id=bundler-cache,target=/usr/local/bundle/cache,sharing=locked"
+# /usr/local/bundle/cache holds downloaded .gem files (BUNDLE_PATH's own
+# cache) -- but bundler ALSO fetches rubygems.org's compact-index
+# metadata (the "Fetching gem metadata from https://rubygems.org/..."
+# step) into a completely separate location, /root/.bundle/cache,
+# confirmed live via `Bundler.user_cache`. Without a cache mount there,
+# every single build re-downloads the ENTIRE compact index from
+# scratch -- confirmed as the real bottleneck in a live bulk test run
+# (median 112s, worst case 2209s, JUST for that one step, and clearly
+# worsening over the run's 3+ hours -- the same rate-limit-under-
+# sustained-load pattern already hit and fixed for Java/Maven in this
+# project). sharing=shared (not locked): purely cached HTTP metadata,
+# safe for concurrent reads across parallel builds, and locking it
+# would serialize builds against each other for no reason (same
+# cache-lock-contention class of fix already applied elsewhere in this
+# project's own generator safety fixes).
+_BUNDLE_CACHE_MOUNT = (
+    "--mount=type=cache,id=bundler-cache,target=/usr/local/bundle/cache,sharing=locked "
+    "--mount=type=cache,id=bundler-metadata-cache,target=/root/.bundle/cache,sharing=shared"
+)
 
 
 def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
