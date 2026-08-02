@@ -134,6 +134,14 @@
     padding: 0 16px;
     height: 52px;
     border-bottom: 3px solid var(--accent);
+    /* Same treatment as .ref-card's own accent border-top + border-radius:
+       round just the bottom corners (the top ones sit flush against the
+       viewport's own top edge, nothing to round there) and clip with
+       overflow so the accent line actually curves at the ends instead of
+       meeting the rounded box corner at a hard angle. */
+    border-bottom-left-radius: var(--radius-lg);
+    border-bottom-right-radius: var(--radius-lg);
+    overflow: hidden;
     flex-shrink: 0;
     background: var(--surface);
   }
