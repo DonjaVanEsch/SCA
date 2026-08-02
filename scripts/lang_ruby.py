@@ -747,7 +747,7 @@ run Hanami.app
 # ── Gemfile generation ───────────────────────────────────────────────────────
 
 def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
-                 lib_resolved: str, needs_rackup: bool) -> str:
+                 lib_resolved: str, needs_rackup: bool, lang_ver: str) -> str:
     lines = ['source "https://rubygems.org"', ""]
     fw_pkg = _FW_PACKAGE[fw_name]
     lines.append(f'gem "{fw_pkg}", "{fw_resolved}"')
@@ -765,11 +765,15 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # Grape 0.19.2 depends on virtus (parameter coercion, a feature
         # later dropped), which itself requires 'ostruct' -- a real
         # stdlib-turned-default-gem removal on Ruby 4.0+ (same class of
-        # change as webrick's own 3.0 removal below), confirmed via a
-        # real crash (LoadError: cannot load such file -- ostruct).
-        # Added unconditionally: harmless on every older Ruby where
-        # ostruct is already bundled.
-        lines.append('gem "ostruct"')
+        # change as webrick's own 3.0 removal below). ONLY added on Ruby
+        # 4.0+ (unlike webrick): the newest ostruct gem release (0.1.0)
+        # itself uses the '&.' safe-navigation operator (Ruby 2.3+ only)
+        # in its own source, confirmed via a real SyntaxError on Ruby
+        # 2.2 -- adding it unconditionally would have swapped one crash
+        # for another on every pre-4.0 Ruby, where it's already bundled
+        # in stdlib anyway and doesn't need a separate gem at all.
+        if _lang_ver_tuple(lang_ver) >= (4, 0):
+            lines.append('gem "ostruct"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
@@ -1003,7 +1007,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     needs_rackup = _needs_rackup(fw_name, fw_major, lang_ver)
 
     (out / "Gemfile").write_text(
-        make_gemfile(fw_name, fw_major, fw_resolved, lib_name, lib_resolved, needs_rackup),
+        make_gemfile(fw_name, fw_major, fw_resolved, lib_name, lib_resolved, needs_rackup, lang_ver),
         encoding="utf-8",
     )
     (out / "versions.rb").write_text(_versions_rb(fw_resolved, lib_resolved), encoding="utf-8")
