@@ -4134,6 +4134,22 @@
   }
 
   // ── Selection ─────────────────────────────────────────────────────────────
+  // While a batch job is running, the SELECTION itself must stay frozen --
+  // browsing/filtering the list is still fine (that never touches
+  // state.selected/clientState.selected), only the actual set of selected
+  // ids is locked until the run finishes or is cancelled. _currentJobId is
+  // the one shared flag every job type (build/test/remove/ignore/include/
+  // registry-apply/...) already sets via openLog() and clears on
+  // completion -- reusing it here rather than adding a separate "batch
+  // running" flag that could drift out of sync with the real job state.
+  function _selectionLocked() {
+    if (_currentJobId !== null) {
+      toast('Selection is locked while a job is running', 'err');
+      return true;
+    }
+    return false;
+  }
+
   function selectRange(fromId, toId) {
     const rows = [...document.querySelectorAll('#img-tbody tr[data-id]')];
     const ids = rows.map(row => parseInt(row.dataset.id));
@@ -4150,6 +4166,15 @@
   }
 
   function toggleSelect(id, e) {
+    if (_selectionLocked()) {
+      // The checkbox's own native .checked already flipped from the click
+      // before this handler ran -- revert it to match the (unchanged)
+      // real selection state, or it visually desyncs from state.selected.
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      const cb = row && row.querySelector('.row-cb');
+      if (cb) cb.checked = state.selected.has(id);
+      return;
+    }
     if (e && e.shiftKey && state.selectAnchor !== null && state.selectAnchor !== id) {
       selectRange(state.selectAnchor, id);
     } else {
@@ -4174,6 +4199,7 @@
   }
 
   function selectPage() {
+    if (_selectionLocked()) return;
     document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
       if (row.classList.contains('ignored-row')) return; // ignored sources can't be selected
       const id = parseInt(row.dataset.id);
@@ -4186,6 +4212,7 @@
   }
 
   async function selectByStatus(status) {
+    if (_selectionLocked()) return;
     const filters = getFilters();
     // Always exclude ignored sources from bulk selection, regardless of the display filter
     const params = filtersToParams(filters, { include_ignored: 'false', status });
@@ -4208,6 +4235,7 @@
   }
 
   async function selectAllFiltered() {
+    if (_selectionLocked()) return;
     const filters = getFilters();
     // Always exclude ignored sources from bulk selection, regardless of the display filter
     const params = filtersToParams(filters, { include_ignored: 'false' });
@@ -4231,6 +4259,7 @@
   }
 
   function deselectAll() {
+    if (_selectionLocked()) return;
     state.selected.clear();
     state.selectAnchor = null;
     document.querySelectorAll('#img-tbody tr[data-id]').forEach(row => {
@@ -4529,6 +4558,12 @@
   }
 
   function toggleClientSelect(id, e) {
+    if (_selectionLocked()) {
+      const row = document.querySelector(`#client-tbody tr[data-id="${id}"]`);
+      const cb = row && row.querySelector('.row-cb');
+      if (cb) cb.checked = clientState.selected.has(id);
+      return;
+    }
     if (e && e.shiftKey && clientState.selectAnchor !== null && clientState.selectAnchor !== id) {
       selectRangeClients(clientState.selectAnchor, id);
     } else {
@@ -4562,6 +4597,7 @@
   }
 
   async function selectAllFilteredClients() {
+    if (_selectionLocked()) return;
     const params = filtersToParams(getClientFilters());
     try {
       const r = await api(`/api/client-images/ids?${params}`);
@@ -4574,6 +4610,7 @@
   }
 
   function deselectAllClients() {
+    if (_selectionLocked()) return;
     clientState.selected.clear();
     clientState.selectAnchor = null;
     renderClientTable(clientState.items);
@@ -5090,6 +5127,7 @@
   }
 
   async function ignoreSelected() {
+    if (_selectionLocked()) return;
     if (state.selected.size === 0) { toast('No sources selected', 'err'); return; }
     const reason = prompt(`Reason for ignoring ${state.selected.size} source(s) (optional):`, '');
     if (reason === null) return; // cancelled
@@ -5208,6 +5246,7 @@
   }
 
   async function applySelectionPanelChanges() {
+    if (_selectionLocked()) return;
     const removeIds = [], ignoreIds = [];
     Object.entries(selPanelPending).forEach(([id, p]) => {
       id = Number(id);
@@ -5451,6 +5490,7 @@
   }
 
   async function applyClientSelectionPanelChanges() {
+    if (_selectionLocked()) return;
     const removeIds = [], ignoreIds = [];
     Object.entries(clientSelPanelPending).forEach(([id, p]) => {
       id = Number(id);
@@ -7439,6 +7479,7 @@
     }));
 
   document.getElementById('header-cb').addEventListener('change', e => {
+    if (_selectionLocked()) { e.target.checked = !e.target.checked; return; }
     if (e.target.checked) selectPage();
     else deselectAll();
   });
@@ -7571,6 +7612,7 @@
     loadClientImages(1);
   });
   document.getElementById('client-header-cb').addEventListener('change', (e) => {
+    if (_selectionLocked()) { e.target.checked = !e.target.checked; return; }
     if (e.target.checked) clientState.items.forEach(r => clientState.selected.add(r.id));
     else clientState.items.forEach(r => clientState.selected.delete(r.id));
     renderClientTable(clientState.items);
@@ -7589,6 +7631,7 @@
   document.getElementById('btn-client-sel-menu').addEventListener('click', () =>
     document.getElementById('client-sel-menu').classList.toggle('open'));
   document.getElementById('mnu-client-sel-page').addEventListener('click', () => {
+    if (_selectionLocked()) return;
     clientState.items.forEach(r => clientState.selected.add(r.id));
     renderClientTable(clientState.items);
   });
