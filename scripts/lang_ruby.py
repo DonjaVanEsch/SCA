@@ -385,16 +385,24 @@ def prefetch(lang_data: dict) -> None:
 
 
 # ── Docker image / Debian-archive helpers ────────────────────────────────────
-# Per the registry's own '_comment_docker_repo' note: wheezy (1.9/2.0/2.1),
-# jessie (2.2), stretch (2.3), buster (2.4/2.5) are the live-verified
+# jessie (2.1/2.2), stretch (2.3), buster (2.4/2.5) are the live-verified
 # EOL Debian codenames needing the archive.debian.org redirect already
 # established for Go/Node/PHP's own old bases in this project. 2.6+
 # resolves to bullseye or later, still live on deb.debian.org.
+#
+# NOTE: the registry's own '_comment_docker_repo' claims 2.1 is wheezy --
+# that was wrong. Confirmed live via 'docker run ruby:2.1-slim cat
+# /etc/os-release': it's actually jessie already (libc6/apt/dpkg are all
+# jessie-era, 2.19-18+deb8u10). Pointing its apt sources at wheezy instead
+# made apt try to pull in wheezy-era gcc-4.7/libc6-dev against the
+# already-installed jessie libc6, an unresolvable conflict that would have
+# removed 113 core packages (apt/dpkg/bash included) -- confirmed via a
+# real failing build ("unmet dependencies ... held broken packages").
+# 1.9/2.0 are excluded outright (schema-1 base images, unpullable), so
+# their real codename no longer matters.
 
 _ARCHIVE_CODENAME_BY_VER = {
-    "1.9": "wheezy",
-    "2.0": "wheezy",
-    "2.1": "wheezy",
+    "2.1": "jessie",
     "2.2": "jessie",
     "2.3": "stretch",
     "2.4": "buster",
