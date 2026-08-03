@@ -159,6 +159,46 @@ def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
     return fallback
 
 
+def _mail_version(fw_major: str, lang_ver: str) -> str:
+    """actionmailer's own 'mail' constraint differs meaningfully per
+    Rails major -- confirmed via each major's real gem spec metadata:
+    major 3 declares 'mail ~> 2.5.4' (2.5.4 through 2.5.x ONLY), while
+    majors 4+ declare 'mail ~> 2.5, >= 2.5.4' (a much wider 2.5.4
+    through 2.99.x range). A single _era_gem_version() pin across all
+    majors breaks major 3 specifically -- confirmed via a real failing
+    build ("mail (= 2.9.1)" unsatisfiable alongside actionmailer
+    3.2.22.5's own "mail (~> 2.5.4)").
+
+    For major 3, resolve within the 2.5.x line only. For every other
+    major, cap below 2.8.0: mail 2.8.0+ added unconstrained net-smtp/
+    net-imap/net-pop runtime dependencies (confirmed via gem spec
+    metadata: absent in 2.7.1, present from 2.8.0 on), and net-imap
+    specifically has NO published version compatible with Ruby <2.5 at
+    all (confirmed via its own oldest release requiring >=2.5.0) --
+    staying on the 2.7.x line avoids that whole sub-cascade regardless
+    of target Ruby.
+    """
+    try:
+        versions = _fetch_gem_versions("mail")
+    except RubyGemsLookupError:
+        return "2.5.4" if fw_major == "3" else "2.7.1"
+
+    floors = _GEM_RUBY_FLOOR.get("mail", {})
+    if fw_major == "3":
+        candidates = [v for v in versions if v.startswith("2.5.")]
+        fallback = "2.5.4"
+    else:
+        candidates = [v for v in versions if _ver_key(v) < _ver_key("2.8.0")]
+        fallback = "2.7.1"
+
+    lv = _lang_ver_tuple(lang_ver)
+    for v in sorted(candidates, key=_ver_key, reverse=True):
+        floor = _ruby_floor_tuple(floors.get(v))
+        if lv >= floor:
+            return v
+    return fallback
+
+
 def _bundler_version(lang_ver: str) -> str:
     """Bundler is NOT preinstalled at all in the old ruby:1.9/2.0/2.1-slim
     Docker images (Bundler only became a RubyGems "default gem" bundled
@@ -1059,20 +1099,14 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # after fixing racc: "logger-1.7.0 requires ruby version
         # >= 2.5.0".
         lines.append(f'gem "logger", "{_era_gem_version("logger", lang_ver, "1.2.7.1")}"')
-        # actionmailer's own mail dependency ('~> 2.5, >= 2.5.4', wide
-        # enough to float). mail 2.8.0+ both raised its OWN floor to
-        # >=2.5 AND added unconstrained runtime dependencies on
-        # net-smtp/net-imap/net-pop (confirmed via gem spec metadata:
-        # absent in 2.7.1, present from 2.8.0 on) -- net-imap
-        # specifically has NO published version compatible with Ruby
-        # <2.5 at all (its own oldest release already requires
-        # >=2.5.0), so pinning those individually can't work below
-        # Ruby 2.5. Pinning mail itself to stay on the 2.7.x line
-        # (which has neither issue) avoids the whole sub-cascade.
-        # Confirmed via a real failing build right after fixing logger:
-        # "mini_mime-1.1.5 requires ruby version >= 2.6.0" (mail's own
-        # mini_mime dependency, also unconstrained).
-        lines.append(f'gem "mail", "{_era_gem_version("mail", lang_ver, "1.0.0")}"')
+        # actionmailer's own mail dependency -- see _mail_version()'s
+        # own docstring for why this needs to be major-aware (major 3's
+        # 'mail ~> 2.5.4' is much tighter than every other major's
+        # 'mail ~> 2.5, >= 2.5.4'). Confirmed via a real failing build
+        # right after fixing logger: "mini_mime-1.1.5 requires ruby
+        # version >= 2.6.0" (mail's own mini_mime dependency, also
+        # unconstrained).
+        lines.append(f'gem "mail", "{_mail_version(fw_major, lang_ver)}"')
         lines.append(f'gem "mini_mime", "{_era_gem_version("mini_mime", lang_ver, "0.1.0")}"')
         # The remaining blockers are all Ruby stdlib libraries that were
         # extracted into independently-published gems at various Ruby
