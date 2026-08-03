@@ -853,6 +853,15 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # bundle (Gem::LoadError: hanami-router is not part of the
         # bundle), and confirmed fixed by adding it explicitly.
         lines.append('gem "hanami-router"')
+    if fw_name == "Padrino" and _lang_ver_tuple(lang_ver) >= (4, 0):
+        # padrino-core-0.16.1's own lib/padrino-core/configuration.rb
+        # requires 'ostruct' unconditionally -- dropped from Ruby's own
+        # default gems at 4.0 (same class of change as Grape-0's
+        # ostruct/roqs's fiddle elsewhere in this module). Confirmed via
+        # a real crash (LoadError: cannot load such file -- ostruct).
+        # Only added on Ruby 4.0+, matching this module's own precedent:
+        # already bundled by default on every older Ruby.
+        lines.append('gem "ostruct"')
     if (fw_name, fw_major) == ("Grape", "1"):
         lines.append('gem "rack", "~> 2.2"')
     if (fw_name, fw_major) == ("Grape", "0"):
