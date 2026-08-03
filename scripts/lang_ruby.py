@@ -371,6 +371,42 @@ def _argon2_touch(lib_ver: str) -> str:
         return 'Argon2::Password.hash("pqc-sca probe")'
     return 'Argon2::Password.create("pqc-sca probe")'
 
+
+# roqs' own lib/roqs/struct.rb uses Fiddle (not FFI) for its C struct
+# definitions, including a bare (non-pointer) 'uint8_t claimed_nist_level'
+# field -- Ruby's Fiddle::CParser#parse_ctype never learned to recognize
+# the 8-bit fixed-width C99 type names (only int64_t/uint64_t get a
+# regex case, confirmed by reading fiddle/cparser.rb directly), so this
+# crashes with Fiddle::DLError: unknown type: uint8_t -- confirmed via a
+# real crash on Ruby 2.6/2.7. Patching Fiddle::CParser#parse_ctype
+# ourselves (delegating everything except the missing type name to the
+# real implementation) before requiring roqs fixes it -- confirmed live
+# that roqs loads correctly with this patch in place. The Gemfile (see
+# make_gemfile()) separately adds 'fiddle' as an explicit gem on Ruby
+# 4.0+, where it was dropped from Ruby's own default gems (same class
+# of change as ostruct elsewhere in this module) -- this function only
+# needs to require it there too, harmless as a plain require elsewhere
+# since it's already bundled by default on every older Ruby.
+def _roqs_imports() -> str:
+    lines = [
+        'require "fiddle"',
+        'require "fiddle/cparser"',
+        "module Fiddle",
+        "  module CParser",
+        "    alias_method :_pqc_orig_parse_ctype, :parse_ctype",
+        "    def parse_ctype(ty, tymap = nil)",
+        '      if ty.to_s =~ /^u?int8_t(?:\\s+\\w+)?$/',
+        "        return ty.to_s.start_with?('u') ? -TYPE_CHAR : TYPE_CHAR",
+        "      end",
+        "      _pqc_orig_parse_ctype(ty, tymap)",
+        "    end",
+        "  end",
+        "end",
+        'require "roqs"',
+    ]
+    return "\n".join(lines)
+
+
 # rbnacl is a pure-FFI binding (confirmed via its own gemspec: only
 # depends on 'ffi', no C-extension compile of its own) needing the real
 # libsodium shared library present as a SYSTEM (not build) dependency.
@@ -817,6 +853,13 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # in stdlib anyway and doesn't need a separate gem at all.
         if _lang_ver_tuple(lang_ver) >= (4, 0):
             lines.append('gem "ostruct"')
+    if lib_name == "roqs" and _lang_ver_tuple(lang_ver) >= (4, 0):
+        # fiddle (roqs' own Fiddle-based struct definitions, see
+        # _roqs_imports()) was dropped from Ruby's own default gems at
+        # 4.0 -- confirmed via a real crash (LoadError: cannot load such
+        # file -- fiddle). Only added here since it's already bundled by
+        # default on every older Ruby.
+        lines.append('gem "fiddle"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
@@ -994,6 +1037,31 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         f"    bundle _{bundler_ver}_ install --jobs 4 --retry 3\n"
     )
 
+    # argon2 0.x/1.x's own Makefile (ext/argon2_wrap) never copies its
+    # compiled libargon2_wrap.so anywhere outside the ext/ build
+    # directory (no real `make install` step -- confirmed via its
+    # gem_make.out: 'make install' is just 'echo none'). Modern RubyGems
+    # runs an automatic `make clean` right after building/"installing"
+    # any C extension, which deletes that .so -- and since it was never
+    # copied elsewhere, ffi-compiler's own runtime loader (which
+    # recursively searches the gem's OWN directory tree for it) then
+    # can't find it at all. Confirmed via a real crash (LoadError:
+    # cannot find 'argon2_wrap' library) on Ruby 3.2+ specifically --
+    # older RubyGems (Ruby 2.2's bundler 1.17.3) never ran that final
+    # clean, so the .so happened to survive there by accident. argon2
+    # 2.x's own Rakefile fixed this properly upstream (its gem_make.out
+    # shows an explicit 'cp libargon2_wrap.so ../../lib' step that
+    # survives the later clean) -- buckets 0/1 never got that fix, so
+    # this recompiles+copies it ourselves the same way, only for those
+    # two buckets (harmless no-op risk avoided by only running when
+    # actually needed).
+    argon2_relink = (
+        f"RUN cd /usr/local/bundle/gems/argon2-{lib_resolved}/ext/argon2_wrap "
+        "&& make && cp libargon2_wrap.so ../../lib/\n"
+        if lib_name == "argon2" and lib_resolved.split(".")[0] in ("0", "1")
+        else ""
+    )
+
     # Always multi-stage: bcrypt/argon2/roqs/jwt-pq/pqc_rails need a real
     # compiler toolchain to produce their own compiled artifacts, but so
     # does virtually every OTHER combo now (see builder_apt's own comment
@@ -1045,6 +1113,7 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         f"{cache_bust}"
         "COPY Gemfile .\n"
         f"{bundle_install_cmd}"
+        f"{argon2_relink}"
         f"{app_copy}"
         "\n"
         f"FROM ruby:{ruby_ver}-slim\n"
@@ -1118,7 +1187,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
     out.mkdir(parents=True, exist_ok=True)
 
     meta = LIB_META[lib_name]
-    imports = meta["imports"]
+    imports = _roqs_imports() if lib_name == "roqs" else meta["imports"]
     touch = _argon2_touch(lib_ver) if lib_name == "argon2" else meta["touch"]
     version_obj = _sub(_VERSION_OBJ_RB, FW_NAME=fw_name, LIB_NAME=lib_name)
     needs_rackup = _needs_rackup(fw_name, fw_major, lang_ver)
