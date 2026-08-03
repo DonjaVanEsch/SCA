@@ -947,6 +947,14 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # _rake_version()'s own docstring for the real failing build this
         # was confirmed against.
         lines.append(f'gem "rake", "{_rake_version(lang_ver)}"')
+        # argon2's own gemspec depends on 'ffi ~> 1.9' -- wide enough to
+        # still float to whatever's newest overall, breaking on older
+        # Ruby once THAT release's own floor outpaces it -- confirmed
+        # via a real failing build (Ruby 2.1 + Rails 3 + argon2:
+        # "ffi-1.17.4-x86_64-linux-musl requires ruby version < 4.1.dev,
+        # >= 3.0, which is incompatible with the current version, ruby
+        # 2.1.10").
+        lines.append(f'gem "ffi", "{_era_gem_version("ffi", lang_ver, "1.12.2")}"')
     if fw_name == "Rails":
         # activesupport pulls in concurrent-ruby transitively with no
         # useful upper bound -- see _concurrent_ruby_version()'s own
