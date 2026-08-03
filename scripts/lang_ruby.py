@@ -837,6 +837,22 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
     # outright. Confirmed via a real crash (LoadError: cannot load such
     # file -- rack/auth/digest/md5) once Rack 3.2.6 got resolved, and via
     # a real successful request once pinned to Rack's own last 2.x line.
+    if fw_name == "Hanami" and fw_major in ("2", "3"):
+        # Hanami 2.x's own gemspec does NOT depend on hanami-router at
+        # all -- confirmed via its real gemspec (dry-*/hanami-cli/
+        # hanami-utils/json/zeitwerk/rack-session, no hanami-router).
+        # Routing is a genuinely optional, separately-installed
+        # component in this architecture. Without it, Hanami::Slice#
+        # load_routes's own `Hanami.bundled?("hanami-router")` guard
+        # returns false before even attempting to require config/
+        # routes.rb, so the app's Routes class silently never loads and
+        # every single request 500s (NoMethodError: undefined method
+        # 'call' for nil:NilClass in Hanami::Slice#rack_app) -- confirmed
+        # via a real crash reproduced on every request, root-caused by
+        # directly checking `gem "hanami-router"` inside the running
+        # bundle (Gem::LoadError: hanami-router is not part of the
+        # bundle), and confirmed fixed by adding it explicitly.
+        lines.append('gem "hanami-router"')
     if (fw_name, fw_major) == ("Grape", "1"):
         lines.append('gem "rack", "~> 2.2"')
     if (fw_name, fw_major) == ("Grape", "0"):
@@ -902,6 +918,23 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
                     lib_name: str, lib_resolved: str, needs_rackup: bool) -> str:
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(ruby_ver)
     bundler_ver = _bundler_version(ruby_ver)
+    if (fw_name, fw_major) == ("Hanami", "0"):
+        # Hanami 0.9.2's own gemspec pins 'bundler, ~> 1.13' -- a hard
+        # constraint Bundler itself enforces against whatever Bundler
+        # version is actually running the install (confirmed via a real
+        # failing build: "Because hanami ... depends on bundler ~> 1.13
+        # ... the current Bundler version (2.4.22) does not satisfy
+        # ... cannot be used"). _bundler_version()'s own newest-
+        # compatible-with-ruby logic picks a modern Bundler on anything
+        # Ruby 2.7+, which is always too new for this framework major
+        # specifically. 1.17.3 (already this module's own established
+        # old-Bundler fallback) satisfies '~> 1.13' and is confirmed
+        # live to still `bundle install` successfully through Ruby 3.1
+        # (Pathname#untaint, which old Bundler's own source calls,
+        # is deprecated-but-present there; REMOVED at 3.2, confirmed
+        # live via String#respond_to?(:untaint) -- Hanami-0's registry
+        # ceiling is narrowed to 3.1 accordingly).
+        bundler_ver = "1.17.3"
 
     # Cache-key diversifier (same reasoning/precedent as PHP's and Node's
     # own PQC_COMBO_ID/cache_bust ARGs): this Dockerfile template varies
