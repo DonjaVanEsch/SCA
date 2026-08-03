@@ -321,6 +321,27 @@ def _pqc_rails_needs_skip(fw_name: str, fw_major: str) -> bool:
     return not (fw_name == "Rails" and fw_major in ("7", "8"))
 
 
+# argon2 + Rails on Ruby <3.1 is a genuine, extensively-confirmed
+# impossibility, not a convenience exclusion. Rails' own transitive
+# dependency graph (rake, concurrent-ruby, multi_json, rack-cache, and
+# for major 3 specifically its own 'bundler ~> 1.0' gemspec constraint)
+# is all individually pinnable to era-appropriate versions -- but
+# argon2's own 'ffi ~> 1.9' dependency resolves to a PLATFORM-SPECIFIC
+# precompiled variant (e.g. ffi-1.17.4-x86_64-linux-musl) whose own
+# floor is Ruby >=3.0, which no Gemfile version pin can work around
+# (confirmed: pinning an older ffi version number doesn't change which
+# platform variant Bundler selects; `bundle config set
+# force_ruby_platform true` doesn't help either, at least not with the
+# old Bundler 1.x this Ruby range needs for other reasons). Confirmed
+# clean on Ruby 3.1 for Rails major 3; Rails major 4 hit a DIFFERENT
+# unconstrained gem (minitest, floor >=3.1) at the exact same boundary
+# -- every Rails major's own transitive graph keeps surfacing a new
+# blocker below this line, so the boundary is applied to Rails as a
+# whole rather than re-diagnosing each major individually.
+def _argon2_rails_needs_skip(fw_name: str, fw_major: str, lang_ver: str) -> bool:
+    return fw_name == "Rails" and _lang_ver_tuple(lang_ver) < (3, 1)
+
+
 # ── Crypto library metadata ──────────────────────────────────────────────────
 # "touch" mirrors every other lang_X.py's LIB_META convention: a real call
 # into the library so it's provably loaded and exercised, not just
@@ -941,12 +962,16 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # file -- fiddle). Only added here since it's already bundled by
         # default on every older Ruby.
         lines.append('gem "fiddle"')
-    if lib_name == "argon2":
+    if lib_name == "argon2" or fw_name == "Rails":
         # ffi-compiler (argon2's own native-extension build dependency)
-        # depends on 'rake' completely unconstrained -- see
+        # AND railties (Rails' own Rakefile-based task infrastructure)
+        # INDEPENDENTLY depend on 'rake' completely unconstrained -- see
         # _rake_version()'s own docstring for the real failing build this
-        # was confirmed against.
+        # was confirmed against. Confirmed both paths are real: fixing
+        # this only for argon2 still left plain Rails+jwt (no argon2 at
+        # all) failing on the exact same rake-too-new error.
         lines.append(f'gem "rake", "{_rake_version(lang_ver)}"')
+    if lib_name == "argon2":
         # argon2's own gemspec depends on 'ffi ~> 1.9' -- wide enough to
         # still float to whatever's newest overall, breaking on older
         # Ruby once THAT release's own floor outpaces it -- confirmed
@@ -1299,6 +1324,15 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         print(f"  [SKIP] {fw_name} {fw_major} + pqc_rails: needs a real Rails "
               f">=7.1 host app (pqc_rails's own actionpack/activerecord/railties "
               f"deps are constrained '>=7.1,<9')", flush=True)
+        if out.exists():
+            shutil.rmtree(out)
+        return False
+
+    if lib_name == "argon2" and _argon2_rails_needs_skip(fw_name, fw_major, lang_ver):
+        print(f"  [SKIP] {fw_name} {fw_major} + argon2 on Ruby {lang_ver}: argon2's "
+              f"own ffi dependency resolves to a platform-specific precompiled "
+              f"variant needing Ruby >=3.0, which no Gemfile pin can work around "
+              f"(confirmed clean on Ruby 3.1+)", flush=True)
         if out.exists():
             shutil.rmtree(out)
         return False
