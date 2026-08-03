@@ -999,6 +999,12 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # "rack-cache-1.17.0 requires ruby version >= 2.7.7, which is
         # incompatible with the current version, ruby 2.1.10".
         lines.append(f'gem "rack-cache", "{_era_gem_version("rack-cache", lang_ver, "1.2")}"')
+        # railties pulls in thor (its CLI framework) transitively, also
+        # with no useful upper bound -- confirmed via a real failing
+        # build, plain Rails-3 + jwt (no argon2 at all): "thor-1.5.0
+        # requires ruby version >= 2.6.0, which is incompatible with the
+        # current version, ruby 2.1.10".
+        lines.append(f'gem "thor", "{_era_gem_version("thor", lang_ver, "0.19.4")}"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
