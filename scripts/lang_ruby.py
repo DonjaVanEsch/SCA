@@ -166,6 +166,35 @@ def _bundler_version(lang_ver: str) -> str:
     return "1.17.3"
 
 
+def _concurrent_ruby_version(lang_ver: str) -> str:
+    """Pick the newest concurrent-ruby release whose own declared
+    ruby_version floor is satisfied by lang_ver -- same live-verified
+    resolution as _bundler_version()/_rake_version() above.
+
+    Rails' own activesupport pulls in concurrent-ruby as a transitive
+    dependency (thread-safety primitives) with no useful upper bound of
+    its own, and concurrent-ruby's later 1.2+/1.3+ releases raised their
+    floor to >=2.3 -- confirmed via a real failing build (Ruby 2.1 +
+    Rails 3 + argon2, right after fixing the same class of issue for
+    rake: "concurrent-ruby-1.3.8 requires ruby version >= 2.3, which is
+    incompatible with the current version, ruby 2.1.10"). Applied
+    whenever Rails is used, any major -- harmless on newer Ruby buckets
+    where the natural unconstrained pick would already land here.
+    """
+    lv = _lang_ver_tuple(lang_ver)
+    try:
+        versions = _fetch_gem_versions("concurrent-ruby")
+    except RubyGemsLookupError:
+        return "1.1.10"
+
+    floors = _GEM_RUBY_FLOOR.get("concurrent-ruby", {})
+    for v in sorted(versions, key=_ver_key, reverse=True):
+        floor = _ruby_floor_tuple(floors.get(v))
+        if lv >= floor:
+            return v
+    return "1.1.10"
+
+
 def _rake_version(lang_ver: str) -> str:
     """Pick the newest Rake release whose own declared ruby_version floor
     is satisfied by lang_ver -- same live-verified resolution as
@@ -921,6 +950,12 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # _rake_version()'s own docstring for the real failing build this
         # was confirmed against.
         lines.append(f'gem "rake", "{_rake_version(lang_ver)}"')
+    if fw_name == "Rails":
+        # activesupport pulls in concurrent-ruby transitively with no
+        # useful upper bound -- see _concurrent_ruby_version()'s own
+        # docstring for the real failing build this was confirmed
+        # against.
+        lines.append(f'gem "concurrent-ruby", "{_concurrent_ruby_version(lang_ver)}"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
@@ -1200,21 +1235,26 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         # roqs_native_copy must run AFTER liboqs.so has landed in
         # /usr/local/lib/ above (it copies FROM there), not before.
         + f"{roqs_native_copy}"
-        # The final stage's own base image only ships whatever Bundler
-        # (if any) comes bundled as a default gem with that Ruby version
-        # -- never necessarily the SPECIFIC version pinned above and
-        # used to install (gem install only happened in the builder
-        # stage, and BUNDLE_PATH's own /usr/local/bundle copy below
-        # holds installed PROJECT gems, not the bundler executable
-        # itself). The CMD below runs `bundle _{bundler_ver}_ exec`,
-        # which needs that exact version locally installed to resolve --
-        # confirmed via a real crash (Bundler::GemNotFound-style "Could
-        # not find command '_1.17.3_'") on Ruby 2.2, where bundler isn't
-        # a default gem at all. Cheap (pure-Ruby gem, no compilation).
-        + f"{bundler_install}"
         + "WORKDIR /app\n"
         f"COPY --from=builder /usr/local/bundle /usr/local/bundle\n"
         f"COPY --from=builder /app/Gemfile ./\n"
+        # Re-installing Bundler AFTER the /usr/local/bundle copy above
+        # matters, not just doing it at all: this project's BUNDLE_PATH
+        # is /usr/local/bundle, so a `gem install bundler` run BEFORE
+        # that COPY gets its own bin/bundle shim silently overwritten by
+        # the builder's copied-over one -- confirmed via a real crash
+        # even with bundler 1.17.3 correctly gem-installed earlier in
+        # the stage (`gem list` showed it present, `which bundle`
+        # resolved to the copied-over /usr/local/bundle/bin/bundle
+        # instead, whose own binstub doesn't recognize the `_X.Y.Z_`
+        # version-selector syntax the same way). The base image only
+        # ships whatever Bundler (if any) comes as a default gem for
+        # that Ruby version -- never necessarily the SPECIFIC version
+        # pinned above and used to install -- and the CMD below runs
+        # `bundle _{bundler_ver}_ exec`, which needs that exact version
+        # locally installed to resolve. Cheap: pure-Ruby gem, no
+        # compilation.
+        f"{bundler_install}"
         f"{app_copy}"
         "EXPOSE 8000\n"
         f"{cmd}"
