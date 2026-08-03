@@ -1014,12 +1014,6 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # incompatible with the current version, ruby 2.1.10". 1.15.0's
         # own declared floor is unrestricted ('>= 0'), a safe fallback.
         lines.append(f'gem "multi_json", "{_era_gem_version("multi_json", lang_ver, "1.15.0")}"')
-        # actionpack pulls in rack-cache transitively, also with no
-        # useful upper bound -- confirmed via a real failing build right
-        # after fixing multi_json (Ruby 2.1 + Rails 3 + argon2):
-        # "rack-cache-1.17.0 requires ruby version >= 2.7.7, which is
-        # incompatible with the current version, ruby 2.1.10".
-        lines.append(f'gem "rack-cache", "{_era_gem_version("rack-cache", lang_ver, "1.2")}"')
         # railties pulls in thor (its CLI framework) transitively, also
         # with no useful upper bound -- confirmed via a real failing
         # build, plain Rails-3 + jwt (no argon2 at all): "thor-1.5.0
@@ -1095,12 +1089,31 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # this class of issue reliably recurs across this whole
         # dependency graph.
         for _gem, _fallback in (
-            ("date", "0.0.1"), ("securerandom", "0.1.0"), ("mutex_m", "0.1.0"),
-            ("connection_pool", "0.0.1"), ("base64", "0.1.0"),
-            ("bigdecimal", "1.1.0"), ("timeout", "0.1.0"), ("uri", "0.10.0"),
-            ("tsort", "0.1.0"), ("cgi", "0.1.0"), ("erubi", "1.0.0"),
+            ("mutex_m", "0.1.2"), ("connection_pool", "2.2.3"),
+            ("bigdecimal", "1.3.5"), ("timeout", "0.4.0"), ("uri", "0.10.3"),
+            ("cgi", "0.1.1"), ("erubi", "1.13.1"),
         ):
             lines.append(f'gem "{_gem}", "{_era_gem_version(_gem, lang_ver, _fallback)}"')
+        # date/securerandom/base64/tsort each have a REAL Ruby floor
+        # across every single published release (2.4.0/2.3.0/2.3.0/
+        # 2.3.0 respectively -- confirmed via each gem's full RubyGems
+        # version history, not just its newest release: date's own
+        # OLDEST release, 3.3.1, already requires >=2.4.0). Unlike the
+        # gems just above, there is no era choice that works below that
+        # floor at all -- confirmed via a real failing build ("date
+        # (= 0.0.1) was resolved to 0.0.1, which depends on ruby
+        # (>= 2.5.0dev)", a bad fallback constant from an earlier
+        # version of this fix that didn't account for this). Only
+        # added once the target Ruby actually clears each one's floor
+        # (same "only add on Ruby>=X" pattern already used for
+        # ostruct/fiddle elsewhere in this module) -- below that floor,
+        # Ruby's own bundled/stdlib copy is used silently instead.
+        if _lang_ver_tuple(lang_ver) >= (2, 3):
+            lines.append(f'gem "securerandom", "{_era_gem_version("securerandom", lang_ver, "0.1.1")}"')
+            lines.append(f'gem "base64", "{_era_gem_version("base64", lang_ver, "0.1.2")}"')
+            lines.append(f'gem "tsort", "{_era_gem_version("tsort", lang_ver, "0.2.0")}"')
+        if _lang_ver_tuple(lang_ver) >= (2, 4):
+            lines.append(f'gem "date", "{_era_gem_version("date", lang_ver, "3.3.1")}"')
     if (fw_name, fw_major) == ("Rails", "3"):
         # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
         # unconditionally `require`s 'active_support/core_ext/rexml',
@@ -1116,6 +1129,20 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # rexml's own oldest published release (3.1.7.3) has no Ruby
         # floor at all, so the era-resolved version is always safe here.
         lines.append(f'gem "rexml", "{_era_gem_version("rexml", lang_ver, "3.1.7.3")}"')
+        # actionpack 3.2.22.5 is the ONLY Rails major that depends on
+        # rack-cache at all (confirmed via each major's real gem spec
+        # metadata: majors 4+ dropped it entirely) -- constrained to
+        # '~> 1.2' (i.e. the 1.2.x line only). A previous version of
+        # this fix used _era_gem_version() here, which resolves purely
+        # by Ruby-version era and ignores that constraint -- harmless
+        # at Ruby 2.1 (where the era-resolved version happened to still
+        # be 1.2.x by coincidence) but a real regression at Ruby 2.6
+        # (era-resolved to 1.15.0, violating '~> 1.2' outright):
+        # confirmed via a real failing build ("rack-cache (~> 1.2)"
+        # unsatisfiable alongside "rack-cache (= 1.15.0)"). Only one
+        # 1.2.x patch was ever published ("1.2", no Ruby floor at all),
+        # so there is no era choice to make here.
+        lines.append('gem "rack-cache", "1.2"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
