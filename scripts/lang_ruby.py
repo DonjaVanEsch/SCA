@@ -1110,6 +1110,19 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         # time only, same as liboqs; never at runtime (every ruby:X-slim
         # base already ships libssl/libcrypto itself).
         builder_apt += ["pkg-config", "libssl-dev"]
+    if fw_name == "Rails":
+        # railties pulls in irb -> rdoc -> psych completely unconstrained
+        # (same class of issue as rake/concurrent-ruby/multi_json/
+        # rack-cache/thor/webrick elsewhere in this module, except this
+        # one hits a missing SYSTEM header instead of a Ruby-floor
+        # mismatch): the resolved psych release (5.4.0) has no
+        # precompiled variant for this base and rebuilds its native
+        # extension from source, which needs libyaml.h. Confirmed via a
+        # real failing build ("checking for yaml.h... no", Gem::Ext::
+        # BuildError installing psych) on Rails major 7 -- confirmed NOT
+        # argon2-specific (identical failure on plain Rails-7 + jwt, no
+        # argon2 at all).
+        builder_apt += ["libyaml-dev"]
     # de-dupe while preserving order
     builder_apt = list(dict.fromkeys(builder_apt))
 
