@@ -175,6 +175,27 @@ def _bundler_version(lang_ver: str) -> str:
     return _era_gem_version("bundler", lang_ver, "1.17.3")
 
 
+def _bundler_version_1x(lang_ver: str) -> str:
+    """Like _bundler_version() but capped to the Bundler 1.x line, for
+    frameworks that declare their own 'bundler ~> 1.0' constraint (Rails
+    major 3, resolved to 3.2.22.5) -- confirmed via a real failing build
+    ("Because rails >= 3.0.3, < 4.0.0.beta1 depends on bundler ~> 1.0
+    and the current Bundler version (2.4.22) does not satisfy ...").
+    """
+    lv = _lang_ver_tuple(lang_ver)
+    try:
+        versions = [v for v in _fetch_gem_versions("bundler") if v.startswith("1.")]
+    except RubyGemsLookupError:
+        return "1.17.3"
+
+    floors = _GEM_RUBY_FLOOR.get("bundler", {})
+    for v in sorted(versions, key=_ver_key, reverse=True):
+        floor = _ruby_floor_tuple(floors.get(v))
+        if lv >= floor:
+            return v
+    return "1.17.3"
+
+
 def _rake_version(lang_ver: str) -> str:
     """Only needed for argon2: its own dependency ffi-compiler declares
     `s.add_dependency 'rake'` completely UNCONSTRAINED (confirmed via its
@@ -986,7 +1007,10 @@ _BUNDLE_CACHE_MOUNT = (
 def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
                     lib_name: str, lib_resolved: str, needs_rackup: bool) -> str:
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(ruby_ver)
-    bundler_ver = _bundler_version(ruby_ver)
+    bundler_ver = (
+        _bundler_version_1x(ruby_ver) if (fw_name, fw_major) == ("Rails", "3")
+        else _bundler_version(ruby_ver)
+    )
 
     # Cache-key diversifier (same reasoning/precedent as PHP's and Node's
     # own PQC_COMBO_ID/cache_bust ARGs): this Dockerfile template varies
