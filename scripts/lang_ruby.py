@@ -177,10 +177,22 @@ def _bundler_version(lang_ver: str) -> str:
 
 def _bundler_version_1x(lang_ver: str) -> str:
     """Like _bundler_version() but capped to the Bundler 1.x line, for
-    frameworks that declare their own 'bundler ~> 1.0' constraint (Rails
-    major 3, resolved to 3.2.22.5) -- confirmed via a real failing build
-    ("Because rails >= 3.0.3, < 4.0.0.beta1 depends on bundler ~> 1.0
-    and the current Bundler version (2.4.22) does not satisfy ...").
+    frameworks that declare their own bundler ceiling below 2.0. Rails
+    major 3 (3.2.22.5) declares 'bundler ~> 1.0' -- confirmed via a real
+    failing build ("Because rails >= 3.0.3, < 4.0.0.beta1 depends on
+    bundler ~> 1.0 and the current Bundler version (2.4.22) does not
+    satisfy ..."). Rails major 4 (4.2.11.3) has the same class of
+    constraint, just a wider one ('bundler >= 1.3.0, < 2.0') -- confirmed
+    via its real gem spec metadata (Gem::Package#spec, not visible by
+    grepping the unpacked .gemspec file, which doesn't include runtime
+    dependency metadata). This one only surfaced at Ruby 2.4+: below
+    that, _bundler_version()'s own era resolution happened to already
+    pick a Bundler 1.x release anyway (2.x's own floor wasn't met yet),
+    masking the missing ceiling until a real failing build turned up
+    ("rails (= 4.2.11.3) ... depends on bundler (>= 1.3.0, < 2.0)",
+    "Current Bundler version: bundler (2.3.27)"). Confirmed majors 5/6/7
+    do NOT have this upper bound (only 'bundler >= 1.3.0' / '>= 1.15.0'),
+    so they correctly keep using modern Bundler via _bundler_version().
     """
     lv = _lang_ver_tuple(lang_ver)
     try:
@@ -321,25 +333,34 @@ def _pqc_rails_needs_skip(fw_name: str, fw_major: str) -> bool:
     return not (fw_name == "Rails" and fw_major in ("7", "8"))
 
 
-# argon2 + Rails on Ruby <3.1 is a genuine, extensively-confirmed
-# impossibility, not a convenience exclusion. Rails' own transitive
-# dependency graph (rake, concurrent-ruby, multi_json, rack-cache, and
-# for major 3 specifically its own 'bundler ~> 1.0' gemspec constraint)
-# is all individually pinnable to era-appropriate versions -- but
-# argon2's own 'ffi ~> 1.9' dependency resolves to a PLATFORM-SPECIFIC
-# precompiled variant (e.g. ffi-1.17.4-x86_64-linux-musl) whose own
-# floor is Ruby >=3.0, which no Gemfile version pin can work around
-# (confirmed: pinning an older ffi version number doesn't change which
-# platform variant Bundler selects; `bundle config set
+# ffi-dependent libraries + Rails on Ruby <3.1 is a genuine,
+# extensively-confirmed impossibility, not a convenience exclusion.
+# Rails' own transitive dependency graph (rake, concurrent-ruby,
+# multi_json, rack-cache, and for majors 3/4 specifically their own
+# bundler ceiling below 2.0) is all individually pinnable to
+# era-appropriate versions -- but any library whose own gemspec depends
+# on 'ffi' (argon2's 'ffi ~> 1.9', rbnacl's 'ffi >= 0') resolves to a
+# PLATFORM-SPECIFIC precompiled variant (e.g. ffi-1.17.4-x86_64-linux-
+# musl) whose own floor is Ruby >=3.0, which no Gemfile version pin can
+# work around (confirmed: pinning an older ffi version number doesn't
+# change which platform variant Bundler selects; `bundle config set
 # force_ruby_platform true` doesn't help either, at least not with the
-# old Bundler 1.x this Ruby range needs for other reasons). Confirmed
-# clean on Ruby 3.1 for Rails major 3; Rails major 4 hit a DIFFERENT
-# unconstrained gem (minitest, floor >=3.1) at the exact same boundary
-# -- every Rails major's own transitive graph keeps surfacing a new
-# blocker below this line, so the boundary is applied to Rails as a
-# whole rather than re-diagnosing each major individually.
-def _argon2_rails_needs_skip(fw_name: str, fw_major: str, lang_ver: str) -> bool:
-    return fw_name == "Rails" and _lang_ver_tuple(lang_ver) < (3, 1)
+# old Bundler 1.x this Ruby range needs for other reasons -- majors 3
+# and 4 both force Bundler 1.x via _bundler_version_1x()). Confirmed
+# clean on Ruby 3.1 for Rails major 3 + argon2; Rails major 4 hit a
+# DIFFERENT unconstrained gem (minitest, floor >=3.1) at the exact same
+# boundary; rbnacl hit the identical ffi-platform-variant error on Rails
+# major 3 at Ruby 2.5 (confirmed via a real failing build: "ffi-1.17.4-
+# x86_64-linux-musl requires ruby version >= 3.0" -- the exact same
+# release as argon2's). Every Rails major's own transitive graph keeps
+# surfacing a new blocker below this line, so the boundary is applied to
+# Rails as a whole rather than re-diagnosing each major individually.
+_FFI_DEPENDENT_LIBS = {"argon2", "rbnacl"}
+
+
+def _ffi_rails_needs_skip(lib_name: str, fw_name: str, fw_major: str, lang_ver: str) -> bool:
+    return (lib_name in _FFI_DEPENDENT_LIBS
+            and fw_name == "Rails" and _lang_ver_tuple(lang_ver) < (3, 1))
 
 
 # ── Crypto library metadata ──────────────────────────────────────────────────
@@ -1069,7 +1090,7 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
                     lib_name: str, lib_resolved: str, needs_rackup: bool) -> str:
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(ruby_ver)
     bundler_ver = (
-        _bundler_version_1x(ruby_ver) if (fw_name, fw_major) == ("Rails", "3")
+        _bundler_version_1x(ruby_ver) if (fw_name, fw_major) in (("Rails", "3"), ("Rails", "4"))
         else _bundler_version(ruby_ver)
     )
 
@@ -1369,8 +1390,8 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
             shutil.rmtree(out)
         return False
 
-    if lib_name == "argon2" and _argon2_rails_needs_skip(fw_name, fw_major, lang_ver):
-        print(f"  [SKIP] {fw_name} {fw_major} + argon2 on Ruby {lang_ver}: argon2's "
+    if _ffi_rails_needs_skip(lib_name, fw_name, fw_major, lang_ver):
+        print(f"  [SKIP] {fw_name} {fw_major} + {lib_name} on Ruby {lang_ver}: {lib_name}'s "
               f"own ffi dependency resolves to a platform-specific precompiled "
               f"variant needing Ruby >=3.0, which no Gemfile pin can work around "
               f"(confirmed clean on Ruby 3.1+)", flush=True)
