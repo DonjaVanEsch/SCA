@@ -1026,18 +1026,81 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # requires ruby version >= 2.6.0, which is incompatible with the
         # current version, ruby 2.1.10".
         lines.append(f'gem "thor", "{_era_gem_version("thor", lang_ver, "0.19.4")}"')
-        # railties' own test-helper integration pulls in minitest
-        # transitively, also with no useful upper bound -- confirmed via
-        # a real failing build (Ruby 2.4 + Rails 4 + bcrypt, right after
-        # fixing Rails 4's own bundler ceiling -- see
-        # _bundler_version_1x()'s docstring): "minitest-5.27.0 requires
-        # ruby version >= 3.1, which is incompatible with the current
-        # version, ruby 2.4.10". This is the exact same gem/floor pair
-        # noted back when diagnosing argon2's Rails cross-dependency
-        # skip (_ffi_rails_needs_skip()) -- it turns out to be a
-        # regular unconstrained-dependency issue like the others above,
-        # not specific to that combo.
-        lines.append(f'gem "minitest", "{_era_gem_version("minitest", lang_ver, "5.11.3")}"')
+        # activesupport itself constrains minitest fairly tightly
+        # (majors 4/5: '~> 5.1'; major 6: '>= 5.1'; majors 7/8:
+        # '>= 5.1, < 6') -- confirmed via each major's real gem spec
+        # metadata -- but a real `bundle install` (NOT `bundle lock`,
+        # confirmed the two behave differently for this exact Gemfile)
+        # still resolves minitest to its newest overall release
+        # regardless, ignoring that constraint: "minitest-5.27.0
+        # requires ruby version >= 3.1, which is incompatible with the
+        # current version, ruby 2.4.10" (Ruby 2.4 + Rails 4 + bcrypt,
+        # right after fixing Rails 4's own bundler ceiling -- see
+        # _bundler_version_1x()'s docstring). Only one 5.1.x patch was
+        # ever published (5.1.0, no ruby floor at all) -- since this
+        # project never runs Rails' own test suite, pinning to it
+        # satisfies every Rails major's own constraint (the tightest
+        # being '~> 5.1') with zero functional impact.
+        lines.append('gem "minitest", "5.1.0"')
+        # actionpack/actionview pull in nokogiri (HTML/XML sanitization)
+        # with no useful upper bound. Newer nokogiri releases (1.13.0+)
+        # added a REAL runtime dependency on 'racc' for their CSS-
+        # selector-to-XPath translator (confirmed via gem spec metadata:
+        # dev-only in 1.9.1, a genuine runtime dep from 1.13.10 on), and
+        # the newest nokogiri releases are PLATFORM-SPECIFIC precompiled
+        # variants for recent version numbers (e.g. nokogiri-1.19.4-
+        # x86_64-linux-musl, floor >=3.2) -- the same class of issue as
+        # argon2/rbnacl's ffi dependency elsewhere in this module.
+        # Confirmed via a real failing build (Ruby 2.4 + Rails 4 +
+        # bcrypt, right after fixing minitest).
+        lines.append(f'gem "nokogiri", "{_era_gem_version("nokogiri", lang_ver, "1.9.1")}"')
+        # nokogiri's own racc dependency ('~> 1.4', still wide enough to
+        # float to a too-new patch) -- confirmed via a real failing
+        # build right after fixing nokogiri: "racc-1.8.1 requires ruby
+        # version >= 2.5, which is incompatible with the current
+        # version, ruby 2.4.10".
+        lines.append(f'gem "racc", "{_era_gem_version("racc", lang_ver, "1.4.6")}"')
+        # activesupport's own Rails.logger dependency, also
+        # unconstrained -- confirmed via a real failing build right
+        # after fixing racc: "logger-1.7.0 requires ruby version
+        # >= 2.5.0".
+        lines.append(f'gem "logger", "{_era_gem_version("logger", lang_ver, "1.2.7.1")}"')
+        # actionmailer's own mail dependency ('~> 2.5, >= 2.5.4', wide
+        # enough to float). mail 2.8.0+ both raised its OWN floor to
+        # >=2.5 AND added unconstrained runtime dependencies on
+        # net-smtp/net-imap/net-pop (confirmed via gem spec metadata:
+        # absent in 2.7.1, present from 2.8.0 on) -- net-imap
+        # specifically has NO published version compatible with Ruby
+        # <2.5 at all (its own oldest release already requires
+        # >=2.5.0), so pinning those individually can't work below
+        # Ruby 2.5. Pinning mail itself to stay on the 2.7.x line
+        # (which has neither issue) avoids the whole sub-cascade.
+        # Confirmed via a real failing build right after fixing logger:
+        # "mini_mime-1.1.5 requires ruby version >= 2.6.0" (mail's own
+        # mini_mime dependency, also unconstrained).
+        lines.append(f'gem "mail", "{_era_gem_version("mail", lang_ver, "1.0.0")}"')
+        lines.append(f'gem "mini_mime", "{_era_gem_version("mini_mime", lang_ver, "0.1.0")}"')
+        # The remaining blockers are all Ruby stdlib libraries that were
+        # extracted into independently-published gems at various Ruby
+        # versions (the same class of change as webrick/ostruct/fiddle/
+        # rexml elsewhere in this module) and get pulled in
+        # transitively, unconstrained, by one or another of the gems
+        # above -- each confirmed via a real failing build, one at a
+        # time, after fixing the previous, on the same Ruby 2.4 + Rails
+        # 4 + bcrypt combo: date (>= 2.6.0), securerandom (>= 3.1.0),
+        # mutex_m (>= 2.5), connection_pool (>= 3.2.0), bigdecimal
+        # (>= 2.6.0), timeout (>= 2.6.0), uri (>= 2.5), tsort
+        # (>= 2.3.0), cgi (>= 2.5.0). Pinning every one at once (rather
+        # than one at a time as each is individually confirmed) since
+        # this class of issue reliably recurs across this whole
+        # dependency graph.
+        for _gem, _fallback in (
+            ("date", "0.0.1"), ("securerandom", "0.1.0"), ("mutex_m", "0.1.0"),
+            ("connection_pool", "0.0.1"), ("base64", "0.1.0"),
+            ("bigdecimal", "1.1.0"), ("timeout", "0.1.0"), ("uri", "0.10.0"),
+            ("tsort", "0.1.0"), ("cgi", "0.1.0"), ("erubi", "1.0.0"),
+        ):
+            lines.append(f'gem "{_gem}", "{_era_gem_version(_gem, lang_ver, _fallback)}"')
     if (fw_name, fw_major) == ("Rails", "3"):
         # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
         # unconditionally `require`s 'active_support/core_ext/rexml',
