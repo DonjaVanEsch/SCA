@@ -955,10 +955,22 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     # this project's own test harness uses a 2s-per-attempt timeout,
     # which sometimes falls before vs after the container/network had
     # "warmed" a request naturally during build/port-detection overhead.
+    # Rack 3.0 moved Rack::Handler (and Rack::Builder's own runtime, but
+    # NOT the parse_file class method used below) into the separate
+    # `rackup` gem, AS Rackup::Handler -- confirmed via a real crash
+    # (NameError: uninitialized constant Rack::Handler) on every Rack-3
+    # combo once the reverse-DNS fix above assumed the older
+    # Rack::Handler::WEBrick location unconditionally. `require 'rackup'`
+    # only succeeds (and only defines Rackup::Handler) on combos that
+    # actually have that gem in their bundle (Rack 3-resolving ones);
+    # falls back to the pre-3.0 Rack::Handler location otherwise --
+    # confirmed both paths live (Rackup::Handler defined/Rack::Handler
+    # nil on a Rack-3 combo, and the reverse on a Rack ~1.6/~2.2 one).
     _webrick_boot = (
-        "require 'rack'; app, _ = Rack::Builder.parse_file('config.ru'); "
-        "Rack::Handler::WEBrick.run(app, Host: '0.0.0.0', Port: 8000, "
-        "DoNotReverseLookup: true)"
+        "require 'rack'; begin; require 'rackup'; rescue LoadError; end; "
+        "app, _ = Rack::Builder.parse_file('config.ru'); "
+        "h = defined?(Rackup::Handler) ? Rackup::Handler::WEBrick : Rack::Handler::WEBrick; "
+        "h.run(app, Host: '0.0.0.0', Port: 8000, DoNotReverseLookup: true)"
     )
     if fw_name == "Sinatra":
         cmd = 'CMD ["ruby", "app.rb"]\n'
