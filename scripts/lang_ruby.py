@@ -1060,6 +1060,25 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # requires ruby version >= 2.6.0, which is incompatible with the
         # current version, ruby 2.1.10".
         lines.append(f'gem "thor", "{_era_gem_version("thor", lang_ver, "0.19.4")}"')
+    if fw_name == "Rails" and fw_major != "3":
+        # Everything below (minitest through the stdlib-extraction loop
+        # at the end of this block) was discovered and confirmed ONLY
+        # against Rails major 4 (Ruby 2.4 + Rails 4 + bcrypt) -- major 3
+        # was ALREADY passing real tests with none of these pins, using
+        # only concurrent-ruby/multi_json/thor above plus its own
+        # rexml/rack-cache fixes below. An earlier version of this fix
+        # applied the whole block Rails-wide (including major 3) and
+        # caused two real regressions there: mail resolving outside
+        # actionmailer 3.2.22.5's own tighter '~> 2.5.4' constraint (see
+        # _mail_version()'s docstring), and a pinned bigdecimal release
+        # that doesn't behave the same as Ruby 2.6's own bundled copy
+        # w.r.t. the BigDecimal.new check documented in this registry's
+        # own Rails notes -- confirmed via a real failing test
+        # (BigDecimal.new NoMethodError resurfacing on a previously-
+        # passing Ruby 2.6 + Rails 3 + jwt combo). Scoped to majors 4+
+        # only until each pin is independently confirmed safe for
+        # major 3 too.
+        #
         # activesupport itself constrains minitest fairly tightly
         # (majors 4/5: '~> 5.1'; major 6: '>= 5.1'; majors 7/8:
         # '>= 5.1, < 6') -- confirmed via each major's real gem spec
@@ -1113,41 +1132,45 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # versions (the same class of change as webrick/ostruct/fiddle/
         # rexml elsewhere in this module) and get pulled in
         # transitively, unconstrained, by one or another of the gems
-        # above -- each confirmed via a real failing build, one at a
-        # time, after fixing the previous, on the same Ruby 2.4 + Rails
-        # 4 + bcrypt combo: date (>= 2.6.0), securerandom (>= 3.1.0),
-        # mutex_m (>= 2.5), connection_pool (>= 3.2.0), bigdecimal
-        # (>= 2.6.0), timeout (>= 2.6.0), uri (>= 2.5), tsort
-        # (>= 2.3.0), cgi (>= 2.5.0). Pinning every one at once (rather
-        # than one at a time as each is individually confirmed) since
-        # this class of issue reliably recurs across this whole
-        # dependency graph.
+        # above. bigdecimal is deliberately NOT in this list -- pinning
+        # it to an explicit standalone release backfired: that release
+        # had ALREADY dropped the deprecated BigDecimal.new that Ruby's
+        # OWN bundled bigdecimal (matching the target Ruby version)
+        # still supports up to Ruby 2.6 (this registry's own Rails 3/4
+        # ceiling, see the Rails framework notes) -- confirmed via a
+        # real crash (BigDecimal.new NoMethodError) that reintroduced
+        # the exact bug that ceiling was narrowed to avoid. Ruby's own
+        # bundled copy is left to handle bigdecimal instead.
         for _gem, _fallback in (
             ("mutex_m", "0.1.2"), ("connection_pool", "2.2.3"),
-            ("bigdecimal", "1.3.5"), ("timeout", "0.4.0"), ("uri", "0.10.3"),
-            ("cgi", "0.1.1"), ("erubi", "1.13.1"),
+            ("timeout", "0.4.0"), ("uri", "0.10.3"), ("erubi", "1.13.1"),
         ):
             lines.append(f'gem "{_gem}", "{_era_gem_version(_gem, lang_ver, _fallback)}"')
-        # date/securerandom/base64/tsort each have a REAL Ruby floor
-        # across every single published release (2.4.0/2.3.0/2.3.0/
-        # 2.3.0 respectively -- confirmed via each gem's full RubyGems
-        # version history, not just its newest release: date's own
-        # OLDEST release, 3.3.1, already requires >=2.4.0). Unlike the
-        # gems just above, there is no era choice that works below that
-        # floor at all -- confirmed via a real failing build ("date
-        # (= 0.0.1) was resolved to 0.0.1, which depends on ruby
-        # (>= 2.5.0dev)", a bad fallback constant from an earlier
-        # version of this fix that didn't account for this). Only
-        # added once the target Ruby actually clears each one's floor
-        # (same "only add on Ruby>=X" pattern already used for
-        # ostruct/fiddle elsewhere in this module) -- below that floor,
-        # Ruby's own bundled/stdlib copy is used silently instead.
+        # date/securerandom/base64/tsort/cgi each have a REAL Ruby floor
+        # across every single published release, and for securerandom/
+        # cgi specifically that real floor is HIGHER than what their own
+        # metadata declares: securerandom 0.1.1's declared floor is
+        # '>=2.3.0', but its code calls Random.urandom, a method Ruby
+        # itself only added at 2.5 -- confirmed via a real crash
+        # (NoMethodError: undefined method 'urandom' for Random:Class)
+        # AND via directly checking Random.respond_to?(:urandom) on a
+        # real Ruby 2.4 interpreter (false). cgi 0.1.1's declared floor
+        # is unrestricted, but it calls String#delete_prefix, also only
+        # added at Ruby 2.5 -- confirmed via the same class of crash.
+        # date/base64/tsort's declared floors (2.4.0/2.3.0/2.3.0) are
+        # accurate as far as this project has tested. Only added once
+        # the target Ruby actually clears the REAL floor (same
+        # "only add on Ruby>=X" pattern already used for ostruct/fiddle
+        # elsewhere in this module) -- below that floor, Ruby's own
+        # bundled/stdlib copy is used silently instead.
         if _lang_ver_tuple(lang_ver) >= (2, 3):
-            lines.append(f'gem "securerandom", "{_era_gem_version("securerandom", lang_ver, "0.1.1")}"')
             lines.append(f'gem "base64", "{_era_gem_version("base64", lang_ver, "0.1.2")}"')
             lines.append(f'gem "tsort", "{_era_gem_version("tsort", lang_ver, "0.2.0")}"')
         if _lang_ver_tuple(lang_ver) >= (2, 4):
             lines.append(f'gem "date", "{_era_gem_version("date", lang_ver, "3.3.1")}"')
+        if _lang_ver_tuple(lang_ver) >= (2, 5):
+            lines.append(f'gem "securerandom", "{_era_gem_version("securerandom", lang_ver, "0.2.0")}"')
+            lines.append(f'gem "cgi", "{_era_gem_version("cgi", lang_ver, "0.3.1")}"')
     if (fw_name, fw_major) == ("Rails", "3"):
         # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
         # unconditionally `require`s 'active_support/core_ext/rexml',
