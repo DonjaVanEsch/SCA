@@ -2150,7 +2150,11 @@
     padding: 12px 8px;
   }
 
-  .settings-nav-item {
+  /* .maintenance-nav-item/.maintenance-section share this styling with
+     .settings-nav-item/.settings-section (the Admin panel's own tabbed
+     layout mirrors Settings') but stay separate classes so each panel's
+     own tab-switching JS never cross-talks with the other's. */
+  .settings-nav-item, .maintenance-nav-item {
     text-align: left;
     background: none;
     border: none;
@@ -2162,12 +2166,12 @@
     font-family: inherit;
   }
 
-  .settings-nav-item:hover {
+  .settings-nav-item:hover, .maintenance-nav-item:hover {
     background: var(--surface3);
     color: var(--text);
   }
 
-  .settings-nav-item.active {
+  .settings-nav-item.active, .maintenance-nav-item.active {
     background: var(--surface3);
     color: var(--text);
     font-weight: 600;
@@ -2184,13 +2188,13 @@
     gap: 8px;
   }
 
-  .settings-section {
+  .settings-section, .maintenance-section {
     display: none;
     flex-direction: column;
     gap: 8px;
   }
 
-  .settings-section.active {
+  .settings-section.active, .maintenance-section.active {
     display: flex;
   }
 
@@ -3209,7 +3213,6 @@
       <nav class="settings-nav">
         <button class="settings-nav-item active" data-settings-tab="home">🏠 General</button>
         <button class="settings-nav-item" data-settings-tab="appearance">🎨 Appearance</button>
-        <button class="settings-nav-item" data-settings-tab="registry">📝 Registry</button>
         <button class="settings-nav-item" data-settings-tab="accessibility">♿ Accessibility</button>
       </nav>
       <div class="settings-content">
@@ -3280,42 +3283,6 @@
           </p>
         </section>
 
-        <section class="settings-section" data-settings-section="registry">
-          <label class="settings-label">Registry</label>
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
-              title="Check upstream registries for new framework/library versions">🔔 New versions</button>
-          </div>
-          <p class="settings-hint">
-            Scans npm/PyPI/Packagist/Maven Central/NuGet for framework/library majors newer
-            than what's currently tracked — detection only, nothing is added or built until you
-            include it (also runs weekly via cron; the 🔔 badge in the bottom bar shows the
-            current pending count).
-          </p>
-
-          <div class="settings-action-list" style="margin-top:16px">
-            <button class="btn btn-ghost btn-sm" id="btn-settings-updates-log"
-              title="Permanent history of every version actually included">📜 Included log</button>
-          </div>
-          <p class="settings-hint">
-            Permanent history of every version actually included from the New versions scanner
-            (registry bucket added + images regenerated) — read back which ones still need
-            building/testing, and mark them tested once you're done with them.
-          </p>
-
-          <div class="settings-divider"></div>
-
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="btn-settings-registry-editor"
-              title="Manually include/exclude framework and library versions">📝 Registry editor</button>
-          </div>
-          <p class="settings-hint">
-            Manually include/exclude any already-tracked framework or library version per
-            language, with a note explaining why — stored as a database override, the registry
-            files themselves are never edited.
-          </p>
-        </section>
-
         <section class="settings-section" data-settings-section="accessibility">
           <label class="settings-label" for="settings-accessibility-mode">Accessibility mode</label>
           <label class="opt-label" style="display:flex;align-items:center;gap:6px">
@@ -3351,76 +3318,118 @@
   <!-- ── Maintenance page ─────────────────────────────────────────────── -->
   <div id="tab-maintenance" class="tab-panel settings-page">
     <div class="review-panel-header">
-      <h3>Maintenance</h3>
+      <h3>Admin</h3>
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="btn-close-maintenance-panel">✕</button>
     </div>
-    <div class="review-body settings-body">
-      <section class="settings-section active">
-        <label class="settings-label">Maintenance actions</label>
-        <div class="settings-action-list">
-          <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
-          <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
-            DB</button>
-        </div>
-        <p class="settings-hint">
-          Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
-          registry metadata and re-syncs from disk (only needed after a registry change).
-        </p>
+    <div class="review-body settings-body settings-body-tabbed">
+      <nav class="settings-nav">
+        <button class="maintenance-nav-item active" data-maintenance-tab="actions">🧹 Maintenance</button>
+        <button class="maintenance-nav-item" data-maintenance-tab="registry">📝 Registry</button>
+      </nav>
+      <div class="settings-content">
+        <section class="maintenance-section active" data-maintenance-section="actions">
+          <label class="settings-label">Maintenance actions</label>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
+            <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
+              DB</button>
+          </div>
+          <p class="settings-hint">
+            Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
+            registry metadata and re-syncs from disk (only needed after a registry change).
+          </p>
 
-        <div class="settings-action-group-label" style="margin-top:16px">Cleanup</div>
-        <div class="settings-action-list">
-          <button class="btn btn-ghost btn-sm" id="mnu-cleanup-normal">Normal cleanup</button>
-          <button class="btn btn-ghost btn-sm" id="mnu-cleanup-full">Full cleanup <span
-              style="font-size:10px;color:var(--muted2)">(+ volumes)</span></button>
-          <button class="btn btn-ghost btn-sm" id="mnu-cleanup-dry">Dry run (preview)</button>
-        </div>
-        <p class="settings-hint">
-          Removes unused Docker containers, images, and (full) volumes. Never touches
-          build cache, including the shared package-manager caches below -- see
-          "Build cache" for that.
-        </p>
+          <div class="settings-action-group-label" style="margin-top:16px">Cleanup</div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-normal">Normal cleanup</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-full">Full cleanup <span
+                style="font-size:10px;color:var(--muted2)">(+ volumes)</span></button>
+            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint">
+            Removes unused Docker containers, images, and (full) volumes. Never touches
+            build cache, including the shared package-manager caches below -- see
+            "Build cache" for that.
+          </p>
 
-        <div class="settings-action-group-label" style="margin-top:16px">Reclaim disk space</div>
-        <div class="settings-action-list">
-          <button class="btn btn-ghost btn-sm" id="mnu-layercache-prune">Reclaim layer cache</button>
-          <button class="btn btn-ghost btn-sm" id="mnu-layercache-dry">Dry run (preview)</button>
-        </div>
-        <p class="settings-hint">
-          Safe to use whenever disk space is tight. Removes only ordinary build-layer
-          cache -- every COPY/RUN instruction across every combo ever built keeps its
-          own cached layer, and this is usually by far the largest share of disk
-          usage. Never touches the shared Maven/npm/pip/Composer/NuGet caches below,
-          so it carries no registry rate-limiting risk.
-        </p>
+          <div class="settings-action-group-label" style="margin-top:16px">Reclaim disk space</div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-layercache-prune">Reclaim layer cache</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-layercache-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint">
+            Safe to use whenever disk space is tight. Removes only ordinary build-layer
+            cache -- every COPY/RUN instruction across every combo ever built keeps its
+            own cached layer, and this is usually by far the largest share of disk
+            usage. Never touches the shared Maven/npm/pip/Composer/NuGet caches below,
+            so it carries no registry rate-limiting risk.
+          </p>
 
-        <div class="settings-action-group-label" style="margin-top:16px">Build cache <span
-            class="no-cache-warn" style="font-size:11px">⚠</span></div>
-        <div class="settings-action-list">
-          <button class="btn btn-ghost btn-sm" id="mnu-buildcache-prune">Prune build cache</button>
-          <button class="btn btn-ghost btn-sm" id="mnu-buildcache-dry">Dry run (preview)</button>
-        </div>
-        <p class="settings-hint settings-hint-warn">
-          Removes Docker's ENTIRE build cache, including the shared Maven/npm/pip/
-          Composer/NuGet caches every build reuses. This brings back registry
-          rate-limiting risk (e.g. Maven Central 429s) on the next big batch -- only
-          use this for genuine disk pressure or a suspected corrupt cache entry, not
-          as routine maintenance. For ordinary disk cleanup, use "Reclaim disk space"
-          above instead.
-        </p>
+          <div class="settings-action-group-label" style="margin-top:16px">Build cache <span
+              class="no-cache-warn" style="font-size:11px">⚠</span></div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-buildcache-prune">Prune build cache</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-buildcache-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint settings-hint-warn">
+            Removes Docker's ENTIRE build cache, including the shared Maven/npm/pip/
+            Composer/NuGet caches every build reuses. This brings back registry
+            rate-limiting risk (e.g. Maven Central 429s) on the next big batch -- only
+            use this for genuine disk pressure or a suspected corrupt cache entry, not
+            as routine maintenance. For ordinary disk cleanup, use "Reclaim disk space"
+            above instead.
+          </p>
 
-        <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
-        <div class="settings-action-list">
-          <button class="btn btn-ghost btn-sm" id="mnu-orphans-remove">Remove orphaned images</button>
-          <button class="btn btn-ghost btn-sm" id="mnu-orphans-dry">Dry run (preview)</button>
-        </div>
-        <p class="settings-hint">
-          <code>pqc-*</code> tagged images built for a combo that no longer exists in the
-          current <code>images/</code> tree (e.g. after a registry fix narrowed a version
-          range, or a language was dropped) — Docker's own cleanup has no way to know this,
-          since it only tracks container references.
-        </p>
-      </section>
+          <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="mnu-orphans-remove">Remove orphaned images</button>
+            <button class="btn btn-ghost btn-sm" id="mnu-orphans-dry">Dry run (preview)</button>
+          </div>
+          <p class="settings-hint">
+            <code>pqc-*</code> tagged images built for a combo that no longer exists in the
+            current <code>images/</code> tree (e.g. after a registry fix narrowed a version
+            range, or a language was dropped) — Docker's own cleanup has no way to know this,
+            since it only tracks container references.
+          </p>
+        </section>
+
+        <section class="maintenance-section" data-maintenance-section="registry">
+          <label class="settings-label">Registry</label>
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="btn-settings-updates"
+              title="Check upstream registries for new framework/library versions">🔔 New versions</button>
+          </div>
+          <p class="settings-hint">
+            Scans npm/PyPI/Packagist/Maven Central/NuGet for framework/library majors newer
+            than what's currently tracked — detection only, nothing is added or built until you
+            include it (also runs weekly via cron; the 🔔 badge in the bottom bar shows the
+            current pending count).
+          </p>
+
+          <div class="settings-action-list" style="margin-top:16px">
+            <button class="btn btn-ghost btn-sm" id="btn-settings-updates-log"
+              title="Permanent history of every version actually included">📜 Included log</button>
+          </div>
+          <p class="settings-hint">
+            Permanent history of every version actually included from the New versions scanner
+            (registry bucket added + images regenerated) — read back which ones still need
+            building/testing, and mark them tested once you're done with them.
+          </p>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-action-list">
+            <button class="btn btn-ghost btn-sm" id="btn-settings-registry-editor"
+              title="Manually include/exclude framework and library versions">📝 Registry editor</button>
+          </div>
+          <p class="settings-hint">
+            Manually include/exclude any already-tracked framework or library version per
+            language, with a note explaining why — stored as a database override, the registry
+            files themselves are never edited.
+          </p>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -5885,9 +5894,19 @@
   // ── Maintenance panel ────────────────────────────────────────────────────
   let _maintenanceReturnTab = 'images';
 
-  function openMaintenancePanel() {
+  function openMaintenancePanel(tab) {
+    switchMaintenanceTab(tab || 'actions');
     if (state.currentTab !== 'maintenance') _maintenanceReturnTab = state.currentTab;
     switchTab('maintenance');
+  }
+
+  function switchMaintenanceTab(tab) {
+    document.querySelectorAll('.maintenance-nav-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.maintenanceTab === tab);
+    });
+    document.querySelectorAll('.maintenance-section').forEach(el => {
+      el.classList.toggle('active', el.dataset.maintenanceSection === tab);
+    });
   }
 
   function closeMaintenancePanel() {
@@ -7694,7 +7713,7 @@
   document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
   document.getElementById('btn-host-badge').addEventListener('click', () => openSettingsPanel('home'));
   document.getElementById('btn-close-settings-panel').addEventListener('click', closeSettingsPanel);
-  document.getElementById('btn-maintenance').addEventListener('click', openMaintenancePanel);
+  document.getElementById('btn-maintenance').addEventListener('click', () => openMaintenancePanel());
   document.getElementById('btn-close-maintenance-panel').addEventListener('click', closeMaintenancePanel);
   document.getElementById('btn-settings-cancel').addEventListener('click', closeSettingsPanel);
   document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
@@ -7702,6 +7721,9 @@
   document.getElementById('settings-fingerprint-target').addEventListener('input', updateFingerprintTargetPreview);
   document.querySelectorAll('.settings-nav-item').forEach(item => {
     item.addEventListener('click', () => switchSettingsTab(item.dataset.settingsTab));
+  });
+  document.querySelectorAll('.maintenance-nav-item').forEach(item => {
+    item.addEventListener('click', () => switchMaintenanceTab(item.dataset.maintenanceTab));
   });
 
   document.getElementById('updates-badge').addEventListener('click', () => openUpdatesPanel());
