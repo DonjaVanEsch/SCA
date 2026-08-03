@@ -488,6 +488,13 @@
     border-color: var(--border);
   }
 
+  /* Icon-only header buttons (no text label) read too small at the base
+     12px .btn font-size -- bumped up just for these two so the glyphs
+     stay legible without changing the button's own padding/footprint. */
+  #btn-maintenance, #btn-settings {
+    font-size: 17px;
+  }
+
   .btn-flat:hover {
     background: var(--surface3);
     color: var(--text);
