@@ -939,6 +939,12 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # incompatible with the current version, ruby 2.1.10". 1.15.0's
         # own declared floor is unrestricted ('>= 0'), a safe fallback.
         lines.append(f'gem "multi_json", "{_era_gem_version("multi_json", lang_ver, "1.15.0")}"')
+        # actionpack pulls in rack-cache transitively, also with no
+        # useful upper bound -- confirmed via a real failing build right
+        # after fixing multi_json (Ruby 2.1 + Rails 3 + argon2):
+        # "rack-cache-1.17.0 requires ruby version >= 2.7.7, which is
+        # incompatible with the current version, ruby 2.1.10".
+        lines.append(f'gem "rack-cache", "{_era_gem_version("rack-cache", lang_ver, "1.2")}"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
