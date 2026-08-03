@@ -166,6 +166,36 @@ def _bundler_version(lang_ver: str) -> str:
     return "1.17.3"
 
 
+def _rake_version(lang_ver: str) -> str:
+    """Pick the newest Rake release whose own declared ruby_version floor
+    is satisfied by lang_ver -- same live-verified resolution as
+    _bundler_version() above, for the same structural reason: rake keeps
+    raising its own Ruby floor release over release (>=1.9.3 for a long
+    stretch, then >=2.0.0, then >=2.2, now >=2.3), so a single hardcoded
+    pin would eventually go stale.
+
+    Only needed for argon2: its own dependency ffi-compiler declares
+    `s.add_dependency 'rake'` completely UNCONSTRAINED (confirmed via its
+    real gemspec) -- left to float, Bundler resolves whatever's newest
+    overall, breaking on any older Ruby bucket once that newest release's
+    own floor outpaces it. Confirmed via a real failing build (Ruby 2.1 +
+    Rails 3 + argon2: "rake-13.4.2 requires ruby version >= 2.3, which is
+    incompatible with the current version, ruby 2.1.10").
+    """
+    lv = _lang_ver_tuple(lang_ver)
+    try:
+        versions = _fetch_gem_versions("rake")
+    except RubyGemsLookupError:
+        return "12.3.3"
+
+    floors = _GEM_RUBY_FLOOR.get("rake", {})
+    for v in sorted(versions, key=_ver_key, reverse=True):
+        floor = _ruby_floor_tuple(floors.get(v))
+        if lv >= floor:
+            return v
+    return "12.3.3"
+
+
 # ── Framework metadata ───────────────────────────────────────────────────────
 
 _FW_PACKAGE: dict = {
@@ -885,6 +915,12 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # file -- fiddle). Only added here since it's already bundled by
         # default on every older Ruby.
         lines.append('gem "fiddle"')
+    if lib_name == "argon2":
+        # ffi-compiler (argon2's own native-extension build dependency)
+        # depends on 'rake' completely unconstrained -- see
+        # _rake_version()'s own docstring for the real failing build this
+        # was confirmed against.
+        lines.append(f'gem "rake", "{_rake_version(lang_ver)}"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
@@ -1164,6 +1200,18 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         # roqs_native_copy must run AFTER liboqs.so has landed in
         # /usr/local/lib/ above (it copies FROM there), not before.
         + f"{roqs_native_copy}"
+        # The final stage's own base image only ships whatever Bundler
+        # (if any) comes bundled as a default gem with that Ruby version
+        # -- never necessarily the SPECIFIC version pinned above and
+        # used to install (gem install only happened in the builder
+        # stage, and BUNDLE_PATH's own /usr/local/bundle copy below
+        # holds installed PROJECT gems, not the bundler executable
+        # itself). The CMD below runs `bundle _{bundler_ver}_ exec`,
+        # which needs that exact version locally installed to resolve --
+        # confirmed via a real crash (Bundler::GemNotFound-style "Could
+        # not find command '_1.17.3_'") on Ruby 2.2, where bundler isn't
+        # a default gem at all. Cheap (pure-Ruby gem, no compilation).
+        + f"{bundler_install}"
         + "WORKDIR /app\n"
         f"COPY --from=builder /usr/local/bundle /usr/local/bundle\n"
         f"COPY --from=builder /app/Gemfile ./\n"
