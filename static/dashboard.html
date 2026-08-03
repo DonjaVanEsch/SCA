@@ -2576,6 +2576,7 @@
     <button class="btn btn-ghost btn-sm host-scope-feature" id="btn-host-badge"
       title="Built/tested status below is scoped to this Docker host — click to change">🐳 <span
         id="host-badge-label">local</span></button>
+    <button class="btn btn-ghost btn-flat" id="btn-maintenance" title="Maintenance">⚒&#xFE0E;</button>
     <button class="btn btn-ghost btn-flat" id="btn-settings" title="Settings">⚙&#xFE0E;</button>
   </div>
 </header>
@@ -3201,7 +3202,6 @@
       <nav class="settings-nav">
         <button class="settings-nav-item active" data-settings-tab="home">🏠 General</button>
         <button class="settings-nav-item" data-settings-tab="appearance">🎨 Appearance</button>
-        <button class="settings-nav-item" data-settings-tab="maintenance">🧹 Maintenance</button>
         <button class="settings-nav-item" data-settings-tab="registry">📝 Registry</button>
         <button class="settings-nav-item" data-settings-tab="accessibility">♿ Accessibility</button>
       </nav>
@@ -3273,72 +3273,6 @@
           </p>
         </section>
 
-        <section class="settings-section" data-settings-section="maintenance">
-          <label class="settings-label">Maintenance actions</label>
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
-            <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
-              DB</button>
-          </div>
-          <p class="settings-hint">
-            Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
-            registry metadata and re-syncs from disk (only needed after a registry change).
-          </p>
-
-          <div class="settings-action-group-label" style="margin-top:16px">Cleanup</div>
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-normal">Normal cleanup</button>
-            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-full">Full cleanup <span
-                style="font-size:10px;color:var(--muted2)">(+ volumes)</span></button>
-            <button class="btn btn-ghost btn-sm" id="mnu-cleanup-dry">Dry run (preview)</button>
-          </div>
-          <p class="settings-hint">
-            Removes unused Docker containers, images, and (full) volumes. Never touches
-            build cache, including the shared package-manager caches below -- see
-            "Build cache" for that.
-          </p>
-
-          <div class="settings-action-group-label" style="margin-top:16px">Reclaim disk space</div>
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="mnu-layercache-prune">Reclaim layer cache</button>
-            <button class="btn btn-ghost btn-sm" id="mnu-layercache-dry">Dry run (preview)</button>
-          </div>
-          <p class="settings-hint">
-            Safe to use whenever disk space is tight. Removes only ordinary build-layer
-            cache -- every COPY/RUN instruction across every combo ever built keeps its
-            own cached layer, and this is usually by far the largest share of disk
-            usage. Never touches the shared Maven/npm/pip/Composer/NuGet caches below,
-            so it carries no registry rate-limiting risk.
-          </p>
-
-          <div class="settings-action-group-label" style="margin-top:16px">Build cache <span
-              class="no-cache-warn" style="font-size:11px">⚠</span></div>
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="mnu-buildcache-prune">Prune build cache</button>
-            <button class="btn btn-ghost btn-sm" id="mnu-buildcache-dry">Dry run (preview)</button>
-          </div>
-          <p class="settings-hint settings-hint-warn">
-            Removes Docker's ENTIRE build cache, including the shared Maven/npm/pip/
-            Composer/NuGet caches every build reuses. This brings back registry
-            rate-limiting risk (e.g. Maven Central 429s) on the next big batch -- only
-            use this for genuine disk pressure or a suspected corrupt cache entry, not
-            as routine maintenance. For ordinary disk cleanup, use "Reclaim disk space"
-            above instead.
-          </p>
-
-          <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
-          <div class="settings-action-list">
-            <button class="btn btn-ghost btn-sm" id="mnu-orphans-remove">Remove orphaned images</button>
-            <button class="btn btn-ghost btn-sm" id="mnu-orphans-dry">Dry run (preview)</button>
-          </div>
-          <p class="settings-hint">
-            <code>pqc-*</code> tagged images built for a combo that no longer exists in the
-            current <code>images/</code> tree (e.g. after a registry fix narrowed a version
-            range, or a language was dropped) — Docker's own cleanup has no way to know this,
-            since it only tracks container references.
-          </p>
-        </section>
-
         <section class="settings-section" data-settings-section="registry">
           <label class="settings-label">Registry</label>
           <div class="settings-action-list">
@@ -3404,6 +3338,82 @@
       <div style="flex:1"></div>
       <button class="btn btn-ghost btn-sm" id="btn-settings-cancel">Cancel</button>
       <button class="btn btn-primary btn-sm" id="btn-settings-save">Save</button>
+    </div>
+  </div>
+
+  <!-- ── Maintenance page ─────────────────────────────────────────────── -->
+  <div id="tab-maintenance" class="tab-panel settings-page">
+    <div class="review-panel-header">
+      <h3>Maintenance</h3>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-close-maintenance-panel">✕</button>
+    </div>
+    <div class="review-body settings-body">
+      <section class="settings-section active">
+        <label class="settings-label">Maintenance actions</label>
+        <div class="settings-action-list">
+          <button class="btn btn-ghost btn-sm" id="btn-sync" title="Sync source list from disk">⟳ Sync</button>
+          <button class="btn btn-ghost btn-sm" id="btn-init" title="Reload registry + sync sources from disk">⚙ Init
+            DB</button>
+        </div>
+        <p class="settings-hint">
+          Sync rescans <code>images/</code> for new or removed source contexts. Init DB reloads
+          registry metadata and re-syncs from disk (only needed after a registry change).
+        </p>
+
+        <div class="settings-action-group-label" style="margin-top:16px">Cleanup</div>
+        <div class="settings-action-list">
+          <button class="btn btn-ghost btn-sm" id="mnu-cleanup-normal">Normal cleanup</button>
+          <button class="btn btn-ghost btn-sm" id="mnu-cleanup-full">Full cleanup <span
+              style="font-size:10px;color:var(--muted2)">(+ volumes)</span></button>
+          <button class="btn btn-ghost btn-sm" id="mnu-cleanup-dry">Dry run (preview)</button>
+        </div>
+        <p class="settings-hint">
+          Removes unused Docker containers, images, and (full) volumes. Never touches
+          build cache, including the shared package-manager caches below -- see
+          "Build cache" for that.
+        </p>
+
+        <div class="settings-action-group-label" style="margin-top:16px">Reclaim disk space</div>
+        <div class="settings-action-list">
+          <button class="btn btn-ghost btn-sm" id="mnu-layercache-prune">Reclaim layer cache</button>
+          <button class="btn btn-ghost btn-sm" id="mnu-layercache-dry">Dry run (preview)</button>
+        </div>
+        <p class="settings-hint">
+          Safe to use whenever disk space is tight. Removes only ordinary build-layer
+          cache -- every COPY/RUN instruction across every combo ever built keeps its
+          own cached layer, and this is usually by far the largest share of disk
+          usage. Never touches the shared Maven/npm/pip/Composer/NuGet caches below,
+          so it carries no registry rate-limiting risk.
+        </p>
+
+        <div class="settings-action-group-label" style="margin-top:16px">Build cache <span
+            class="no-cache-warn" style="font-size:11px">⚠</span></div>
+        <div class="settings-action-list">
+          <button class="btn btn-ghost btn-sm" id="mnu-buildcache-prune">Prune build cache</button>
+          <button class="btn btn-ghost btn-sm" id="mnu-buildcache-dry">Dry run (preview)</button>
+        </div>
+        <p class="settings-hint settings-hint-warn">
+          Removes Docker's ENTIRE build cache, including the shared Maven/npm/pip/
+          Composer/NuGet caches every build reuses. This brings back registry
+          rate-limiting risk (e.g. Maven Central 429s) on the next big batch -- only
+          use this for genuine disk pressure or a suspected corrupt cache entry, not
+          as routine maintenance. For ordinary disk cleanup, use "Reclaim disk space"
+          above instead.
+        </p>
+
+        <div class="settings-action-group-label" style="margin-top:16px">Orphaned images</div>
+        <div class="settings-action-list">
+          <button class="btn btn-ghost btn-sm" id="mnu-orphans-remove">Remove orphaned images</button>
+          <button class="btn btn-ghost btn-sm" id="mnu-orphans-dry">Dry run (preview)</button>
+        </div>
+        <p class="settings-hint">
+          <code>pqc-*</code> tagged images built for a combo that no longer exists in the
+          current <code>images/</code> tree (e.g. after a registry fix narrowed a version
+          range, or a language was dropped) — Docker's own cleanup has no way to know this,
+          since it only tracks container references.
+        </p>
+      </section>
     </div>
   </div>
 
@@ -5865,6 +5875,18 @@
     }
   }
 
+  // ── Maintenance panel ────────────────────────────────────────────────────
+  let _maintenanceReturnTab = 'images';
+
+  function openMaintenancePanel() {
+    if (state.currentTab !== 'maintenance') _maintenanceReturnTab = state.currentTab;
+    switchTab('maintenance');
+  }
+
+  function closeMaintenancePanel() {
+    switchTab(_maintenanceReturnTab || 'images');
+  }
+
   async function testDockerConnection() {
     const resultEl = document.getElementById('settings-test-result');
     const outputEl = document.getElementById('settings-test-output');
@@ -7665,6 +7687,8 @@
   document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
   document.getElementById('btn-host-badge').addEventListener('click', () => openSettingsPanel('home'));
   document.getElementById('btn-close-settings-panel').addEventListener('click', closeSettingsPanel);
+  document.getElementById('btn-maintenance').addEventListener('click', openMaintenancePanel);
+  document.getElementById('btn-close-maintenance-panel').addEventListener('click', closeMaintenancePanel);
   document.getElementById('btn-settings-cancel').addEventListener('click', closeSettingsPanel);
   document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
   document.getElementById('btn-test-docker').addEventListener('click', testDockerConnection);
