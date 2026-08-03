@@ -918,23 +918,6 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
                     lib_name: str, lib_resolved: str, needs_rackup: bool) -> str:
     apt_sources, apt_flag, allow_unauth = _debian_archive_apt(ruby_ver)
     bundler_ver = _bundler_version(ruby_ver)
-    if (fw_name, fw_major) == ("Hanami", "0"):
-        # Hanami 0.9.2's own gemspec pins 'bundler, ~> 1.13' -- a hard
-        # constraint Bundler itself enforces against whatever Bundler
-        # version is actually running the install (confirmed via a real
-        # failing build: "Because hanami ... depends on bundler ~> 1.13
-        # ... the current Bundler version (2.4.22) does not satisfy
-        # ... cannot be used"). _bundler_version()'s own newest-
-        # compatible-with-ruby logic picks a modern Bundler on anything
-        # Ruby 2.7+, which is always too new for this framework major
-        # specifically. 1.17.3 (already this module's own established
-        # old-Bundler fallback) satisfies '~> 1.13' and is confirmed
-        # live to still `bundle install` successfully through Ruby 3.1
-        # (Pathname#untaint, which old Bundler's own source calls,
-        # is deprecated-but-present there; REMOVED at 3.2, confirmed
-        # live via String#respond_to?(:untaint) -- Hanami-0's registry
-        # ceiling is narrowed to 3.1 accordingly).
-        bundler_ver = "1.17.3"
 
     # Cache-key diversifier (same reasoning/precedent as PHP's and Node's
     # own PQC_COMBO_ID/cache_bust ARGs): this Dockerfile template varies
@@ -1052,10 +1035,19 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         cmd = 'CMD ["ruby", "app.rb"]\n'
         app_copy = "COPY app.rb versions.rb ./\n"
     elif fw_name == "Hanami" and fw_major in ("2", "3"):
-        cmd = f'CMD ["bundle", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
+        cmd = f'CMD ["bundle", "_{bundler_ver}_", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
         app_copy = "COPY config.ru versions.rb ./\nCOPY config ./config\n"
     else:
-        cmd = f'CMD ["bundle", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
+        # Pinning the exact same Bundler version used at build time
+        # (not just bare `bundle exec`) matters whenever the framework
+        # itself declares its own `bundler` version constraint (e.g.
+        # Hanami 0.9.2's 'bundler, ~> 1.13') -- confirmed via a real
+        # crash (Bundler::VersionConflict) when the container's own
+        # default/system `bundle` (whatever ships with the base Ruby
+        # image) didn't match Gemfile.lock's recorded BUNDLED WITH
+        # version. Harmless to pin unconditionally: every other combo
+        # already used this exact version to install in the first place.
+        cmd = f'CMD ["bundle", "_{bundler_ver}_", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
         app_copy = "COPY config.ru versions.rb ./\n"
 
     final_apt = []
