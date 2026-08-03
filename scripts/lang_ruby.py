@@ -131,6 +131,26 @@ def _lang_ver_tuple(lang_ver: str) -> tuple:
     return tuple(int(x) for x in lang_ver.split("."))
 
 
+def _ver_ge(a: tuple, b: tuple) -> bool:
+    """a >= b for two version tuples that may have different lengths
+    (e.g. a Ruby version like "2.5" -> (2, 5) vs a RubyGems floor like
+    ">= 2.5.0" -> (2, 5, 0)). Plain Python tuple comparison treats a
+    SHORTER tuple as always less than a longer one, even when every
+    shared component is equal -- (2, 5) >= (2, 5, 0) is False in plain
+    Python -- which silently made _era_gem_version() (and everything
+    built on it: _bundler_version_1x, _mail_version, ...) resolve to an
+    unnecessarily OLDER gem release than needed whenever a target Ruby
+    version exactly matched a floor's major.minor with a trailing patch
+    component. Confirmed via a real failing test: nokogiri needed to
+    resolve to >=1.11 (for Nokogiri::HTML4, which loofah depends on) at
+    Ruby 2.5, but kept resolving to 1.10.10 instead -- (2, 5) >=
+    (2, 5, 0) evaluating to False was the reason. Pads both tuples to
+    equal length with trailing zeros before comparing.
+    """
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) >= b + (0,) * (n - len(b))
+
+
 def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
     """Pick the newest {gem_name} release whose own declared ruby_version
     floor is satisfied by lang_ver, live-verified against rubygems.org's
@@ -154,7 +174,7 @@ def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
     floors = _GEM_RUBY_FLOOR.get(gem_name, {})
     for v in sorted(versions, key=_ver_key, reverse=True):
         floor = _ruby_floor_tuple(floors.get(v))
-        if lv >= floor:
+        if _ver_ge(lv, floor):
             return v
     return fallback
 
@@ -194,7 +214,7 @@ def _mail_version(fw_major: str, lang_ver: str) -> str:
     lv = _lang_ver_tuple(lang_ver)
     for v in sorted(candidates, key=_ver_key, reverse=True):
         floor = _ruby_floor_tuple(floors.get(v))
-        if lv >= floor:
+        if _ver_ge(lv, floor):
             return v
     return fallback
 
@@ -243,7 +263,7 @@ def _bundler_version_1x(lang_ver: str) -> str:
     floors = _GEM_RUBY_FLOOR.get("bundler", {})
     for v in sorted(versions, key=_ver_key, reverse=True):
         floor = _ruby_floor_tuple(floors.get(v))
-        if lv >= floor:
+        if _ver_ge(lv, floor):
             return v
     return "1.17.3"
 
