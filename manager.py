@@ -659,6 +659,18 @@ def _do_build(entries, no_cache=False, skip_existing=False, log_fn=print,
                     "every other combo in the group would likely hit the same "
                     "issue). Fix it, then retry.\n"
                 )
+                # Without this, the caller (dashboard.py) has no way to tell
+                # this early return apart from a normal, fully-completed
+                # build -- a chained Test job queued right after Build would
+                # still run over the WHOLE original entry list, reporting
+                # "image not found" for everything past the warm-up
+                # representatives instead of never starting at all.
+                # Reusing stop_event (rather than inventing new return-value
+                # plumbing) lets the existing "run was interrupted" handling
+                # in dashboard.py -- which already halts any chained
+                # pending_actions -- cover this case too.
+                if stop_event is not None:
+                    stop_event.set()
                 return warmup_results
             log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
 
@@ -1447,6 +1459,12 @@ def _do_client_build(entries, no_cache=False, skip_existing=False, log_fn=print,
                     "the group would likely hit the same issue). Fix it, then "
                     "retry.\n"
                 )
+                # See the matching comment in _do_build(): without this, a
+                # chained Test job queued right after Build can't tell this
+                # early abort apart from a normal completed run and ends up
+                # testing the whole original list anyway.
+                if stop_event is not None:
+                    stop_event.set()
                 return warmup_results
             log_fn("\nCache warm-up complete -- continuing with the full batch ...\n")
 

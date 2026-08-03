@@ -6447,13 +6447,13 @@
         if (onDone) { onDone(false, _wasCancelled); } else { loadImages(state.page); loadStats(); }
         return;
       }
-      if (line === '[CANCELLED]') {
+      if (line.startsWith('[CANCELLED]')) {
         _wasCancelled = true;
         document.getElementById('log-status').textContent = 'Interrupted…';
         const div = document.createElement('div');
         div.style.color = 'var(--warning)';
         div.style.fontWeight = '600';
-        div.textContent = '⚠ ' + line.slice(1, -1).trim() + ' — results saved up to this point.';
+        div.textContent = '⚠ ' + line.replace(/^\[CANCELLED\]\s*/, '') + ' — results saved up to this point.';
         body.appendChild(div);
         body.scrollTop = body.scrollHeight;
         return;

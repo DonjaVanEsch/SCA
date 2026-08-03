@@ -760,7 +760,7 @@ def action():
             log(f"ERROR: {exc}")
         finally:
             if stop_event.is_set():
-                log("[CANCELLED] Run was interrupted by the user.")
+                log("[CANCELLED] Run was stopped early -- see the log above for why.")
             if run_id is not None:
                 status = "interrupted" if stop_event.is_set() else "completed"
                 try:
@@ -953,7 +953,7 @@ def client_action():
             log(f"ERROR: {exc}")
         finally:
             if stop_event.is_set():
-                log("[CANCELLED] Run was interrupted by the user.")
+                log("[CANCELLED] Run was stopped early -- see the log above for why.")
             if run_id is not None:
                 status = "interrupted" if stop_event.is_set() else "completed"
                 try:
