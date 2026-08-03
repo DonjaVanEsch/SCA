@@ -1026,6 +1026,18 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # requires ruby version >= 2.6.0, which is incompatible with the
         # current version, ruby 2.1.10".
         lines.append(f'gem "thor", "{_era_gem_version("thor", lang_ver, "0.19.4")}"')
+        # railties' own test-helper integration pulls in minitest
+        # transitively, also with no useful upper bound -- confirmed via
+        # a real failing build (Ruby 2.4 + Rails 4 + bcrypt, right after
+        # fixing Rails 4's own bundler ceiling -- see
+        # _bundler_version_1x()'s docstring): "minitest-5.27.0 requires
+        # ruby version >= 3.1, which is incompatible with the current
+        # version, ruby 2.4.10". This is the exact same gem/floor pair
+        # noted back when diagnosing argon2's Rails cross-dependency
+        # skip (_ffi_rails_needs_skip()) -- it turns out to be a
+        # regular unconstrained-dependency issue like the others above,
+        # not specific to that combo.
+        lines.append(f'gem "minitest", "{_era_gem_version("minitest", lang_ver, "5.11.3")}"')
     if (fw_name, fw_major) == ("Rails", "3"):
         # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
         # unconditionally `require`s 'active_support/core_ext/rexml',
