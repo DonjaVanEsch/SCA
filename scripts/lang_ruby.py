@@ -1010,9 +1010,16 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
     # -- added unconditionally (every framework here needs SOME Rack
     # handler: Sinatra's own Base#run! picks Puma/Falcon/WEBrick in that
     # order, everyone else boots via `rackup`'s bundled/separate
-    # Rack::Handler::WEBrick) and harmless on Ruby <3.0 where it would
-    # otherwise already be in stdlib.
-    lines.append('gem "webrick"')
+    # Rack::Handler::WEBrick). An UNCONSTRAINED `gem "webrick"` (no
+    # version) still tells Bundler to resolve some real rubygems.org
+    # release rather than just reusing Ruby's own stdlib-bundled copy on
+    # Ruby <3.0 -- webrick's own later releases raised their floor too
+    # (>=2.3.0, then >=2.4.0), so this hit the exact same class of issue
+    # as every other unconstrained dependency in this module once enough
+    # OTHER Gemfile pins changed how Bundler's resolver reached it --
+    # confirmed via a real failing build (Ruby 2.1 + Rails 3 + jwt,
+    # after fixing thor: "webrick-1.9.2 requires ruby version >= 2.4.0").
+    lines.append(f'gem "webrick", "{_era_gem_version("webrick", lang_ver, "1.3.1")}"')
     if needs_rackup:
         lines.append('gem "rackup"')
     lines.append(f'gem "{_LIB_GEM[lib_name]}", "{lib_resolved}"')
