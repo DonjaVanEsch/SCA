@@ -1005,6 +1005,21 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # requires ruby version >= 2.6.0, which is incompatible with the
         # current version, ruby 2.1.10".
         lines.append(f'gem "thor", "{_era_gem_version("thor", lang_ver, "0.19.4")}"')
+    if (fw_name, fw_major) == ("Rails", "3"):
+        # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
+        # unconditionally `require`s 'active_support/core_ext/rexml',
+        # which in turn requires 'rexml/rexml' -- confirmed via a real
+        # crash on Ruby 3.1 (LoadError: cannot load such file --
+        # rexml/rexml). rexml was removed from Ruby's own default gems
+        # at 3.0 (demoted to a "bundled gem": still installed, but
+        # invisible to Bundler.require unless declared in the Gemfile,
+        # same class of change as webrick/ostruct/fiddle elsewhere in
+        # this module). Confirmed this is a Rails-3-only issue: the
+        # newer activesupport releases (4.2/5.2/6.1/7.2) only reference
+        # rexml lazily inside xml_mini/rexml.rb, never at boot.
+        # rexml's own oldest published release (3.1.7.3) has no Ruby
+        # floor at all, so the era-resolved version is always safe here.
+        lines.append(f'gem "rexml", "{_era_gem_version("rexml", lang_ver, "3.1.7.3")}"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
