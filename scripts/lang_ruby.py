@@ -131,47 +131,64 @@ def _lang_ver_tuple(lang_ver: str) -> tuple:
     return tuple(int(x) for x in lang_ver.split("."))
 
 
-def _bundler_version(lang_ver: str) -> str:
-    """Pick the newest Bundler release whose own declared ruby_version
+def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
+    """Pick the newest {gem_name} release whose own declared ruby_version
     floor is satisfied by lang_ver, live-verified against rubygems.org's
     own per-version metadata (the same "ruby_version" field this module
     already reads for every other gem) rather than a hardcoded guess.
 
-    Real, structural reason this matters: unlike Node/npm or newer Ruby,
-    Bundler is NOT preinstalled at all in the old ruby:1.9/2.0/2.1-slim
-    Docker images (Bundler only became a RubyGems "default gem" bundled
-    with the interpreter itself starting around Ruby 2.6) -- every
-    combo on an old Ruby bucket needs an explicit `gem install bundler`
-    of a COMPATIBLE Bundler version before `bundle install` can run at
-    all. Bundler 2.x itself keeps raising its own Ruby floor release over
-    release (e.g. required >=2.3 for a while, then >=2.6), so even a
-    "just pin some old Bundler 1.x" fallback would be wrong for the
-    2.3-2.5 bucket range -- hence resolving this the same live-verified
-    way as every other gem in this module, not guessing a cutoff table.
+    Shared by every "this transitive dependency floats to whatever's
+    newest overall and eventually outpaces an older Ruby bucket" case in
+    this module (Bundler itself, Rake via argon2's ffi-compiler,
+    concurrent-ruby/multi_json via Rails' activesupport/i18n, ...) --
+    each such gem keeps raising its own Ruby floor release over release,
+    so a single hardcoded pin would eventually go stale; this always
+    resolves the newest one that's ACTUALLY compatible with lang_ver.
     """
     lv = _lang_ver_tuple(lang_ver)
     try:
-        versions = _fetch_gem_versions("bundler")
+        versions = _fetch_gem_versions(gem_name)
     except RubyGemsLookupError:
-        # Network problem -- fall back to the last Bundler 1.x release,
-        # which is known to work all the way back to Ruby 1.8.7 and is
-        # always a safe (if not maximally current) choice.
-        return "1.17.3"
+        return fallback
 
-    floors = _GEM_RUBY_FLOOR.get("bundler", {})
+    floors = _GEM_RUBY_FLOOR.get(gem_name, {})
     for v in sorted(versions, key=_ver_key, reverse=True):
         floor = _ruby_floor_tuple(floors.get(v))
         if lv >= floor:
             return v
-    return "1.17.3"
+    return fallback
+
+
+def _bundler_version(lang_ver: str) -> str:
+    """Bundler is NOT preinstalled at all in the old ruby:1.9/2.0/2.1-slim
+    Docker images (Bundler only became a RubyGems "default gem" bundled
+    with the interpreter itself starting around Ruby 2.6) -- every combo
+    on an old Ruby bucket needs an explicit `gem install bundler` of a
+    COMPATIBLE Bundler version before `bundle install` can run at all.
+    Bundler 2.x itself keeps raising its own Ruby floor release over
+    release (e.g. required >=2.3 for a while, then >=2.6), so even a
+    "just pin some old Bundler 1.x" fallback would be wrong for the
+    2.3-2.5 bucket range -- hence _era_gem_version(), not a hardcoded
+    cutoff table. 1.17.3 is known to work all the way back to Ruby 1.8.7,
+    a safe (if not maximally current) fallback.
+    """
+    return _era_gem_version("bundler", lang_ver, "1.17.3")
+
+
+def _rake_version(lang_ver: str) -> str:
+    """Only needed for argon2: its own dependency ffi-compiler declares
+    `s.add_dependency 'rake'` completely UNCONSTRAINED (confirmed via its
+    real gemspec) -- left to float, Bundler resolves whatever's newest
+    overall, breaking on any older Ruby bucket once that newest release's
+    own floor outpaces it. Confirmed via a real failing build (Ruby 2.1 +
+    Rails 3 + argon2: "rake-13.4.2 requires ruby version >= 2.3, which is
+    incompatible with the current version, ruby 2.1.10").
+    """
+    return _era_gem_version("rake", lang_ver, "12.3.3")
 
 
 def _concurrent_ruby_version(lang_ver: str) -> str:
-    """Pick the newest concurrent-ruby release whose own declared
-    ruby_version floor is satisfied by lang_ver -- same live-verified
-    resolution as _bundler_version()/_rake_version() above.
-
-    Rails' own activesupport pulls in concurrent-ruby as a transitive
+    """Rails' own activesupport pulls in concurrent-ruby as a transitive
     dependency (thread-safety primitives) with no useful upper bound of
     its own, and concurrent-ruby's later 1.2+/1.3+ releases raised their
     floor to >=2.3 -- confirmed via a real failing build (Ruby 2.1 +
@@ -181,48 +198,7 @@ def _concurrent_ruby_version(lang_ver: str) -> str:
     whenever Rails is used, any major -- harmless on newer Ruby buckets
     where the natural unconstrained pick would already land here.
     """
-    lv = _lang_ver_tuple(lang_ver)
-    try:
-        versions = _fetch_gem_versions("concurrent-ruby")
-    except RubyGemsLookupError:
-        return "1.1.10"
-
-    floors = _GEM_RUBY_FLOOR.get("concurrent-ruby", {})
-    for v in sorted(versions, key=_ver_key, reverse=True):
-        floor = _ruby_floor_tuple(floors.get(v))
-        if lv >= floor:
-            return v
-    return "1.1.10"
-
-
-def _rake_version(lang_ver: str) -> str:
-    """Pick the newest Rake release whose own declared ruby_version floor
-    is satisfied by lang_ver -- same live-verified resolution as
-    _bundler_version() above, for the same structural reason: rake keeps
-    raising its own Ruby floor release over release (>=1.9.3 for a long
-    stretch, then >=2.0.0, then >=2.2, now >=2.3), so a single hardcoded
-    pin would eventually go stale.
-
-    Only needed for argon2: its own dependency ffi-compiler declares
-    `s.add_dependency 'rake'` completely UNCONSTRAINED (confirmed via its
-    real gemspec) -- left to float, Bundler resolves whatever's newest
-    overall, breaking on any older Ruby bucket once that newest release's
-    own floor outpaces it. Confirmed via a real failing build (Ruby 2.1 +
-    Rails 3 + argon2: "rake-13.4.2 requires ruby version >= 2.3, which is
-    incompatible with the current version, ruby 2.1.10").
-    """
-    lv = _lang_ver_tuple(lang_ver)
-    try:
-        versions = _fetch_gem_versions("rake")
-    except RubyGemsLookupError:
-        return "12.3.3"
-
-    floors = _GEM_RUBY_FLOOR.get("rake", {})
-    for v in sorted(versions, key=_ver_key, reverse=True):
-        floor = _ruby_floor_tuple(floors.get(v))
-        if lv >= floor:
-            return v
-    return "12.3.3"
+    return _era_gem_version("concurrent-ruby", lang_ver, "1.1.10")
 
 
 # ── Framework metadata ───────────────────────────────────────────────────────
@@ -956,6 +932,13 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # docstring for the real failing build this was confirmed
         # against.
         lines.append(f'gem "concurrent-ruby", "{_concurrent_ruby_version(lang_ver)}"')
+        # i18n pulls in multi_json transitively, also with no useful
+        # upper bound -- confirmed via a real failing build right after
+        # fixing concurrent-ruby (Ruby 2.1 + Rails 3 + argon2):
+        # "multi_json-1.21.1 requires ruby version >= 3.2, which is
+        # incompatible with the current version, ruby 2.1.10". 1.15.0's
+        # own declared floor is unrestricted ('>= 0'), a safe fallback.
+        lines.append(f'gem "multi_json", "{_era_gem_version("multi_json", lang_ver, "1.15.0")}"')
     # webrick was removed from Ruby's own stdlib bundling at 3.0 (still
     # perfectly installable as a normal gem on every tracked Ruby though)
     # -- added unconditionally (every framework here needs SOME Rack
