@@ -1149,8 +1149,15 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # activesupport's own Rails.logger dependency, also
         # unconstrained -- confirmed via a real failing build right
         # after fixing racc: "logger-1.7.0 requires ruby version
-        # >= 2.5.0".
-        lines.append(f'gem "logger", "{_era_gem_version("logger", lang_ver, "1.2.7.1")}"')
+        # >= 2.5.0". Its own oldest releases (1.2.7.1/1.2.8.1/1.3.0)
+        # declare an unrestricted floor ('>=0'), but their code ALSO
+        # uses '&.' (Ruby 2.3+ only) -- confirmed via a real SyntaxError
+        # on Ruby 2.2, the same class of declared-floor lie as timeout
+        # elsewhere in this module. Only added once Ruby actually has
+        # '&.' -- below that, Ruby's own bundled/stdlib copy is used
+        # silently instead.
+        if _lang_ver_tuple(lang_ver) >= (2, 3):
+            lines.append(f'gem "logger", "{_era_gem_version("logger", lang_ver, "1.2.7.1")}"')
         # actionmailer's own mail dependency -- see _mail_version()'s
         # own docstring for why this needs to be major-aware (major 3's
         # 'mail ~> 2.5.4' is much tighter than every other major's
