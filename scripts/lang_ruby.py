@@ -171,7 +171,7 @@ def _ver_ge(a: tuple, b: tuple) -> bool:
     return a >= b
 
 
-def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
+def _era_gem_version(gem_name: str, lang_ver: str, fallback: str, below: str | None = None) -> str:
     """Pick the newest {gem_name} release whose own declared ruby_version
     floor is satisfied by lang_ver, live-verified against rubygems.org's
     own per-version metadata (the same "ruby_version" field this module
@@ -184,12 +184,23 @@ def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
     each such gem keeps raising its own Ruby floor release over release,
     so a single hardcoded pin would eventually go stale; this always
     resolves the newest one that's ACTUALLY compatible with lang_ver.
+
+    `below` caps candidates to versions strictly older than it, for the
+    handful of gems where the calling framework's OWN gemspec caps a
+    dependency below some major line (e.g. actionpack's own 'rack ~> 2.0'
+    means the whole 2.x line, NOT rack 3.x) -- confirmed via a real
+    failing build where plain (uncapped) era resolution picked rack
+    3.2.6 for Ruby 2.5, unsatisfiable against actionpack 5.2.8.1's own
+    "rack (~> 2.0, >= 2.0.8)".
     """
     lv = _lang_ver_tuple(lang_ver)
     try:
         versions = _fetch_gem_versions(gem_name)
     except RubyGemsLookupError:
         return fallback
+
+    if below is not None:
+        versions = [v for v in versions if _ver_key(v) < _ver_key(below)]
 
     floors = _GEM_RUBY_FLOOR.get(gem_name, {})
     for v in sorted(versions, key=_ver_key, reverse=True):
@@ -1216,7 +1227,7 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # failing build (Ruby 2.2 + Rails 5 + bcrypt, right after
         # fixing rack-test): "rack-2.2.23 requires ruby version
         # >= 2.3.0".
-        lines.append(f'gem "rack", "{_era_gem_version("rack", lang_ver, "2.0.8")}"')
+        lines.append(f'gem "rack", "{_era_gem_version("rack", lang_ver, "2.0.8", below="3.0.0")}"')
         # rails itself pulls in actioncable transitively, whose own
         # websocket support depends on nio4r -- unconstrained, keeps
         # raising its own Ruby floor -- confirmed via a real failing
