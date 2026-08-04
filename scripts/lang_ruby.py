@@ -1343,6 +1343,14 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # Ruby version whose OWN bundled bigdecimal still supports it.
         if _lang_ver_tuple(lang_ver) >= (3, 4):
             lines.append(f'gem "bigdecimal", "{_era_gem_version("bigdecimal", lang_ver, "3.1.9")}"')
+        # benchmark was removed from Ruby's own default gems at 4.0.0
+        # (same class of change as bigdecimal just above) -- confirmed
+        # via a real crash (LoadError: cannot load such file --
+        # benchmark, with Ruby's own warning: "benchmark used to be
+        # loaded from the standard library, but is not part of the
+        # default gems since Ruby 4.0.0") on Rails major 6 at Ruby 4.0.
+        if _lang_ver_tuple(lang_ver) >= (4, 0):
+            lines.append(f'gem "benchmark", "{_era_gem_version("benchmark", lang_ver, "0.5.0")}"')
     if (fw_name, fw_major) == ("Rails", "3"):
         # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
         # unconditionally `require`s 'active_support/core_ext/rexml',
