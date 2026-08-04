@@ -1658,8 +1658,18 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     # this recompiles+copies it ourselves the same way, only for those
     # two buckets (harmless no-op risk avoided by only running when
     # actually needed).
+    # The gem's own install path isn't always a flat
+    # /usr/local/bundle/gems/<name>-<ver>/ -- some Bundler/RubyGems
+    # combinations nest it under an extra ruby/<api_version>/ level
+    # (e.g. /usr/local/bundle/ruby/2.3.0/gems/argon2-0.1.4/), confirmed
+    # via a real crash ("can't cd to
+    # /usr/local/bundle/gems/argon2-0.1.4/ext/argon2_wrap") on Ruby 2.3
+    # + Bundler 2.3.27 specifically, where a real `find` showed the gem
+    # actually installed at .../ruby/2.3.0/gems/argon2-0.1.4/... Using a
+    # `find`-based lookup instead of a hardcoded path makes this
+    # resilient to either layout.
     argon2_relink = (
-        f"RUN cd /usr/local/bundle/gems/argon2-{lib_resolved}/ext/argon2_wrap "
+        f'RUN cd "$(find /usr/local/bundle -type d -path \'*/argon2-{lib_resolved}/ext/argon2_wrap\')" '
         "&& make && cp libargon2_wrap.so ../../lib/\n"
         if lib_name == "argon2" and lib_resolved.split(".")[0] in ("0", "1")
         else ""
