@@ -1216,7 +1216,17 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # 9.0.0 is arel's own newest-ever release, no cap needed).
         lines.append(f'gem "arel", "{_era_gem_version("arel", lang_ver, "9.0.0")}"')
         # activejob's own globalid dependency ('>= 0.3.6', unconstrained).
-        lines.append(f'gem "globalid", "{_era_gem_version("globalid", lang_ver, "0.4.2")}"')
+        # globalid 1.2.0+ raised its OWN activesupport dependency to
+        # '>= 6.1' (confirmed via its real gem spec metadata: 1.1.0
+        # still only needs '>= 5.0') -- unsatisfiable against majors
+        # 4/5's exact-pinned activesupport (4.2.11.3/5.2.8.1, both
+        # <6.1). Majors 6/7/8 (activesupport 6.1.7.10/7.2.3.2/8.1.3.1,
+        # all >=6.1) don't need the cap. Confirmed via a real failing
+        # build (Ruby 2.7 + Rails 5 + bcrypt): "globalid (= 1.2.1) ...
+        # depends on activesupport (>= 6.1)" vs "rails (= 5.2.8.1) ...
+        # depends on activesupport (= 5.2.8.1)".
+        _globalid_cap = "1.2.0" if fw_major in ("4", "5") else None
+        lines.append(f'gem "globalid", "{_era_gem_version("globalid", lang_ver, "0.4.2", below=_globalid_cap)}"')
         # railties' own method_source dependency ('>= 0', unconstrained).
         lines.append(f'gem "method_source", "{_era_gem_version("method_source", lang_ver, "0.9.2")}"')
         # actionpack's own rack-test dependency ('>= 0.6.3', unconstrained).
