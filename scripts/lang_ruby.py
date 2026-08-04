@@ -190,28 +190,41 @@ def _mail_version(fw_major: str, lang_ver: str) -> str:
     3.2.22.5's own "mail (~> 2.5.4)").
 
     For major 3, resolve within the 2.5.x line only. For every other
-    major, cap below 2.8.0: mail 2.8.0+ added unconstrained net-smtp/
-    net-imap/net-pop runtime dependencies (confirmed via gem spec
-    metadata: absent in 2.7.1, present from 2.8.0 on), and net-imap
-    specifically has NO published version compatible with Ruby <2.5 at
-    all (confirmed via its own oldest release requiring >=2.5.0) --
-    staying on the 2.7.x line avoids that whole sub-cascade regardless
-    of target Ruby.
+    major, the right range depends on target Ruby: mail 2.8.0+ added
+    net-smtp/net-imap/net-pop runtime dependencies (confirmed via gem
+    spec metadata: absent in 2.7.1, present from 2.8.0 on), and
+    net-imap specifically has NO published version compatible with
+    Ruby <2.5 at all (confirmed via its own oldest release requiring
+    >=2.5.0) -- so below Ruby 2.5, mail must stay capped below 2.8.0
+    (on the 2.7.x line). At Ruby >=2.5 that whole sub-cascade is a
+    non-issue, AND newer Rails majors actively REQUIRE mail >=2.8.0 via
+    their own actionmailer constraint -- confirmed via a real failing
+    build on Rails majors 7 and 8 ("rails >= 7.2.3.2 ... requires mail
+    >= 2.8.0" / "rails >= 8.1.3.1 ... requires mail >= 2.8.0",
+    unsatisfiable against a hardcoded "mail = 2.7.1" pin from an
+    earlier version of this fix that capped ALL non-major-3 majors
+    below 2.8.0 unconditionally). So at Ruby >=2.5, era resolution runs
+    unconstrained instead.
     """
     try:
         versions = _fetch_gem_versions("mail")
     except RubyGemsLookupError:
-        return "2.5.4" if fw_major == "3" else "2.7.1"
+        if fw_major == "3":
+            return "2.5.4"
+        return "2.7.1" if _lang_ver_tuple(lang_ver) < (2, 5) else "2.9.1"
 
     floors = _GEM_RUBY_FLOOR.get("mail", {})
+    lv = _lang_ver_tuple(lang_ver)
     if fw_major == "3":
         candidates = [v for v in versions if v.startswith("2.5.")]
         fallback = "2.5.4"
+    elif _ver_ge(lv, (2, 5)):
+        candidates = versions
+        fallback = "2.9.1"
     else:
         candidates = [v for v in versions if _ver_key(v) < _ver_key("2.8.0")]
         fallback = "2.7.1"
 
-    lv = _lang_ver_tuple(lang_ver)
     for v in sorted(candidates, key=_ver_key, reverse=True):
         floor = _ruby_floor_tuple(floors.get(v))
         if _ver_ge(lv, floor):
