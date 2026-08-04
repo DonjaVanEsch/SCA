@@ -132,23 +132,43 @@ def _lang_ver_tuple(lang_ver: str) -> tuple:
 
 
 def _ver_ge(a: tuple, b: tuple) -> bool:
-    """a >= b for two version tuples that may have different lengths
-    (e.g. a Ruby version like "2.5" -> (2, 5) vs a RubyGems floor like
-    ">= 2.5.0" -> (2, 5, 0)). Plain Python tuple comparison treats a
-    SHORTER tuple as always less than a longer one, even when every
-    shared component is equal -- (2, 5) >= (2, 5, 0) is False in plain
-    Python -- which silently made _era_gem_version() (and everything
-    built on it: _bundler_version_1x, _mail_version, ...) resolve to an
-    unnecessarily OLDER gem release than needed whenever a target Ruby
-    version exactly matched a floor's major.minor with a trailing patch
-    component. Confirmed via a real failing test: nokogiri needed to
-    resolve to >=1.11 (for Nokogiri::HTML4, which loofah depends on) at
-    Ruby 2.5, but kept resolving to 1.10.10 instead -- (2, 5) >=
-    (2, 5, 0) evaluating to False was the reason. Pads both tuples to
-    equal length with trailing zeros before comparing.
+    """a >= b for two version tuples that may have different lengths --
+    `a` is always the TARGET RUBY VERSION (e.g. this registry's own
+    "2.5" -> (2, 5)) and `b` is always a floor extracted from a gem's
+    own `ruby_version` metadata (e.g. ">= 2.5.0" -> (2, 5, 0)) at every
+    call site in this module (_era_gem_version, _bundler_version_1x,
+    _mail_version).
+
+    Padded ASYMMETRICALLY, not with zero on both sides: `a` gets padded
+    with a high sentinel, `b` with zero.
+
+    `b` gets zero because a floor missing a patch component (e.g. just
+    "~> 2.2") imposes no additional restriction on that component.
+
+    `a` gets a high sentinel, NOT zero, because this registry's own
+    Ruby version strings are always "major.minor" (e.g. "2.2") while
+    the actual container built for that entry always runs whatever the
+    LATEST patch of that line is (e.g. real Ruby 2.2.10, confirmed live
+    via `ruby -v` inside a built image) -- treating a bare "2.2" as
+    "2.2.0" would wrongly reject a floor like "arel >= 2.2.2" even
+    though the real container's patch level (2.2.10) satisfies it.
+    Plain zero-padding on both sides was an earlier version of this
+    fix's own mistake, only caught because it's the same class of bug
+    it was written to fix in the first place: plain tuple comparison
+    treating a shorter tuple as always less than a longer one, even
+    when every shared component is equal -- (2, 5) >= (2, 5, 0) is
+    False in plain Python, which silently made era-based version
+    picks resolve to an unnecessarily OLDER release than needed
+    whenever a target Ruby version exactly matched a floor's
+    major.minor with a trailing patch component (confirmed via a real
+    failing test: nokogiri needed to resolve to >=1.11, for
+    Nokogiri::HTML4, at Ruby 2.5, but kept resolving to 1.10.10 instead
+    until this was fixed).
     """
     n = max(len(a), len(b))
-    return a + (0,) * (n - len(a)) >= b + (0,) * (n - len(b))
+    a = a + (9999,) * (n - len(a))
+    b = b + (0,) * (n - len(b))
+    return a >= b
 
 
 def _era_gem_version(gem_name: str, lang_ver: str, fallback: str) -> str:
@@ -1173,6 +1193,23 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # current version, ruby 2.2.10".
         lines.append(f'gem "i18n", "{_era_gem_version("i18n", lang_ver, "0.9.5")}"')
         lines.append(f'gem "mini_mime", "{_era_gem_version("mini_mime", lang_ver, "0.1.0")}"')
+        # actionview/actionpack/actionmailer's own rails-dom-testing
+        # dependency ('~> 2.0', i.e. the whole 2.x line -- no 3.x has
+        # ever been published, so era resolution alone is sufficient
+        # here, no separate cap needed like mail/rack-cache elsewhere
+        # in this module) -- confirmed via a real failing build (Ruby
+        # 2.2 + Rails 5 + bcrypt, right after fixing i18n): "rails-dom-
+        # testing-2.3.0 requires ruby version >= 2.5.0".
+        lines.append(f'gem "rails-dom-testing", "{_era_gem_version("rails-dom-testing", lang_ver, "2.0.3")}"')
+        # activerecord's own arel dependency ('>= 9.0', unconstrained --
+        # 9.0.0 is arel's own newest-ever release, no cap needed).
+        lines.append(f'gem "arel", "{_era_gem_version("arel", lang_ver, "9.0.0")}"')
+        # activejob's own globalid dependency ('>= 0.3.6', unconstrained).
+        lines.append(f'gem "globalid", "{_era_gem_version("globalid", lang_ver, "0.4.2")}"')
+        # railties' own method_source dependency ('>= 0', unconstrained).
+        lines.append(f'gem "method_source", "{_era_gem_version("method_source", lang_ver, "0.9.2")}"')
+        # actionpack's own rack-test dependency ('>= 0.6.3', unconstrained).
+        lines.append(f'gem "rack-test", "{_era_gem_version("rack-test", lang_ver, "0.7.0")}"')
         # The remaining blockers are all Ruby stdlib libraries that were
         # extracted into independently-published gems at various Ruby
         # versions (the same class of change as webrick/ostruct/fiddle/
