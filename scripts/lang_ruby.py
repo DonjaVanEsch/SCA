@@ -1080,6 +1080,22 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # in stdlib anyway and doesn't need a separate gem at all.
         if _lang_ver_tuple(lang_ver) >= (4, 0):
             lines.append('gem "ostruct"')
+    if (fw_name, fw_major) == ("Roda", "3") and _lang_ver_tuple(lang_ver) in ((2, 4), (2, 5)):
+        # Roda leaves Rack completely unpinned (confirmed via its own
+        # gemspec), so Bundler resolves whatever Rack version the
+        # installed Ruby's OWN declared floor allows. Rack 3.x's own
+        # declared floor ('>= 2.4.0') hasn't actually changed since
+        # 3.0.0, but it's simply WRONG: rack 3.2.6 (the newest, and
+        # what gets resolved for any Ruby >=2.4 without an explicit
+        # pin) crashes at boot on Ruby 2.4/2.5 specifically (confirmed
+        # via a real crash: "wrong element type String at 0 (expected
+        # array)" TypeError in rack/utils.rb) -- yet works fine on
+        # Ruby 2.6+ (confirmed via real passing tests across 2.6-3.3).
+        # Ruby <2.4 never reaches Rack 3.x at all (correctly excluded
+        # by the declared floor, naturally falling back to Rack 2.x,
+        # confirmed passing on Ruby 2.1-2.3) -- only this narrow
+        # 2.4-2.5 window needs an explicit downgrade.
+        lines.append(f'gem "rack", "{_era_gem_version("rack", lang_ver, "2.2.9", below="3.0.0")}"')
     if lib_name == "roqs" and _lang_ver_tuple(lang_ver) >= (4, 0):
         # fiddle (roqs' own Fiddle-based struct definitions, see
         # _roqs_imports()) was dropped from Ruby's own default gems at
@@ -1395,6 +1411,28 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
     # confirmed via a real failing build (Ruby 2.1 + Rails 3 + jwt,
     # after fixing thor: "webrick-1.9.2 requires ruby version >= 2.4.0").
     lines.append(f'gem "webrick", "{_era_gem_version("webrick", lang_ver, "1.3.1")}"')
+    # logger was removed from Ruby's own default gems at 4.0.0 (same
+    # class of change as webrick/ostruct/fiddle/rexml/bigdecimal/
+    # benchmark elsewhere in this module) -- a Ruby-wide change, not
+    # specific to any one framework, confirmed via a real crash
+    # (LoadError: cannot load such file -- logger, with Ruby's own
+    # warning about the 4.0.0 removal) on Roda at Ruby 4.0. Skipped for
+    # Rails majors other than 3, which already pin logger themselves
+    # further up (needed there even below Ruby 4.0, for a different
+    # reason -- see that comment) -- adding it again here would
+    # duplicate the Gemfile line.
+    if _lang_ver_tuple(lang_ver) >= (4, 0) and not (fw_name == "Rails" and fw_major != "3"):
+        lines.append(f'gem "logger", "{_era_gem_version("logger", lang_ver, "1.6.0")}"')
+    # base64 was removed from Ruby's own default gems at 3.4.0 (same
+    # class of Ruby-wide change as logger just above) -- confirmed via
+    # a real crash (LoadError: cannot load such file -- base64, with
+    # Ruby's own warning about the 3.4.0 removal) triggered by jwt's
+    # own unconditional `require 'base64'` on Roda at Ruby 3.4. Skipped
+    # for Rails majors other than 3 for the same duplicate-line reason
+    # as logger (Rails already pins base64 itself further up, guarded
+    # to Ruby >=2.3, which already covers >=3.4 too).
+    if _lang_ver_tuple(lang_ver) >= (3, 4) and not (fw_name == "Rails" and fw_major != "3"):
+        lines.append(f'gem "base64", "{_era_gem_version("base64", lang_ver, "0.2.0")}"')
     if needs_rackup:
         lines.append('gem "rackup"')
     lines.append(f'gem "{_LIB_GEM[lib_name]}", "{lib_resolved}"')
