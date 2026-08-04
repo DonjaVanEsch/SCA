@@ -1217,6 +1217,32 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # fixing rack-test): "rack-2.2.23 requires ruby version
         # >= 2.3.0".
         lines.append(f'gem "rack", "{_era_gem_version("rack", lang_ver, "2.0.8")}"')
+        # rails itself pulls in actioncable transitively, whose own
+        # websocket support depends on nio4r -- unconstrained, keeps
+        # raising its own Ruby floor -- confirmed via a real failing
+        # build (Ruby 2.2 + Rails 5 + bcrypt, right after fixing rack):
+        # "nio4r-2.7.5 requires ruby version >= 2.6".
+        lines.append(f'gem "nio4r", "{_era_gem_version("nio4r", lang_ver, "1.2.1")}"')
+        # actioncable's own websocket-driver dependency ('>= 0.6.1',
+        # unconstrained), and websocket-driver's OWN websocket-extensions
+        # dependency ('>= 0.1.0', unconstrained). Both currently have an
+        # unrestricted declared floor across every published release, but
+        # pinned anyway for the same defensive reason as the rest of this
+        # cascade -- one of them WILL eventually raise its floor.
+        lines.append(f'gem "websocket-driver", "{_era_gem_version("websocket-driver", lang_ver, "0.7.7")}"')
+        lines.append(f'gem "websocket-extensions", "{_era_gem_version("websocket-extensions", lang_ver, "0.1.5")}"')
+        # activestorage's own marcel dependency ('~> 1.0.0', i.e. the
+        # 1.0.x line only) keeps raising its own Ruby floor within that
+        # line (1.0.0-1.0.2: >=2.2, 1.0.3+: >=2.3).
+        lines.append(f'gem "marcel", "{_era_gem_version("marcel", lang_ver, "1.0.2")}"')
+        # rails' own sprockets-rails dependency resolves to an old,
+        # activesupport-5.2-compatible patch regardless (sprockets-rails
+        # 3.5+ requires activesupport >=6.1, incompatible with Rails 5's
+        # own exact-pinned activesupport, so Bundler's resolver already
+        # avoids it on its own) -- but that old sprockets-rails' own
+        # sprockets dependency ('>= 3.0.0', unconstrained) still floats
+        # freely and keeps raising its own floor.
+        lines.append(f'gem "sprockets", "{_era_gem_version("sprockets", lang_ver, "3.7.2")}"')
         # The remaining blockers are all Ruby stdlib libraries that were
         # extracted into independently-published gems at various Ruby
         # versions (the same class of change as webrick/ostruct/fiddle/
