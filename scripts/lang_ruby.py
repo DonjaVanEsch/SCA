@@ -1255,7 +1255,16 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # activestorage's own marcel dependency ('~> 1.0.0', i.e. the
         # 1.0.x line only) keeps raising its own Ruby floor within that
         # line (1.0.0-1.0.2: >=2.2, 1.0.3+: >=2.3).
-        lines.append(f'gem "marcel", "{_era_gem_version("marcel", lang_ver, "1.0.2")}"')
+        # activestorage's own marcel constraint differs meaningfully per
+        # major -- confirmed via each major's real gem spec metadata:
+        # major 5 declares 'marcel ~> 1.0.0' (a tight, 3-component
+        # pessimistic lock to the 1.0.x line ONLY), while majors 6/7/8
+        # declare 'marcel ~> 1.0' (2-component, the whole 1.x line).
+        # Confirmed via a real failing build (Ruby 2.5/2.7 + Rails 5 +
+        # bcrypt): "marcel (= 1.2.1)" unsatisfiable alongside
+        # activestorage 5.2.8.1's own "marcel (~> 1.0.0)".
+        _marcel_cap = "1.1.0" if fw_major == "5" else None
+        lines.append(f'gem "marcel", "{_era_gem_version("marcel", lang_ver, "1.0.2", below=_marcel_cap)}"')
         # rails' own sprockets-rails dependency resolves to an old,
         # activesupport-5.2-compatible patch regardless (sprockets-rails
         # 3.5+ requires activesupport >=6.1, incompatible with Rails 5's
