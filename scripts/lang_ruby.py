@@ -1210,6 +1210,13 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         lines.append(f'gem "method_source", "{_era_gem_version("method_source", lang_ver, "0.9.2")}"')
         # actionpack's own rack-test dependency ('>= 0.6.3', unconstrained).
         lines.append(f'gem "rack-test", "{_era_gem_version("rack-test", lang_ver, "0.7.0")}"')
+        # actionpack's own rack dependency ('~> 2.0, >= 2.0.8' --
+        # the whole 2.x line, not just 2.0.x) keeps raising its own
+        # Ruby floor release over release -- confirmed via a real
+        # failing build (Ruby 2.2 + Rails 5 + bcrypt, right after
+        # fixing rack-test): "rack-2.2.23 requires ruby version
+        # >= 2.3.0".
+        lines.append(f'gem "rack", "{_era_gem_version("rack", lang_ver, "2.0.8")}"')
         # The remaining blockers are all Ruby stdlib libraries that were
         # extracted into independently-published gems at various Ruby
         # versions (the same class of change as webrick/ostruct/fiddle/
