@@ -1176,9 +1176,20 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # bundled copy is left to handle bigdecimal instead.
         for _gem, _fallback in (
             ("mutex_m", "0.1.2"), ("connection_pool", "2.2.3"),
-            ("timeout", "0.4.0"), ("uri", "0.10.3"), ("erubi", "1.13.1"),
+            ("uri", "0.10.3"), ("erubi", "1.13.1"),
         ):
             lines.append(f'gem "{_gem}", "{_era_gem_version(_gem, lang_ver, _fallback)}"')
+        # timeout's declared floor is unrestricted ('>=0') all the way
+        # back to its oldest release, but EVERY published version's code
+        # uses the '&.' safe-navigation operator, Ruby 2.3+ only --
+        # confirmed via a real crash (SyntaxError: unexpected '.') on
+        # both the newest (0.4.0) and an old (0.3.2) release, directly
+        # tested on Ruby 2.2. Only added once Ruby actually has '&.'
+        # (same "only add on Ruby>=X" pattern as elsewhere in this
+        # module) -- below that, Ruby's own bundled/stdlib copy is used
+        # silently instead.
+        if _lang_ver_tuple(lang_ver) >= (2, 3):
+            lines.append(f'gem "timeout", "{_era_gem_version("timeout", lang_ver, "0.4.0")}"')
         # date/securerandom/base64/tsort/cgi each have a REAL Ruby floor
         # across every single published release, and for securerandom/
         # cgi specifically that real floor is HIGHER than what their own
@@ -1204,6 +1215,21 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         if _lang_ver_tuple(lang_ver) >= (2, 5):
             lines.append(f'gem "securerandom", "{_era_gem_version("securerandom", lang_ver, "0.2.0")}"')
             lines.append(f'gem "cgi", "{_era_gem_version("cgi", lang_ver, "0.3.1")}"')
+        # bigdecimal was removed from Ruby's own default gems at 3.4.0
+        # (same class of change as webrick/ostruct/fiddle/rexml
+        # elsewhere in this module) -- confirmed via a real crash
+        # (LoadError: cannot load such file -- bigdecimal, with Ruby's
+        # own warning: "bigdecimal used to be loaded from the standard
+        # library, but is not part of the default gems since Ruby
+        # 3.4.0") on Rails majors 5/6 at Ruby 3.4/4.0. Only added at
+        # that floor -- NOT unconditionally, since an earlier version
+        # of this fix pinned bigdecimal Rails-wide and reintroduced the
+        # BigDecimal.new crash this registry's Rails 3/4 ceiling was
+        # narrowed to avoid (see this framework's own notes) by loading
+        # a standalone release that had already dropped it, even on a
+        # Ruby version whose OWN bundled bigdecimal still supports it.
+        if _lang_ver_tuple(lang_ver) >= (3, 4):
+            lines.append(f'gem "bigdecimal", "{_era_gem_version("bigdecimal", lang_ver, "3.1.9")}"')
     if (fw_name, fw_major) == ("Rails", "3"):
         # activesupport-3.2.x's own lib/active_support/ruby/shim.rb
         # unconditionally `require`s 'active_support/core_ext/rexml',
@@ -1405,7 +1431,20 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
     # falls back to the pre-3.0 Rack::Handler location otherwise --
     # confirmed both paths live (Rackup::Handler defined/Rack::Handler
     # nil on a Rack-3 combo, and the reverse on a Rack ~1.6/~2.2 one).
+    # require 'logger' explicitly, before anything else: activesupport
+    # 6.1.7.10's own active_support/logger_thread_safe_level.rb
+    # references the bare ::Logger constant without requiring it itself
+    # -- it assumes Logger is already loaded, true for Ruby's own
+    # default-gem auto-activation but NOT once this project's own
+    # unconstrained-dependency fix (see the Rails cascade further down
+    # this file) explicitly pins a standalone 'logger' gem in the
+    # Gemfile, which puts Bundler in charge of activating it instead.
+    # Confirmed via a real crash (NameError: uninitialized constant
+    # ActiveSupport::LoggerThreadSafeLevel::Logger) and confirmed fixed
+    # by an explicit require here, before config.ru's own require chain
+    # ever reaches that file.
     _webrick_boot = (
+        "require 'logger'; "
         "require 'rack'; begin; require 'rackup'; rescue LoadError; end; "
         "app, _ = Rack::Builder.parse_file('config.ru'); "
         "h = defined?(Rackup::Handler) ? Rackup::Handler::WEBrick : Rack::Handler::WEBrick; "
