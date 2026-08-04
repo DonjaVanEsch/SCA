@@ -1166,6 +1166,12 @@ def make_gemfile(fw_name: str, fw_major: str, fw_resolved: str, lib_name: str,
         # version >= 2.6.0" (mail's own mini_mime dependency, also
         # unconstrained).
         lines.append(f'gem "mail", "{_mail_version(fw_major, lang_ver)}"')
+        # activesupport's own i18n dependency ('>=0.7, <2', wide enough
+        # to float) -- confirmed via a real failing build (Ruby 2.2 +
+        # Rails 5 + bcrypt, right after fixing logger): "i18n-1.15.2
+        # requires ruby version >= 3.1, which is incompatible with the
+        # current version, ruby 2.2.10".
+        lines.append(f'gem "i18n", "{_era_gem_version("i18n", lang_ver, "0.9.5")}"')
         lines.append(f'gem "mini_mime", "{_era_gem_version("mini_mime", lang_ver, "0.1.0")}"')
         # The remaining blockers are all Ruby stdlib libraries that were
         # extracted into independently-published gems at various Ruby
