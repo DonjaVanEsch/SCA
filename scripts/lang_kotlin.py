@@ -1042,6 +1042,15 @@ def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: st
         "\n"
         "repositories {\n"
         "    mavenCentral()\n"
+        # Tink's own POM has a real, non-optional dependency on
+        # androidx.annotation:annotation, which is NOT published to Maven
+        # Central at all (confirmed live: a direct fetch 404s there) --
+        # only to Google's own Maven repository. Confirmed via a real
+        # build failure ("Could not find androidx.annotation:annotation:
+        # 1.3.0 ... Required by: ... com.google.crypto.tink:tink:1.8.0").
+        # Declared unconditionally (harmless when unused) rather than only
+        # when lib_name == "Tink", since any framework can pair with it.
+        "    google()\n"
         "}\n"
         "\n"
         "dependencies {\n"
@@ -1083,6 +1092,15 @@ def _gradle_build_kts_quarkus(kotlin_resolved: str, jdk: str, fw_major: str,
         "\n"
         "repositories {\n"
         "    mavenCentral()\n"
+        # Tink's own POM has a real, non-optional dependency on
+        # androidx.annotation:annotation, which is NOT published to Maven
+        # Central at all (confirmed live: a direct fetch 404s there) --
+        # only to Google's own Maven repository. Confirmed via a real
+        # build failure ("Could not find androidx.annotation:annotation:
+        # 1.3.0 ... Required by: ... com.google.crypto.tink:tink:1.8.0").
+        # Declared unconditionally (harmless when unused) rather than only
+        # when lib_name == "Tink", since any framework can pair with it.
+        "    google()\n"
         "}\n"
         "\n"
         "dependencies {\n"
