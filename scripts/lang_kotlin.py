@@ -300,24 +300,37 @@ def _ver_key(v: str) -> tuple:
 # major" because none of them have this same per-patch compiler-version
 # coupling; Ktor's own build is a Kotlin-Multiplatform project, so its
 # artifacts are unusually sensitive to this. See _resolve_ktor() below.
+# Ktor major 1 turned out to have the IDENTICAL per-minor Kotlin-pin drift
+# as majors 2/3 -- originally assumed to be a single safe bucket ("no
+# confirmed per-minor churn found there yet"), which was WRONG: a real
+# build (Kotlin 1.3 + Ktor 1 + BouncyCastle, reported by the user's own
+# bulk test pass) failed with the exact same "Module was compiled with an
+# incompatible version of Kotlin" error, because major 1 was resolving to
+# its own absolute latest patch (1.6.8, pinning kotlin_version=1.5.10 at
+# its own 1.6.0 tag) regardless of a much older target line. Confirmed via
+# the same live per-tag gradle.properties sweep already used for majors
+# 2/3: 1.0.x/1.1.x/1.2.x/1.3.x all pin a Kotlin 1.3.x patch, 1.4.x/1.5.x
+# pin 1.4.x, 1.6.x pins 1.5.10.
 _KTOR_MINOR_KOTLIN_FLOOR: dict = {
+    "1.0": "1.3", "1.1": "1.3", "1.2": "1.3", "1.3": "1.3", "1.4": "1.4", "1.5": "1.4", "1.6": "1.5",
     "2.0": "1.6", "2.1": "1.7", "2.2": "1.7", "2.3": "1.8",
     "3.0": "2.0", "3.1": "2.1", "3.2": "2.1", "3.3": "2.2", "3.4": "2.3", "3.5": "2.3",
 }
 
 
 def _resolve_ktor(fw_major: str, kotlin_line: str) -> str | None:
-    """Resolves Ktor major 1 the plain way (single bucket, no confirmed
-    per-minor churn found there yet -- see registry notes' lower-confidence
-    lifecycle-window caveat). Majors 2/3 pick the HIGHEST minor whose own
+    """Picks the HIGHEST Ktor minor (within the target major) whose own
     pinned Kotlin requirement doesn't exceed the target Kotlin line, then
-    resolve that minor to its own latest patch -- never simply "latest patch
-    of the whole major", per _KTOR_MINOR_KOTLIN_FLOOR above."""
-    if fw_major == "1":
-        group, artifact = FRAMEWORK_META["Ktor"]["anchor_v1"]
-        return _resolve(group, artifact, fw_major)
-
-    group, artifact = FRAMEWORK_META["Ktor"]["anchor"]
+    resolves that minor to its own latest patch -- never simply "latest
+    patch of the whole major", per _KTOR_MINOR_KOTLIN_FLOOR above. Applies
+    uniformly across every Ktor major (1/2/3) -- major 1 is NOT a special
+    case (see the comment above _KTOR_MINOR_KOTLIN_FLOOR for why that
+    original assumption was wrong), it just uses a different Maven
+    coordinate for the minor-enumeration/resolution fetch (the pre-KMP-
+    split 'ktor-server-core', not '-jvm')."""
+    group, artifact = (
+        FRAMEWORK_META["Ktor"]["anchor_v1"] if fw_major == "1" else FRAMEWORK_META["Ktor"]["anchor"]
+    )
     versions = lang_java._fetch_maven_versions(group, artifact)
     minors = sorted(
         {".".join(v.split(".")[:2]) for v in versions if v.startswith(fw_major + ".")},
