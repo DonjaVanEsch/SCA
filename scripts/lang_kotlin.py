@@ -68,7 +68,16 @@ _TOOLCHAIN: dict = {
     "1.2": ("8",  "4.10.3-jdk8"),
     "1.3": ("8",  "5.6.4-jdk8"),
     "1.4": ("8",  "5.6.4-jdk8"),
-    "1.5": ("8",  "5.6.4-jdk8"),
+    # 1.5 was originally grouped with 1.3/1.4 (Gradle 5.6.4), but the Kotlin
+    # Gradle Plugin itself refuses to even load under Gradle 5.6.4 starting
+    # at 1.5.x -- confirmed via a real build failure ("The current Gradle
+    # version 5.6.4 is not compatible with the Kotlin Gradle plugin. Please
+    # use Gradle 6.1.1 or newer") and independently confirmed that the SAME
+    # Gradle 5.6.4 loads KGP 1.4.32 just fine, isolating the boundary to
+    # exactly this line. Reuses the already-proven 1.6/1.7 tier rather than
+    # introducing a new one -- kotlinc itself never needed more than JDK 8,
+    # so bumping the JDK here too is harmless, just unused headroom.
+    "1.5": ("11", "6.9.4-jdk11"),
     "1.6": ("11", "6.9.4-jdk11"),
     "1.7": ("11", "6.9.4-jdk11"),
     "1.8": ("17", "7.6.4-jdk17"),
@@ -285,62 +294,106 @@ def _ver_key(v: str) -> tuple:
     return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
-# Ktor's own per-MINOR pinned kotlin_version/libs.versions.toml "kotlin"
-# property, rounded down to this registry's own major.minor Kotlin
-# granularity -- confirmed live (real per-tag gradle.properties/
-# libs.versions.toml fetches) after a real docker build failure: resolving
-# Ktor major "3" to its own absolute latest patch (3.5.2, built with Kotlin
-# 2.3.21) against an OLDER target compiler like Kotlin 2.1.21 fails outright
-# ("Module was compiled with an incompatible version of Kotlin. The binary
-# version of its metadata is 2.3.0, expected version is 2.1.0") -- Kotlin
-# binary metadata is forward-readable (an older jar built with an older
-# Kotlin works fine under a newer compiler) but NOT backward-readable (a
-# newer-built jar fails under an older compiler). Every other framework in
-# this project's registries can safely resolve "always latest patch of the
-# major" because none of them have this same per-patch compiler-version
-# coupling; Ktor's own build is a Kotlin-Multiplatform project, so its
-# artifacts are unusually sensitive to this. See _resolve_ktor() below.
-# Ktor major 1 turned out to have the IDENTICAL per-minor Kotlin-pin drift
-# as majors 2/3 -- originally assumed to be a single safe bucket ("no
-# confirmed per-minor churn found there yet"), which was WRONG: a real
-# build (Kotlin 1.3 + Ktor 1 + BouncyCastle, reported by the user's own
-# bulk test pass) failed with the exact same "Module was compiled with an
-# incompatible version of Kotlin" error, because major 1 was resolving to
-# its own absolute latest patch (1.6.8, pinning kotlin_version=1.5.10 at
-# its own 1.6.0 tag) regardless of a much older target line. Confirmed via
-# the same live per-tag gradle.properties sweep already used for majors
-# 2/3: 1.0.x/1.1.x/1.2.x/1.3.x all pin a Kotlin 1.3.x patch, 1.4.x/1.5.x
-# pin 1.4.x, 1.6.x pins 1.5.10.
-_KTOR_MINOR_KOTLIN_FLOOR: dict = {
-    "1.0": "1.3", "1.1": "1.3", "1.2": "1.3", "1.3": "1.3", "1.4": "1.4", "1.5": "1.4", "1.6": "1.5",
-    "2.0": "1.6", "2.1": "1.7", "2.2": "1.7", "2.3": "1.8",
-    "3.0": "2.0", "3.1": "2.1", "3.2": "2.1", "3.3": "2.2", "3.4": "2.3", "3.5": "2.3",
-}
+# Ktor's own pinned kotlin_version/libs.versions.toml "kotlin" property
+# drifts at the PATCH level, not just per-minor -- confirmed live (real
+# per-tag gradle.properties/libs.versions.toml fetches) after a real docker
+# build failure: resolving Ktor major "3" to its own absolute latest patch
+# (3.5.2, built with Kotlin 2.3.21) against an OLDER target compiler like
+# Kotlin 2.1.21 fails outright ("Module was compiled with an incompatible
+# version of Kotlin. The binary version of its metadata is 2.3.0, expected
+# version is 2.1.0") -- Kotlin binary metadata is forward-readable (an
+# older jar built with an older Kotlin works fine under a newer compiler)
+# but NOT backward-readable. An initial fix used a per-MINOR floor table
+# (one representative tag checked per X.Y line), which caught the major-1
+# case too (1.0.x/1.1.x/1.2.x/1.3.x pin Kotlin 1.3.x, 1.4.x/1.5.x pin
+# 1.4.x, 1.6.x's FIRST patch pins 1.5.10) -- but a SECOND real build
+# failure (Kotlin 1.5 + Ktor 1) proved even that was insufficient: Ktor
+# 1.6.8 (the latest patch within the SAME 1.6.x minor) actually pins
+# Kotlin 1.6.10, confirmed via a full per-patch sweep of 1.6.0 through
+# 1.6.8 showing the pin climbing THREE more times within that one minor
+# (1.6.0/1.6.1→1.5.10, 1.6.2/1.6.3→1.5.20, 1.6.4→1.5.30, 1.6.5→1.5.31,
+# 1.6.6/1.6.7→1.6.0, 1.6.8→1.6.10, the last one under yet another config
+# key, 'kotlin-version' with a hyphen, not 'kotlin_version'/'kotlin') --
+# and the same intra-minor drift was independently confirmed in 1.3.x and
+# 1.4.x too. A per-minor table is fundamentally the wrong granularity here.
+# _resolve_ktor() below instead does a live, per-PATCH walk from the
+# newest version downward until it finds one whose OWN actual pin (fetched
+# fresh, not read from any static table) satisfies the target line --
+# genuinely robust to this drift instead of assuming any single sampled
+# patch represents its whole minor.
+_KTOR_PIN_CACHE: dict = {}
+
+
+def _ktor_patch_kotlin_pin(tag: str) -> str | None:
+    """Live-fetches the exact Kotlin version one specific Ktor tag pins,
+    trying every config file/key this project has confirmed Ktor using
+    across its history (old gradle.properties, and libs.versions.toml
+    under both the 'kotlin' and 'kotlin-version' keys different eras use).
+    Cached per tag since the same patch can be re-checked across multiple
+    (major, kotlin_line) resolution calls."""
+    if tag in _KTOR_PIN_CACHE:
+        return _KTOR_PIN_CACHE[tag]
+    result = None
+    file_cache: dict = {}
+    for path, pattern in (
+        ("gradle.properties", r"(?m)^kotlin_version\s*=\s*([\d.]+)"),
+        ("gradle/libs.versions.toml", r'(?m)^kotlin\s*=\s*"([\d.]+)"'),
+        ("gradle/libs.versions.toml", r'(?m)^kotlin-version\s*=\s*"([\d.]+)"'),
+    ):
+        if path not in file_cache:
+            try:
+                req = urllib.request.Request(
+                    f"https://raw.githubusercontent.com/ktorio/ktor/{tag}/{path}",
+                    headers={"User-Agent": "curl/8.0"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    file_cache[path] = resp.read().decode("utf-8", errors="ignore")
+            except (URLError, OSError):
+                file_cache[path] = ""
+        m = re.search(pattern, file_cache[path])
+        if m:
+            result = m.group(1)
+            break
+    _KTOR_PIN_CACHE[tag] = result
+    return result
+
+
+_KTOR_RESOLVE_CACHE: dict = {}
 
 
 def _resolve_ktor(fw_major: str, kotlin_line: str) -> str | None:
-    """Picks the HIGHEST Ktor minor (within the target major) whose own
-    pinned Kotlin requirement doesn't exceed the target Kotlin line, then
-    resolves that minor to its own latest patch -- never simply "latest
-    patch of the whole major", per _KTOR_MINOR_KOTLIN_FLOOR above. Applies
-    uniformly across every Ktor major (1/2/3) -- major 1 is NOT a special
-    case (see the comment above _KTOR_MINOR_KOTLIN_FLOOR for why that
-    original assumption was wrong), it just uses a different Maven
-    coordinate for the minor-enumeration/resolution fetch (the pre-KMP-
-    split 'ktor-server-core', not '-jvm')."""
+    """Walks Ktor's real patches for the target major, newest first, live-
+    checking each one's own actual Kotlin pin (never a static per-minor
+    table -- see the module comment above for why that was insufficient),
+    returning the first (i.e. newest) patch whose pin doesn't exceed the
+    target line. Applies uniformly across every Ktor major (1/2/3); major
+    1 just uses a different Maven coordinate for the version-list fetch
+    (the pre-KMP-split 'ktor-server-core', not '-jvm'). Cached per (major,
+    kotlin_line) pair since generate_images.py calls this once per library/
+    version combination sharing the same framework major and target line."""
+    cache_key = (fw_major, kotlin_line)
+    if cache_key in _KTOR_RESOLVE_CACHE:
+        return _KTOR_RESOLVE_CACHE[cache_key]
+
     group, artifact = (
         FRAMEWORK_META["Ktor"]["anchor_v1"] if fw_major == "1" else FRAMEWORK_META["Ktor"]["anchor"]
     )
     versions = lang_java._fetch_maven_versions(group, artifact)
-    minors = sorted(
-        {".".join(v.split(".")[:2]) for v in versions if v.startswith(fw_major + ".")},
-        key=_ver_key,
+    patches = sorted(
+        (v for v in versions if v.startswith(fw_major + ".")),
+        key=_ver_key, reverse=True,
     )
     target = _ver_key(kotlin_line)
-    eligible = [m for m in minors if _ver_key(_KTOR_MINOR_KOTLIN_FLOOR.get(m, "0.0")) <= target]
-    if not eligible:
-        return None
-    return _resolve(group, artifact, eligible[-1])
+    result = None
+    for patch in patches:
+        pin = _ktor_patch_kotlin_pin(patch)
+        if pin is None:
+            continue  # couldn't determine this patch's pin -- try the next-older one
+        if _ver_key(".".join(pin.split(".")[:2])) <= target:
+            result = patch
+            break
+    _KTOR_RESOLVE_CACHE[cache_key] = result
+    return result
 
 
 # http4k releases essentially continuously (100+ real minors per major,
