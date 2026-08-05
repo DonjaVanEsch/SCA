@@ -43,6 +43,7 @@ _REGISTRY_FILES = [
     SCRIPTS_DIR / "registry php.json",
     SCRIPTS_DIR / "registry rust.json",
     SCRIPTS_DIR / "registry ruby.json",
+    SCRIPTS_DIR / "registry kotlin.json",
 ]
 
 

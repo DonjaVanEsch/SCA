@@ -41,6 +41,7 @@ _REGISTRY_FILES = {
     "dotnet": "registry dotnet.json",
     "rust":   "registry rust.json",
     "ruby":   "registry ruby.json",
+    "kotlin": "registry kotlin.json",
 }
 
 # How a framework/library's own registry.json "module" value marks "no real
@@ -125,6 +126,18 @@ def _enumerate_python(lang_data: dict) -> list:
     return items
 
 
+def _enumerate_kotlin(lang_data: dict) -> list:
+    """Reuses the generic Maven-module enumerator, with one exception:
+    liboqs-kotlin has no Maven Central artifact at all (built from source,
+    see lang_kotlin.py) -- its registry 'module' is the literal marker
+    string 'source-build', not a resolvable 'group:artifact' coordinate, so
+    it's filtered out here rather than crashing on split(':', 1)."""
+    return [
+        item for item in _enumerate_registry_module(lang_data, "maven")
+        if item[2][1] != "source-build"
+    ]
+
+
 _ENUMERATORS = {
     "node":   lambda d: _enumerate_registry_module(d, "npm"),
     "php":    lambda d: _enumerate_registry_module(d, "packagist"),
@@ -133,6 +146,7 @@ _ENUMERATORS = {
     "rust":   lambda d: _enumerate_registry_module(d, "crates"),
     "ruby":   lambda d: _enumerate_registry_module(d, "rubygems"),
     "python": _enumerate_python,
+    "kotlin": _enumerate_kotlin,
 }
 
 

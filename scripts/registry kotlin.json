@@ -1,0 +1,133 @@
+{
+  "languages": [
+    {
+      "id": "kotlin",
+      "display_name": "Kotlin",
+      "versions": [
+        { "nr": "1.0", "release_date": "2016-02-15", "include": true },
+        { "nr": "1.1", "release_date": "2017-03-01", "include": true },
+        { "nr": "1.2", "release_date": "2017-11-28", "include": true },
+        { "nr": "1.3", "release_date": "2018-10-29", "include": true },
+        { "nr": "1.4", "release_date": "2020-08-14", "include": true },
+        { "nr": "1.5", "release_date": "2021-05-05", "include": true },
+        { "nr": "1.6", "release_date": "2021-11-16", "include": true },
+        { "nr": "1.7", "release_date": "2022-06-09", "include": true },
+        { "nr": "1.8", "release_date": "2022-12-28", "include": true },
+        { "nr": "1.9", "release_date": "2023-07-06", "include": true },
+        { "nr": "2.0", "release_date": "2024-05-21", "include": true },
+        { "nr": "2.1", "release_date": "2024-11-27", "include": true },
+        { "nr": "2.2", "release_date": "2025-06-23", "include": true },
+        { "nr": "2.3", "release_date": "2025-12-16", "include": true },
+        { "nr": "2.4", "release_date": "2026-06-03", "include": true }
+      ],
+      "_comment_version_axis": "The language-version axis is the Kotlin COMPILER version (1.0-2.4, 15 real minor lines, each resolving to that line's own latest patch dynamically off Maven Central's org.jetbrains.kotlin:kotlin-stdlib metadata -- the same 'always latest patch of a tracked minor' convention used throughout this project, e.g. Rust's rustc minors, Java's Quarkus/Spring anchor resolution) -- a deliberate, user-confirmed design decision, NOT the JDK version. There is no official Kotlin Docker Hub image (confirmed via a direct registry API 404) and the Kotlin compiler's own runtime JDK floor never moved past 8 even through the K2 rewrite (confirmed live: JDK 8 became mandatory at Kotlin 1.1.2 in 2017 and every source checked as of 2.2 still only requires JDK 8 to RUN kotlinc) -- so unlike Java, JDK version carries no real per-language-version compatibility signal here and is NOT tracked as a compatibility axis at all. Instead JDK (and the Gradle version needed to drive the Kotlin Gradle Plugin, which has its own, much more consequential floor -- see lang_kotlin.py's _BUILD_TOOLCHAIN) is treated purely as an implementation detail chosen per Kotlin line, mirroring how this project already treats OS base-image selection for other languages as generator-internal logic rather than a registry field. All 15 lines are dated live via the GitHub Releases API (JetBrains/kotlin, 299 releases fetched) cross-checked against Maven Central's kotlin-stdlib maven-metadata.xml (every GitHub-tagged stable matches a real published artifact). Kotlin 2.4.10 (2026-07-14) is the latest stable as of this writing; 2.4.20 exists only as a Beta at research time and is correctly NOT tracked (this project's stable-only convention, same as every other language registry).",
+      "frameworks": [
+        {
+          "name": "Ktor",
+          "module": "io.ktor:ktor-server-core-jvm",
+          "version": [
+            { "nr": "1", "release_date": "2018-11-19", "compatibility": [ "1.3", "1.4", "1.5", "1.6" ] },
+            { "nr": "2", "release_date": "2022-04-11", "compatibility": [ "1.6", "1.7", "1.8", "1.9", "2.0" ] },
+            { "nr": "3", "release_date": "2024-10-09", "compatibility": [ "2.0", "2.1", "2.2", "2.3", "2.4" ] }
+          ],
+          "notes": "Resolution anchor is ktor-server-core for major 1 (the real, plain-JVM artifact at that time) but ktor-server-core-jvm from major 2 onward -- confirmed live that Ktor's Maven Central layout genuinely split into Kotlin-Multiplatform leaf artifacts exactly at 2.0.0-beta-1 (the '-jvm' suffixed artifact's own maven-metadata.xml starts there; the un-suffixed 'ktor-server-core' becomes a Gradle-Module-Metadata variant-matching root from that point on, still resolvable as a plain dependency coordinate in a real build.gradle.kts -- Gradle's GMM-aware resolver picks the -jvm variant automatically for a JVM project -- but NOT useful for version-list lookups via a raw maven-metadata.xml fetch, hence the anchor switch here). The full version history (1.0.0 through 3.5.2) was fetched as ONE continuous series from ktor-server-core's own maven-metadata.xml, so this framework's own numbering has no gap the way Conscrypt's does. Kotlin compatibility per major uses this project's established lifecycle-window rule (see Java registry's Micronaut/Helidon notes for precedent): a Kotlin line is attributed to whichever Ktor major's active-development window it was actually released during, confirmed against each major's OWN pinned Kotlin version at its first release (read directly from that tag's gradle.properties/libs.versions.toml on GitHub) rather than assumed. Ktor 1.0.0 pins kotlin_version=1.3.10 (confirmed via raw.githubusercontent.com/ktorio/ktor/1.0.0/gradle.properties) -- floor is Kotlin 1.3, not 1.0/1.1/1.2 despite Ktor predating Kotlin 1.4-1.6 chronologically no further than its own 2022-04-11 supersession by 2.0. Ktor 2.0.0 pins kotlin_version=1.6.20 (gradle.properties@2.0.0) -- floor 1.6, ceiling 2.0 (the last Kotlin line released before Ktor 3.0's 2024-10-09 launch; Ktor 2.x's own final patch 2.3.13 shipped 2024-11-20, after 3.0 already existed, but its own dependency floor never moved past what 2.0.0 first required). Ktor 3.0.0 pins kotlin=2.0.20 (libs.versions.toml@3.0.0, a Kotlin 2.0.x patch, not 2.0.0 itself) -- floor attributed to the whole 2.0 line since this registry tracks Kotlin at minor-line granularity; ceiling is 2.4, the newest tracked Kotlin line, since Ktor 3.x is still actively maintained (latest 3.5.2, pinning kotlin=2.3.21) with no successor yet to bound it. Dependency artifacts used: ktor-server-netty (engine) + ktor-server-core, both plain-JVM-resolvable coordinates at every major via the GMM behavior described above."
+        },
+        {
+          "name": "Spring Boot",
+          "module": "org.springframework.boot:spring-boot-starter-parent",
+          "version": [
+            { "nr": "2", "release_date": "2018-03-01", "compatibility": [ "1.3", "1.4", "1.5", "1.6", "1.7" ] },
+            { "nr": "3", "release_date": "2022-11-24", "compatibility": [ "1.7", "1.8", "1.9", "2.0", "2.1" ] },
+            { "nr": "4", "release_date": "2025-11-01", "compatibility": [ "2.2", "2.3", "2.4" ] }
+          ],
+          "notes": "Spring Boot 1.x is NOT tracked for Kotlin -- a genuine technical impossibility, not a convenience exclusion (see feedback_no_convenience_exclusions in this project's own memory discipline): Kotlin support in the Spring stack was only added in Spring FRAMEWORK 5.0 (Jan 2017 -- spring.io/blog/2017/01/04/introducing-kotlin-support-in-spring-framework-5-0, confirmed extension functions/null-safety-aware APIs/reified generics for WebFlux all landed there for the first time), and Boot 1.x (2014) predates Framework 5.0 by 3 years; there is no Kotlin DSL, no Jackson-Kotlin-module wiring, nothing to build against. Same reused Maven anchor (spring-boot-starter-parent) and majors as the Java registry -- this is the identical artifact, Kotlin just adds kotlin-reflect + jackson-module-kotlin on the classpath and (optionally) the kotlin('plugin.spring') Gradle plugin for the all-open behavior Spring's proxy-based DI needs on Kotlin's final-by-default classes; no Kotlin-specific starter artifact exists. Boot 2's own per-version Kotlin floor is not directly documented the way 3.0/4.0 are (see below) so this project's lifecycle-window rule is applied here too: Boot 2 was active 2018-03-01 to 3.0's 2022-11-24, and only Kotlin 1.3 onward was released strictly after Boot 2's own launch (1.2, released 2017-11-28, predates Boot 2 and is deliberately excluded rather than assumed retroactively compatible) -- ceiling is 1.7 (released 2022-06-09, the last Kotlin line before Boot 3 existed). Boot 3 and Boot 4's floors ARE directly documented, not window-inferred: Boot 3.0.0 itself pins kotlinVersion=1.7.21 in its own gradle.properties (confirmed live at raw.githubusercontent.com/spring-projects/spring-boot/v3.0.0/gradle.properties) -- floor 1.7 (note this is EARLIER than Boot 2's own window would have ended, i.e. Boot 3 explicitly supports a Kotlin line that already existed under Boot 2 too, which is expected and not a conflict -- a framework's own documented floor can predate its release, unlike the runtime-driven JDK floors in the Java registry that this lifecycle rule was originally built around). Boot 3's ceiling is set at 2.1, immediately below Boot 4's own documented baseline. Boot 4.0 explicitly 'raises the Kotlin baseline to 2.2' per Spring's own release blog (spring.io/blog/2025/12/18/next-level-kotlin-support-in-spring-boot-4, 'switch from Kotlin 1 to Kotlin 2 with a new Kotlin 2.2 baseline') -- floor 2.2, extended through 2.4 (the newest tracked Kotlin line; Boot 4 has no successor yet to bound it)."
+        }
+      ],
+      "cryptography_libs": [
+        {
+          "name": "JCA",
+          "module": null,
+          "version": "built-in",
+          "notes": "Java Cryptography Architecture -- identical to the Java registry's own JCA entry, since Kotlin compiles to the same JVM bytecode and calls java.security/javax.crypto directly with zero wrapper needed. Provider name/version read via java.security.Security.getProviders(), same as Java."
+        },
+        {
+          "name": "BouncyCastle",
+          "module": "org.bouncycastle:bcprov-jdk18on",
+          "version": [
+            { "nr": "1.70", "release_date": "2021-09-01", "compatibility": null },
+            { "nr": "1.71", "release_date": "2022-04-06", "compatibility": null },
+            { "nr": "1.72", "release_date": "2022-09-25", "compatibility": null },
+            { "nr": "1.73", "release_date": "2023-04-12", "compatibility": null },
+            { "nr": "1.74", "release_date": "2023-06-15", "compatibility": null },
+            { "nr": "1.75", "release_date": "2023-06-21", "compatibility": null },
+            { "nr": "1.76", "release_date": "2023-07-31", "compatibility": null },
+            { "nr": "1.77", "release_date": "2023-11-15", "compatibility": null },
+            { "nr": "1.78", "release_date": "2024-04-06", "compatibility": null },
+            { "nr": "1.79", "release_date": "2024-10-30", "compatibility": null },
+            { "nr": "1.80", "release_date": "2025-01-14", "compatibility": null },
+            { "nr": "1.81", "release_date": "2025-06-04", "compatibility": null },
+            { "nr": "1.82", "release_date": "2025-09-17", "compatibility": null },
+            { "nr": "1.83", "release_date": "2025-11-26", "compatibility": null },
+            { "nr": "1.84", "release_date": "2026-04-14", "compatibility": null },
+            { "nr": "1.85", "release_date": null, "compatibility": null }
+          ],
+          "notes": "Same coordinate, same 16-bucket version history, and same per-bucket PQC-support facts as the Java registry's own BouncyCastle entry (org.bouncycastle:bcprov-jdk18on is plain-Java bytecode, consumed identically from Kotlin -- see _bc_coord() precedent in lang_java.py for the '1.70'-only legacy bcprov-jdk15on switch, reused unchanged). No compatibility restriction against Kotlin lines: BC has no known Kotlin-version sensitivity (it's a provider registered via Security.addProvider(), never touches Kotlin-specific bytecode features)."
+        },
+        {
+          "name": "Tink",
+          "module": "com.google.crypto.tink:tink",
+          "version": [
+            { "nr": "1.7", "release_date": "2022-08-10", "compatibility": null },
+            { "nr": "1.8", "release_date": "2023-02-22", "compatibility": null },
+            { "nr": "1.9", "release_date": "2023-04-20", "compatibility": null },
+            { "nr": "1.10", "release_date": "2023-07-17", "compatibility": null },
+            { "nr": "1.11", "release_date": "2023-09-22", "compatibility": null },
+            { "nr": "1.12", "release_date": "2023-12-05", "compatibility": null },
+            { "nr": "1.13", "release_date": "2024-04-02", "compatibility": null },
+            { "nr": "1.14", "release_date": "2024-08-05", "compatibility": null },
+            { "nr": "1.15", "release_date": "2024-08-30", "compatibility": null },
+            { "nr": "1.16", "release_date": "2024-12-18", "compatibility": null },
+            { "nr": "1.17", "release_date": "2025-03-13", "compatibility": null },
+            { "nr": "1.18", "release_date": "2025-06-18", "compatibility": null },
+            { "nr": "1.19", "release_date": "2025-10-21", "compatibility": null },
+            { "nr": "1.20", "release_date": "2025-12-09", "compatibility": null },
+            { "nr": "1.21", "release_date": "2026-03-24", "compatibility": null },
+            { "nr": "1.22", "release_date": "2026-06-18", "compatibility": null }
+          ],
+          "notes": "Same coordinate and per-bucket PQC facts (1.21 = first ML-DSA-87 signature support, 1.22 adds SLH-DSA + ML-DSA-44, still no KEM-side PQC as of 1.22) as the Java registry's own Tink entry -- pure-Java, consumed unchanged from Kotlin, same AeadConfig.register()/registerStandardKeyTypes() version-split logic (see _tink_touch_line() precedent in lang_java.py). Buckets 1.0-1.6 (Tink's own pre-1.7 history, tracked in the Java registry) are deliberately NOT carried over here -- narrowed to 1.7 onward to keep this framework's very first Kotlin-registry pass to the still-actively-relevant window rather than mechanically duplicating Java's full 23-bucket history; can be extended backward on request the same way Java's own BC/Tink entries were expanded from milestone-only to full-density."
+        },
+        {
+          "name": "Conscrypt",
+          "module": "org.conscrypt:conscrypt-openjdk-uber",
+          "version": [
+            { "nr": "2.4", "release_date": "2020-03-12", "compatibility": null },
+            { "nr": "2.5", "release_date": "2021-03-30", "compatibility": null }
+          ],
+          "notes": "Same coordinate as the Java registry's own Conscrypt entry -- JNI-native provider, consumed identically from Kotlin via Security.addProvider(Conscrypt.newProvider()). Same PLATFORM LIMITATION applies unchanged regardless of calling language: neither bucket bundles ARM64/aarch64 native libraries (only the still-prerelease 2.6-alpha series does) -- will fail with UnsatisfiedLinkError on an arm64 host; see the Java registry's own Conscrypt notes for the full detail. Narrowed to the two most recent stable minors (2.4, 2.5) for this first Kotlin-registry pass rather than mechanically duplicating Java's full 10-bucket history -- can be extended backward on request."
+        },
+        {
+          "name": "KotlinCrypto",
+          "module": "org.kotlincrypto.hash:sha2-jvm",
+          "version": [
+            { "nr": "0.2", "release_date": "2023-03-12", "compatibility": null },
+            { "nr": "0.3", "release_date": "2023-06-28", "compatibility": null },
+            { "nr": "0.4", "release_date": "2023-11-30", "compatibility": null },
+            { "nr": "0.5", "release_date": "2024-03-18", "compatibility": null },
+            { "nr": "0.6", "release_date": "2025-01-15", "compatibility": null },
+            { "nr": "0.7", "release_date": "2025-02-25", "compatibility": null },
+            { "nr": "0.8", "release_date": "2025-09-19", "compatibility": null }
+          ],
+          "notes": "The one genuinely Kotlin-native (not JVM-reused-from-Java) crypto library tracked in this registry -- github.com/KotlinCrypto, group org.kotlincrypto(.hash/.macs/.core/.bitops), a Kotlin-Multiplatform hash/MAC/secure-random suite. Anchor artifact is hash:sha2-jvm (org.kotlincrypto.hash:sha2-jvm, the JVM leaf of its KMP split -- same '-jvm' suffix convention as Ktor 2.x+/KotlinCrypto's own whole ecosystem) since SHA-2 is its most broadly-used module; touch code exercises Sha256(). Bucketed at the '0.MINOR' line (0.2 through 0.8, 7 buckets, each resolving to that line's own latest patch dynamically -- e.g. 0.2 has 8 real patches 0.2.0-0.2.7) rather than every individual patch, matching this project's own established minor-line granularity (the same unit Java's BouncyCastle/Tink entries use). All 7 buckets' first-patch dates confirmed live via repo1.maven.org's Last-Modified header (org/kotlincrypto/hash/sha2-jvm/{version}/sha2-jvm-{version}.pom for 0.2.0/0.3.0/0.4.0/0.5.1/0.6.0/0.7.0/0.8.0 -- note 0.5's own first published patch is 0.5.1, no 0.5.0 was ever released, confirmed via the artifact's own maven-metadata.xml version list). IMPORTANT negative finding, confirmed via the suite's own module list: KotlinCrypto is classical-crypto only (hash functions, HMAC/KMAC, a SecureRandom abstraction, low-level bit/endian utilities) -- it has NO KEM or signature algorithms and NO post-quantum support at all, and is not a symmetric-cipher/TLS library either. This is the intentional contrast this entry exists to surface: a real, actively-maintained, idiomatic-Kotlin crypto library that is nonetheless NOT a PQC option -- liboqs-kotlin (below) is this registry's only PQC-capable entry that isn't reused wholesale from Java."
+        },
+        {
+          "name": "liboqs-kotlin",
+          "module": "source-build",
+          "version": [
+            { "nr": "0.3.0", "release_date": "2025-04-25", "compatibility": null }
+          ],
+          "notes": "liboqs-java (github.com/open-quantum-safe/liboqs-java), the official OQS-org JNI wrapper, consumed unchanged from Kotlin (plain public API: org.openquantumsafe.KeyEncapsulation/.Signature, zero porting needed -- same 'any plain-Java-API library needs no Kotlin-specific wrapper' fact as JCA/BouncyCastle/Tink/Conscrypt above, just without a Maven Central artifact backing it). CONFIRMED liboqs-java is NOT published to Maven Central (org/openquantumsafe/liboqs-java/maven-metadata.xml returns HTTP 404) -- unlike Ruby's roqs or PHP's php-liboqs which resolve through their own language's normal package registry, this binding must be BUILT FROM SOURCE in the same Dockerfile: git-clone liboqs itself (the C library) at a pinned tag, cmake+ninja build+install it, then git-clone liboqs-java and 'mvn package' it against the just-installed liboqs, producing a local jar consumed as a Gradle file-tree/flatDir dependency rather than a normal mavenCentral() coordinate -- the identical multi-stage shape as lang_php.py's php-liboqs handling (git-clone liboqs -> cmake --target install -> git-clone the language wrapper -> build against it -> multi-stage COPY of just the compiled .so/.jar into a slim runtime, discarding the ~250MB+ build toolchain), reused as the precedent rather than invented fresh. 'module' is the literal string 'source-build' (this registry's marker for 'no real package-registry identifier to check', parallel to Node's own 'built-in' marker convention) -- lang_kotlin.py's own git-tag table drives resolution instead of a live package-registry lookup, so check_updates.py's generic maven-enumerator correctly skips this entry (module isn't a 'group:artifact' string) the same way it already skips every other language's true built-ins. Only liboqs-java's latest release, 0.3.0 (2025-04-25, adds derandomized-seed KEM keygen), is tracked for this first pass -- 0.1.0 (2020-07-08) and 0.2.0 (2025-01-24) exist but are not carried over, the same 'narrow to the actively-relevant window first, extend on request' judgment call already applied to this registry's own Tink/Conscrypt entries above. liboqs-java's own pom.xml requires JDK >= 8 to build (its CI runs Ubuntu 24.04 + OpenJDK 21) and uses a conventional Maven build (git-clone + mvn package), not Gradle, for the wrapper jar itself -- only the CONSUMING Kotlin app uses Gradle."
+        }
+      ]
+    }
+  ]
+}
