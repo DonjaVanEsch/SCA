@@ -108,8 +108,21 @@ _TOOLCHAIN: dict = {
 # just the lines whose OWN default toolchain tier already sits at Gradle
 # 9.6.0 (2.3/2.4) -- no per-framework Gradle-version override needed at all
 # once the registry itself only ever asks for those two lines.
-def _toolchain(kotlin_ver: str, fw_name: str = "") -> tuple:
-    return _TOOLCHAIN[kotlin_ver]
+def _toolchain(kotlin_ver: str, fw_name: str = "", fw_major: str = "") -> tuple:
+    jdk, gradle_tag = _TOOLCHAIN[kotlin_ver]
+    if fw_name == "Micronaut" and fw_major == "5":
+        # Micronaut 5.x's own floor is JDK 25 (confirmed both in the Java
+        # registry's own "Java 25 baseline" release-blog finding and via a
+        # real Kotlin-side build failure here: "Dependency resolution is
+        # looking for a library compatible with JVM runtime version 21,
+        # but 'io.micronaut:micronaut-http-server-netty:5.1.10' is only
+        # compatible with JVM runtime version 25 or newer") -- no tracked
+        # Kotlin line's own default toolchain tier reaches JDK 25 (the
+        # highest is 21), so this major needs its own override the same
+        # way Quarkus needed a Gradle-version override. gradle:9.6.0-jdk25
+        # and eclipse-temurin:25-jre both confirmed real via Docker Hub.
+        jdk, gradle_tag = "25", "9.6.0-jdk25"
+    return jdk, gradle_tag
 
 
 # Two separate Gradle/Kotlin-tooling era boundaries, confirmed via real build
@@ -450,12 +463,16 @@ _KSP_VERSIONS: dict = {}
 
 
 def _fetch_ksp_raw_versions() -> list:
-    """KSP's own versioning scheme ('{kotlin patch}-{ksp release}', e.g.
-    '2.0.21-1.0.28') doesn't match lang_java._fetch_maven_versions()'s
-    stable-release regex (which requires a plain dotted-number string,
-    rejecting anything with a hyphen) -- that function would silently filter
-    out every real KSP version, so this fetches the raw maven-metadata.xml
-    directly instead, applying only a light RC/Beta prerelease exclusion."""
+    """KSP's own versioning scheme doesn't match lang_java._fetch_maven_
+    versions()'s stable-release regex (a plain dotted-number string) --
+    that function would silently filter out every real KSP version, so
+    this fetches the raw maven-metadata.xml directly instead. KSP itself
+    used TWO different schemes across its own history, confirmed live via
+    Maven Central: '{kotlin patch}-{ksp release}' (e.g. '2.0.21-1.0.28')
+    through Kotlin 2.2.x, then a plain, hyphen-less scheme starting
+    exactly at 2.3.0 where KSP's own version number directly matches
+    Kotlin's (a tighter K2-era integration) -- both need to survive this
+    filter, only RC/Beta prereleases are excluded."""
     global _KSP_RAW_VERSIONS
     if _KSP_RAW_VERSIONS is not None:
         return _KSP_RAW_VERSIONS
@@ -468,7 +485,7 @@ def _fetch_ksp_raw_versions() -> list:
         with urllib.request.urlopen(req, timeout=15) as resp:
             root = ET.fromstring(resp.read())
         raw = [v.text for v in root.findall(".//versions/version") if v.text]
-        versions = [v for v in raw if re.match(r"^[\d.]+-[\d.]+$", v)]
+        versions = [v for v in raw if re.match(r"^[\d.]+(-[\d.]+)?$", v)]
     except (URLError, ET.ParseError, OSError) as exc:
         raise MavenLookupError(f"{group}:{artifact}: {exc}") from exc
     _KSP_RAW_VERSIONS = versions
@@ -476,23 +493,29 @@ def _fetch_ksp_raw_versions() -> list:
 
 
 def _ksp_version(kotlin_resolved: str) -> str | None:
-    """KSP releases are versioned '{exact kotlin patch}-{ksp release}' (e.g.
-    '2.0.21-1.0.28') -- an exact-patch match is preferred, since KSP is tied
-    to the Kotlin compiler's own internal APIs at that patch, but KSP
-    releases can lag a freshly-cut Kotlin patch by days/weeks, so this falls
-    back to the latest KSP release for any patch sharing the same
-    major.minor line (still real, still compatible in practice -- Kotlin's
-    own compiler-plugin ABI is stable within a minor line) rather than
-    failing the whole combo outright."""
+    """Pre-2.3 KSP releases are versioned '{exact kotlin patch}-{ksp
+    release}' (e.g. '2.0.21-1.0.28') -- an exact-patch match is preferred,
+    falling back to the latest release for any patch sharing the same
+    major.minor line (KSP releases can lag a freshly-cut Kotlin patch by
+    days/weeks; Kotlin's own compiler-plugin ABI is stable within a minor
+    line, so this is still safe). From 2.3.0 onward KSP's own version IS
+    the Kotlin version directly (no hyphen) -- tried as an exact match
+    first, then the same same-minor-line fallback."""
     if kotlin_resolved in _KSP_VERSIONS:
         return _KSP_VERSIONS[kotlin_resolved]
     versions = _fetch_ksp_raw_versions()
+    minor_prefix = ".".join(kotlin_resolved.split(".")[:2]) + "."
     exact = sorted((v for v in versions if v.startswith(kotlin_resolved + "-")), key=_ver_key)
+    direct = [v for v in versions if v == kotlin_resolved]
     if exact:
         result = exact[-1]
+    elif direct:
+        result = direct[0]
     else:
-        minor_prefix = ".".join(kotlin_resolved.split(".")[:2]) + "."
-        same_minor = sorted((v for v in versions if v.startswith(minor_prefix)), key=_ver_key)
+        same_minor = sorted(
+            (v for v in versions if v.startswith(minor_prefix) and "-" not in v),
+            key=_ver_key,
+        )
         result = same_minor[-1] if same_minor else None
     _KSP_VERSIONS[kotlin_resolved] = result
     return result
@@ -1145,7 +1168,7 @@ def _settings_gradle_kts() -> str:
 # ── Dockerfile generation ─────────────────────────────────────────────────────────
 
 def make_dockerfile(kotlin_ver: str, fw_name: str, fw_major: str, lib_name: str, lib_ver: str) -> str:
-    jdk, gradle_tag = _toolchain(kotlin_ver, fw_name)
+    jdk, gradle_tag = _toolchain(kotlin_ver, fw_name, fw_major)
     cache_bust = f'ARG PQC_COMBO_ID="{fw_name}-{fw_major}-{lib_name}@{lib_ver}"\n'
     needs_liboqs = lib_name == "liboqs-kotlin"
 
@@ -1302,6 +1325,17 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
             shutil.rmtree(out)
         return False
 
+    if fw_name == "Micronaut" and fw_major in _MICRONAUT_KSP_MAJORS and _ksp_version(kotlin_resolved) is None:
+        # Confirmed genuinely absent, not a lookup failure: KSP hasn't
+        # published a release for this Kotlin line yet (e.g. no 2.4.x KSP
+        # release exists as of this writing) -- skip rather than write a
+        # broken "version None" literal into the generated build.gradle.kts
+        # (a real bug this guard was added specifically to prevent).
+        print(f"  [SKIP] No KSP release found for Kotlin {kotlin_resolved} (Micronaut {fw_major})", flush=True)
+        if out.exists():
+            shutil.rmtree(out)
+        return False
+
     if lib_name == "liboqs-kotlin":
         lib_resolved = lib_ver  # exact git tag version, never Maven-resolved
     elif lib_ver == "builtin":
@@ -1335,7 +1369,7 @@ def write_context(lang_ver: str, fw_name: str, fw_major: str,
         (res_dir / "application.properties").write_text(port_config, encoding="utf-8")
     (out / "settings.gradle.kts").write_text(_settings_gradle_kts(), encoding="utf-8")
 
-    jdk, _gradle_tag = _toolchain(lang_ver)
+    jdk, _gradle_tag = _toolchain(lang_ver, fw_name, fw_major)
     (out / "build.gradle.kts").write_text(
         _gradle_build_kts(kotlin_resolved, jdk, fw_name, fw_major, fw_resolved, lib_name, lib_resolved),
         encoding="utf-8",
