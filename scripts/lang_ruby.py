@@ -1610,7 +1610,17 @@ def make_dockerfile(ruby_ver: str, fw_name: str, fw_major: str,
         "h.run(app, Host: '0.0.0.0', Port: 8000, DoNotReverseLookup: true)"
     )
     if fw_name == "Sinatra":
-        cmd = 'CMD ["ruby", "app.rb"]\n'
+        # Plain `ruby app.rb` (no `bundle exec`) relies on RubyGems' own
+        # implicit gem activation to find Bundler-installed gems --
+        # fragile to exactly the same install-path variability found in
+        # argon2_relink's own fix elsewhere in this module: some Ruby/
+        # Bundler combinations nest gems under an extra ruby/<api_
+        # version>/ level (e.g. /usr/local/bundle/ruby/2.3.0/gems/...
+        # confirmed via a real crash on Ruby 2.3 + Bundler 2.3.27:
+        # "cannot load such file -- sinatra"), which plain `ruby`
+        # doesn't know to look in but `bundle exec` (used by every
+        # OTHER framework in this module) always handles correctly.
+        cmd = f'CMD ["bundle", "_{bundler_ver}_", "exec", "ruby", "app.rb"]\n'
         app_copy = "COPY app.rb versions.rb ./\n"
     elif fw_name == "Hanami" and fw_major in ("2", "3"):
         cmd = f'CMD ["bundle", "_{bundler_ver}_", "exec", "ruby", "-e", "{_webrick_boot}"]\n'
