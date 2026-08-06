@@ -152,6 +152,23 @@ def _toolchain(kotlin_ver: str, fw_name: str = "", fw_major: str = "") -> tuple:
         # which every other combo in this registry already avoids by
         # construction.
         jdk, gradle_tag = "11", "7.6.4-jdk11"
+    elif fw_name == "Spring Boot" and fw_major == "3" and kotlin_ver == "1.7":
+        # Spring Boot 3 has required JDK >=17 since its very first release
+        # (a deliberate baseline raise from Boot 2's Java 8, not something
+        # that crept in at a later patch) -- confirmed via a real Gradle
+        # Module Metadata variant-matching failure resolving Spring Boot 3
+        # (always resolved to its own absolute latest patch, 3.5.16, same
+        # as every other framework without Ktor/http4k-style per-patch
+        # drift) against Kotlin 1.7's own default toolchain tier (JDK 11):
+        # "Variant 'runtimeElements' ... declares a component compatible
+        # with Java 17 and the consumer needed a component compatible
+        # with Java 11". Kotlin 1.7 (June 2022) already postdates JDK 17's
+        # release and kotlinc itself never needed more than JDK 8, so this
+        # is just unused headroom, the same reasoning already applied when
+        # 1.5 was moved off the 5.6.4/JDK8 tier. Every OTHER Kotlin line
+        # registered as Spring-Boot-3-compatible (1.8 onward) already
+        # defaults to JDK 17+, so this override is needed for 1.7 only.
+        jdk, gradle_tag = "17", "7.6.4-jdk17"
     return jdk, gradle_tag
 
 
@@ -1068,6 +1085,7 @@ def _lib_dependency_line(lib_name: str, lib_resolved: str) -> str:
 def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: str,
                        fw_resolved: str, lib_name: str, lib_resolved: str) -> str:
     lib_dep = _lib_dependency_line(lib_name, lib_resolved)
+    force_block = ""
 
     if fw_name == "Quarkus":
         return _gradle_build_kts_quarkus(kotlin_resolved, jdk, fw_major, fw_resolved, lib_dep,
@@ -1125,10 +1143,37 @@ def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: st
         # `application` plugin (used uniformly for both frameworks here) is
         # sufficient to produce a runnable install image without adding a
         # second build-tool-plugin-version axis to resolve and verify.
+        jackson_kotlin_resolved = _resolve_jackson_kotlin(kotlin_resolved)
         fw_deps = (
             f'    implementation("org.springframework.boot:spring-boot-starter-web:{fw_resolved}")\n'
             f'    implementation("org.jetbrains.kotlin:kotlin-reflect:{kotlin_resolved}")\n'
-            f'    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:{_resolve_jackson_kotlin(kotlin_resolved)}")\n'
+            f'    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:{jackson_kotlin_resolved}")\n'
+        )
+        # spring-boot-starter-web transitively pulls spring-boot-starter-json,
+        # which imports com.fasterxml.jackson:jackson-bom as a platform() at
+        # WHATEVER Jackson version that Spring Boot patch itself resolved to
+        # -- a real, confirmed conflict (via a live Gradle dependencyInsight
+        # report, not assumed): Boot 3.5.16 imports jackson-bom:2.21.4, which
+        # manages jackson-module-kotlin's own version too, and since a
+        # platform() import's recommendation participates in normal (non-
+        # enforced) conflict resolution, Gradle picked jackson-bom's 2.21.4
+        # over this project's own, deliberately-older, per-line-resolved
+        # 2.17.3 request -- silently pulling a too-new jackson-module-kotlin
+        # (and, transitively, ITS OWN kotlin-reflect:2.1.21) back onto the
+        # classpath despite the explicit lower version declared above,
+        # reproducing the exact "Class was compiled with an incompatible
+        # version of Kotlin" failure _resolve_jackson_kotlin() exists to
+        # avoid. Fixed the same way Quarkus's own BOM-override conflicts
+        # were fixed: resolutionStrategy.force() this project's own resolved
+        # version, which DOES take precedence over a platform()'s
+        # recommendation.
+        force_block = (
+            "configurations.all {\n"
+            "    resolutionStrategy.force(\n"
+            f'        "com.fasterxml.jackson.module:jackson-module-kotlin:{jackson_kotlin_resolved}"\n'
+            "    )\n"
+            "}\n"
+            "\n"
         )
 
     extra_plugins = ""
@@ -1199,6 +1244,7 @@ def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: st
         "\n"
         f"{app_block}"
         "\n"
+        f"{force_block}"
         f"{kotlin_block}"
     )
 
