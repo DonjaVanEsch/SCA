@@ -938,7 +938,7 @@ def load_registry() -> dict[str, int]:
                     for fv in versions:
                         nr        = _norm_version(str(fv.get("nr", "")))
                         rdate     = fv.get("release_date")
-                        compat    = json.dumps(fv.get("compatibility", []))
+                        compat    = json.dumps(fv.get("compatibility") or [])
                         available = int(bool(fv.get("available", True)))
                         seen_fw_versions.add(nr)
                         conn.execute(
@@ -998,7 +998,7 @@ def load_registry() -> dict[str, int]:
                     for lv in versions:
                         nr        = _norm_version(str(lv.get("nr", "")))
                         rdate     = lv.get("release_date")
-                        compat    = json.dumps(lv.get("compatibility", []))
+                        compat    = json.dumps(lv.get("compatibility") or [])
                         available = int(bool(lv.get("available", True)))
                         seen_lib_versions.add(nr)
                         conn.execute(
@@ -1059,7 +1059,7 @@ def load_registry() -> dict[str, int]:
                     for hv in versions:
                         nr        = _norm_version(str(hv.get("nr", "")))
                         rdate     = hv.get("release_date")
-                        compat    = json.dumps(hv.get("compatibility", []))
+                        compat    = json.dumps(hv.get("compatibility") or [])
                         available = int(bool(hv.get("available", True)))
                         seen_hc_versions.add(nr)
                         conn.execute(
