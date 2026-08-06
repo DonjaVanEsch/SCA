@@ -1307,15 +1307,12 @@
     min-height: 0;
     overflow-y: auto;
     /* Same clearance #table-wrap/#report-table-wrap already give their own
-       scrollable content -- this panel (and .ref-hscroll below) never had
-       it, which is the actual overlap bug reported for the Reference/
-       Agility tabs. A separate attempt to fix this generically via a JS-
-       computed max-height on the whole .tab-panel double-counted the
-       clearance for tabs like Sources/Reports that already handle it here
-       (confirmed live via a screenshot: an empty gap sized like the
-       header/toolbar appeared above the log once BOTH mechanisms applied)
-       -- plain margin-bottom on the actual scrolling element is the
-       correct, already-proven pattern, not a wrapper-level max-height. */
+       scrollable content -- this element (the actual overflow:auto one,
+       used standalone for #tab-agility and nested inside .ref-hscroll for
+       #tab-reference) never had it, which is the real overlap bug reported
+       for both tabs. Belongs HERE only -- see .ref-hscroll's own comment
+       below for why it must NOT also carry this, on pain of double-
+       counting the same clearance a second time. */
     margin-bottom: var(--dock-h);
   }
 
@@ -1326,13 +1323,18 @@
     padding: 16px;
   }
 
-  /* Registry reference: cards always in a single horizontally-scrollable row */
+  /* Registry reference: cards always in a single horizontally-scrollable row.
+     Dock clearance lives on .ref-scroll below (the actual overflow:auto
+     element, nested inside this one) -- NOT here too. .ref-hscroll is just
+     a flex:1 layout wrapper around the nav buttons + that scroll area, so
+     margin-bottom here would reserve dock height a second time on top of
+     .ref-scroll's own, double-counting it again (confirmed live: the same
+     class of bug this whole margin-bottom approach was meant to fix). */
   .ref-hscroll {
     position: relative;
     flex: 1;
     min-height: 0;
     display: flex;
-    margin-bottom: var(--dock-h);
   }
 
   .ref-scroll-h {
