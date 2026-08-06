@@ -1619,8 +1619,13 @@
 
   .log-panel {
     position: relative;
-    flex: 0 0 480px;
-    width: 480px;
+    /* Flexible, not fixed: one panel grows to fill the row (up to
+       max-width, so a single log on a wide screen doesn't stretch to an
+       unreadable line length); several panels shrink together to fit
+       side by side (down to min-width) before the row's own
+       overflow-x:auto finally kicks in as a fallback for more panels
+       than can fit even at that floor. */
+    flex: 1 1 480px;
     min-width: 320px;
     max-width: 720px;
     background: var(--surface2);
