@@ -1619,15 +1619,16 @@
 
   .log-panel {
     position: relative;
-    /* Flexible, not fixed: one panel grows to fill the row (up to
-       max-width, so a single log on a wide screen doesn't stretch to an
-       unreadable line length); several panels shrink together to fit
-       side by side (down to min-width) before the row's own
-       overflow-x:auto finally kicks in as a fallback for more panels
-       than can fit even at that floor. */
+    /* Flexible, not fixed: with only one (or few) open, it grows to fill
+       the WHOLE row -- no max-width cap, confirmed live that a 720px cap
+       left a large empty gap next to a single remaining panel once the
+       other three were closed, which is exactly the "doesn't use the
+       space that's there" behavior this was meant to avoid. Several
+       panels shrink together to fit side by side (down to min-width)
+       before the row's own overflow-x:auto finally kicks in as a
+       fallback for more panels than can fit even at that floor. */
     flex: 1 1 480px;
     min-width: 320px;
-    max-width: 720px;
     background: var(--surface2);
     display: flex;
     flex-direction: column-reverse;
