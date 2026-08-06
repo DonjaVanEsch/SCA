@@ -122,6 +122,36 @@ def _toolchain(kotlin_ver: str, fw_name: str = "", fw_major: str = "") -> tuple:
         # way Quarkus needed a Gradle-version override. gradle:9.6.0-jdk25
         # and eclipse-temurin:25-jre both confirmed real via Docker Hub.
         jdk, gradle_tag = "25", "9.6.0-jdk25"
+    elif fw_name == "Quarkus" and fw_major in ("1", "2"):
+        # Quarkus majors 1/2's own Gradle plugin is EOL and was never
+        # updated for a Gradle this new -- two separate real, confirmed
+        # failures, not one: major 1's latest patch (1.13.7.Final, ~2021)
+        # calls org.gradle.api.plugins.JavaPluginConvention, removed
+        # outright at Gradle 9.0 ("org/gradle/api/plugins/
+        # JavaPluginConvention ... > org.gradle.api.plugins.
+        # JavaPluginConvention"), and ALSO fails under Gradle 8.14.2 with a
+        # different removed-API error ('java.io.File org.gradle.api.file.
+        # SourceDirectorySet.getOutputDir()'); major 2's latest patch
+        # (2.16.12.Final, 2023-10-16) fails under Gradle 9.6.0 specifically
+        # with "Cannot add a configuration with name
+        # 'integrationTestImplementation' as a configuration with that
+        # name already exists" (a real, documented Quarkus Gradle-plugin
+        # bug -- quarkusio/quarkus's own issue tracker -- tied to newer
+        # Gradle's auto-registered test-suite configurations, never
+        # backported to the already-EOL 2.x line). Confirmed via a real
+        # isolated build+run+curl that Gradle 7.6.4 (old enough to predate
+        # both removed APIs and the test-suite auto-registration change,
+        # but still new enough to run this project's own Kotlin 2.3/2.4
+        # KGP releases cleanly) fixes both, for both majors, with zero
+        # code changes beyond the toolchain pair itself -- gradle:7.6.4-
+        # jdk11 and eclipse-temurin:11-jre both confirmed real via Docker
+        # Hub. jdk is downgraded to 11 alongside (not left at 21) so the
+        # Gradle daemon's own bundled JDK and the jvmToolchain() compile
+        # target match exactly -- avoids relying on Gradle's toolchain
+        # auto-download reaching the network during the image build,
+        # which every other combo in this registry already avoids by
+        # construction.
+        jdk, gradle_tag = "11", "7.6.4-jdk11"
     return jdk, gradle_tag
 
 
@@ -610,14 +640,21 @@ _PORT_CONFIG = {
     "Ktor": None,
     "http4k": None,  # port is an explicit Undertow(8000) argument in Main.kt itself
     "Micronaut": "micronaut.server.port=8000\n",
-    # quarkus.package.jar.type is a build-time property Quarkus's own
-    # augmentation step reads straight from application.properties (there is
-    # no separate Gradle-DSL equivalent the way a Maven <properties> entry
-    # is) -- without it Quarkus defaults to its fast-jar layout (a
-    # quarkus-app/ directory + quarkus-run.jar + lib/), not the single
-    # app-runner.jar this project's Dockerfile CMD expects. Matches
-    # lang_java.py's own uber-jar packaging choice for consistency.
-    "Quarkus": "quarkus.http.port=8000\nquarkus.package.jar.type=uber-jar\n",
+    # quarkus.package.type (NOT quarkus.package.jar.type) is the property
+    # Quarkus's own build-time augmentation step reads to select uber-jar
+    # packaging (there is no separate Gradle-DSL equivalent the way a Maven
+    # <properties> entry is) -- without it Quarkus defaults to its fast-jar
+    # layout (a quarkus-app/ directory + quarkus-run.jar + lib/), not the
+    # single app-runner.jar this project's Dockerfile CMD expects.
+    # quarkus.package.jar.type only exists from Quarkus 3.10 onward
+    # (confirmed: quarkus.package.type is silently ignored -- no error, no
+    # warning, just wrong output -- on the older majors this registry
+    # tracks); quarkus.package.type itself is confirmed to still work on
+    # 3.10+ too (a real build+run: only a "has been deprecated" log line,
+    # output unaffected), so it's used unconditionally for every major
+    # rather than splitting by era. Matches lang_java.py's own uber-jar
+    # packaging choice for consistency.
+    "Quarkus": "quarkus.http.port=8000\nquarkus.package.type=uber-jar\n",
 }
 
 
