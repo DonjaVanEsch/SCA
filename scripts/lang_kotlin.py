@@ -169,6 +169,26 @@ def _toolchain(kotlin_ver: str, fw_name: str = "", fw_major: str = "") -> tuple:
         # registered as Spring-Boot-3-compatible (1.8 onward) already
         # defaults to JDK 17+, so this override is needed for 1.7 only.
         jdk, gradle_tag = "17", "7.6.4-jdk17"
+    elif fw_name == "http4k" and fw_major == "6" and kotlin_ver == "2.0":
+        # http4k v6 (Community Edition) set its minimum JVM target to 21
+        # for the WHOLE major from its very first release -- a deliberate,
+        # documented decision ("From v6, http4k CE will set its minimum
+        # supported target JVM version to 21", http4k.org/news/http4k-v6-
+        # and-ee/), not something that crept in at a later checkpoint.
+        # Confirmed two ways, not assumed: a real runtime crash
+        # (UnsupportedClassVersionError: org/http4k/routing/
+        # RoutingHttpHandler has been compiled by a more recent version of
+        # the Java Runtime (class file version 65.0), this version only
+        # recognizes up to 61.0 -- 65=JDK21, 61=JDK17) resolving http4k 6's
+        # own Kotlin-2.0 checkpoint (6.0.1.0) against Kotlin 2.0's default
+        # toolchain tier (JDK 17); and directly inspecting that checkpoint's
+        # own compiled RoutingHttpHandler.class bytes (cafe babe 0000 0041),
+        # confirming major version 0x41=65 regardless of which Kotlin
+        # compiler built it. Every OTHER Kotlin line registered as
+        # http4k-6-compatible (2.1 onward) already defaults to JDK 21+, so
+        # this override is needed for 2.0 only -- reuses Kotlin 2.1's own
+        # already-proven Gradle tag rather than inventing a new one.
+        jdk, gradle_tag = "21", "8.10.2-jdk21"
     return jdk, gradle_tag
 
 
