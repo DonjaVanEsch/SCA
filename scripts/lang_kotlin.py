@@ -492,6 +492,41 @@ _KSP_RAW_VERSIONS: list | None = None
 _KSP_VERSIONS: dict = {}
 
 
+# Tink's own generated protobuf code embeds a runtime-version check
+# (com.google.protobuf.RuntimeVersion, added to protobuf-java's own gencode-
+# version-checking feature starting in its 3.25.x/4.x era) from Tink 1.16
+# onward -- confirmed via a real batch-test failure under Quarkus majors 1/2
+# specifically ("NoClassDefFoundError: com/google/protobuf/RuntimeVersion
+# $RuntimeDomain" at app startup, Tink 1.16-1.22, both Kotlin 2.3/2.4;
+# majors/lines outside that exact window all pass). Root cause: Quarkus's
+# own quarkus-bom pins protobuf-java to an old, pre-RuntimeVersion release
+# (3.14.0 for major 1, 3.22.0 for major 2 -- confirmed live via each BOM's
+# own POM) and, since it's imported as enforcedPlatform, that pin overrides
+# Tink's own newer requirement (4.28.2 for Tink 1.16) the same way it
+# already overrode kotlin-stdlib's version (see the force block below).
+# Major 3's own BOM pins a new enough protobuf-java already, which is why
+# only majors 1/2 hit this. Fetches Tink's own POM property live rather
+# than hardcoding, since this floor moves with every Tink release.
+_TINK_PROTOBUF_CACHE: dict = {}
+
+
+def _tink_protobuf_version(tink_resolved: str) -> str | None:
+    if tink_resolved in _TINK_PROTOBUF_CACHE:
+        return _TINK_PROTOBUF_CACHE[tink_resolved]
+    url = (f"https://repo1.maven.org/maven2/com/google/crypto/tink/tink/"
+           f"{tink_resolved}/tink-{tink_resolved}.pom")
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+    except URLError:
+        result = None
+    else:
+        m = re.search(r"<protobuf-java\.version>([^<]+)</protobuf-java\.version>", text)
+        result = m.group(1) if m else None
+    _TINK_PROTOBUF_CACHE[tink_resolved] = result
+    return result
+
+
 def _fetch_ksp_raw_versions() -> list:
     """KSP's own versioning scheme doesn't match lang_java._fetch_maven_
     versions()'s stable-release regex (a plain dotted-number string) --
@@ -992,7 +1027,8 @@ def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: st
     lib_dep = _lib_dependency_line(lib_name, lib_resolved)
 
     if fw_name == "Quarkus":
-        return _gradle_build_kts_quarkus(kotlin_resolved, jdk, fw_major, fw_resolved, lib_dep)
+        return _gradle_build_kts_quarkus(kotlin_resolved, jdk, fw_major, fw_resolved, lib_dep,
+                                          lib_name, lib_resolved)
 
     if fw_name == "Ktor":
         fw_deps = (
@@ -1125,7 +1161,8 @@ def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: st
 
 
 def _gradle_build_kts_quarkus(kotlin_resolved: str, jdk: str, fw_major: str,
-                               fw_resolved: str, lib_dep: str) -> str:
+                               fw_resolved: str, lib_dep: str,
+                               lib_name: str, lib_resolved: str) -> str:
     """Quarkus genuinely needs its own build-time bytecode-augmentation step
     to function at all (confirmed via lang_java.py's own Maven pom.xml,
     which already binds quarkus-maven-plugin's 'build' goal into the
@@ -1188,14 +1225,24 @@ def _gradle_build_kts_quarkus(kotlin_resolved: str, jdk: str, fw_major: str,
         # situation (takes precedence over an enforced platform).
         "configurations.all {\n"
         "    resolutionStrategy.force(\n"
-        f'        "org.jetbrains.kotlin:kotlin-stdlib:{kotlin_resolved}"\n'
-        "    )\n"
+        f'        "org.jetbrains.kotlin:kotlin-stdlib:{kotlin_resolved}"'
+        f"{_tink_protobuf_force_arg(lib_name, lib_resolved)}"
+        "\n    )\n"
         "}\n"
         "\n"
         "kotlin {\n"
         f"    jvmToolchain({jdk})\n"
         "}\n"
     )
+
+
+def _tink_protobuf_force_arg(lib_name: str, lib_resolved: str) -> str:
+    if lib_name != "Tink":
+        return ""
+    protobuf_ver = _tink_protobuf_version(lib_resolved)
+    if not protobuf_ver:
+        return ""
+    return f',\n        "com.google.protobuf:protobuf-java:{protobuf_ver}"'
 
 
 def _settings_gradle_kts() -> str:
