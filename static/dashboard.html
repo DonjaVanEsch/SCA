@@ -7398,6 +7398,11 @@
     state.currentTab = name;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
+    // Re-apply the bottom-dock clearance to whichever panel just became
+    // active -- neither ResizeObserver (dock height, body size) fires on a
+    // plain tab switch, so without this an expanded log console would keep
+    // covering the newly-shown panel's own content until the NEXT resize.
+    if (window._setActiveTabMaxH) window._setActiveTabMaxH();
     document.getElementById('pagination').style.display =
       (name === 'images' || name === 'reports' || name === 'client-reports' || (name === 'clients' && _clientView === 'images')) ? '' : 'none';
     if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
@@ -8049,26 +8054,32 @@
   // collapsed/expanded) but #detail-drawer is a separate fixed-position panel
   // that doesn't sit in the same flex column, so it needs the current dock
   // height mirrored into a CSS var to know how much to leave clear at its own
-  // bottom edge. The Settings page (#tab-settings) gets an explicit pixel
-  // max-height on top of that -- it's a normal-flow flex item (not fixed
-  // like the drawer), and margin-bottom alone left it overlapping an
-  // expanded log console, so this pins a hard, unambiguous ceiling instead
-  // of relying on margin/flex-basis interaction to shrink it correctly.
+  // bottom edge. Every .tab-panel is a normal-flow flex item (not fixed like
+  // the drawer) that otherwise assumes the full viewport height is free --
+  // margin-bottom alone isn't enough to shrink it correctly, so this pins an
+  // explicit pixel max-height on whichever one is currently .active instead
+  // (originally only applied to #tab-settings; #tab-reference hit the exact
+  // same overlap -- its own per-language filter bar and cards rendering
+  // behind an expanded log console -- confirmed live, so this now covers
+  // every tab generically rather than needing a fresh one-off fix per tab).
+  // setActiveTabMaxH is also called from switchTab() itself, since changing
+  // tabs while the log is already open doesn't fire either ResizeObserver.
   (function () {
     const dock = document.getElementById('bottom-dock');
     const body = document.getElementById('body');
-    const settingsPage = document.getElementById('tab-settings');
     if (!dock) return;
-    const setDockH = () => {
+    const setActiveTabMaxH = () => {
       const h = dock.offsetHeight;
       document.documentElement.style.setProperty('--dock-h', `${h}px`);
-      if (settingsPage && body) {
-        settingsPage.style.maxHeight = `${body.clientHeight - h}px`;
+      const activePanel = document.querySelector('.tab-panel.active');
+      if (activePanel && body) {
+        activePanel.style.maxHeight = `${body.clientHeight - h}px`;
       }
     };
-    setDockH();
-    new ResizeObserver(setDockH).observe(dock);
-    new ResizeObserver(setDockH).observe(body);
+    window._setActiveTabMaxH = setActiveTabMaxH;
+    setActiveTabMaxH();
+    new ResizeObserver(setActiveTabMaxH).observe(dock);
+    new ResizeObserver(setActiveTabMaxH).observe(body);
   })();
 
   // ── Manual resize handles (log console height, detail drawer width) ────────
