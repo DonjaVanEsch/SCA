@@ -1570,30 +1570,32 @@
     text-decoration: underline;
   }
 
-  /* ── Log console ────────────────────────────────────────────────────────── */
+  /* ── Log console ─────────────────────────────────────────────────────────
+     Multiple independent jobs (e.g. a running batch AND a manually-
+     triggered update-check) each get their OWN panel here, laid out in a
+     horizontally-scrollable row, instead of one shared box that the newer
+     job's output would silently clobber. #log-console is now just the row;
+     .log-resize-handle is a direct child (still ONE shared height for the
+     whole row, dragged the same way as before); each job gets its own
+     dynamically-created .log-panel (see _createLogPanel() in the script)
+     carrying what #log-header/#log-title/.../#log-body used to be as
+     fixed, singular IDs. */
   #log-console {
     position: relative;
     flex: 1;
     min-width: 0;
-    background: var(--surface2);
     height: var(--log-h);
     display: none;
-    flex-direction: column-reverse;
-    overflow: hidden;
+    flex-direction: row;
+    gap: 1px;
+    overflow-x: auto;
+    overflow-y: hidden;
     pointer-events: all;
     transition: height .2s ease;
   }
 
   #log-console.open {
     display: flex
-  }
-
-  #log-console.collapsed {
-    height: auto
-  }
-
-  #log-console.collapsed #log-body {
-    display: none
   }
 
   #log-console.resizing {
@@ -1615,7 +1617,37 @@
     background: var(--accent)
   }
 
-  #log-header {
+  .log-panel {
+    position: relative;
+    flex: 0 0 480px;
+    width: 480px;
+    min-width: 320px;
+    max-width: 720px;
+    background: var(--surface2);
+    display: flex;
+    flex-direction: column-reverse;
+    overflow: hidden;
+    border-left: 1px solid var(--border2);
+  }
+
+  .log-panel:first-child {
+    border-left: none
+  }
+
+  /* Collapsing shrinks just this ONE panel to its header's natural height
+     (align-self overrides the row's default cross-axis stretch), leaving
+     any other still-open panel at the row's normal shared height --
+     collapse is per-job now, not a whole-row state. */
+  .log-panel.collapsed {
+    align-self: flex-end;
+    height: auto;
+  }
+
+  .log-panel.collapsed .log-body {
+    display: none
+  }
+
+  .log-header {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1625,24 +1657,27 @@
     flex-shrink: 0;
   }
 
-  #log-title {
+  .log-title {
     font-size: 12px;
     font-weight: 600;
-    flex: 1
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  #log-status {
+  .log-status {
     font-size: 11px;
     color: var(--muted2)
   }
 
-  #log-progress {
+  .log-progress {
     font-size: 11px;
     font-family: var(--mono);
     color: var(--accent)
   }
 
-  #log-body {
+  .log-body {
     flex: 1;
     overflow-y: auto;
     padding: 8px 14px;
@@ -1653,26 +1688,26 @@
     background: var(--surface2);
   }
 
-  #log-body .log-err {
+  .log-body .log-err {
     color: var(--danger)
   }
 
-  #log-body .log-link {
+  .log-body .log-link {
     color: var(--accent);
     text-decoration: underline;
     cursor: pointer;
   }
 
-  #log-body .log-link:hover {
+  .log-body .log-link:hover {
     text-decoration: none;
   }
 
-  #log-body .log-done {
+  .log-body .log-done {
     color: var(--accent);
     font-weight: 600
   }
 
-  #log-body .log-phase-sep {
+  .log-body .log-phase-sep {
     margin: 6px 0;
     color: var(--muted2);
     font-size: 10px;
@@ -3457,19 +3492,9 @@
   </div>
   <div id="log-console">
     <div id="log-resize-handle" title="Drag to resize"></div>
-    <div id="log-header">
-      <div style="width:8px;height:8px;border-radius:50%" id="log-dot" class="running"></div>
-      <span id="log-title">Job output</span>
-      <span id="log-progress"></span>
-      <span id="log-elapsed" style="font-size:11px;font-family:var(--mono);color:var(--muted2)"></span>
-      <span id="log-status" style="margin-left:auto;color:var(--muted2)">Running…</span>
-      <button class="btn btn-warning btn-sm" id="btn-cancel-job" style="display:none"
-        title="Stop after current source">■
-        Cancel</button>
-      <button class="btn btn-ghost btn-sm" id="btn-collapse-log" title="Collapse">▼</button>
-      <button class="btn btn-ghost btn-sm" id="btn-close-log" title="Close">✕</button>
-    </div>
-    <div id="log-body"></div>
+    <!-- Individual .log-panel elements (one per concurrently-running or
+         recently-finished job) are created here dynamically -- see
+         _createLogPanel() in the script below. -->
   </div>
   <button id="updates-badge" title="New framework/library versions detected upstream">
     🔔 <span id="updates-badge-count">0</span> new versions
@@ -3710,13 +3735,20 @@
     }
   }
 
+  .log-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
   /* background/animation live here, not in the element's inline style --
      an inline style attribute always wins over ANY stylesheet rule
      regardless of selector specificity, so toggling className alone could
      never actually change the look while the old hardcoded inline
      background/animation were still present. That was the real bug behind
      the dot never visually leaving its pulsing state. */
-  #log-dot.running {
+  .log-dot.running {
     background: var(--success);
     animation: pulse 1.5s infinite;
   }
@@ -3725,17 +3757,17 @@
      colored by outcome rather than a single flat "done" gray -- green =
      all passed, amber = interrupted/uncertain (e.g. lost SSE connection),
      red = at least one failure or a hard error. */
-  #log-dot.done-ok {
+  .log-dot.done-ok {
     background: var(--success);
     animation: none
   }
 
-  #log-dot.done-warn {
+  .log-dot.done-warn {
     background: var(--warning);
     animation: none
   }
 
-  #log-dot.done-fail {
+  .log-dot.done-fail {
     background: var(--danger);
     animation: none
   }
@@ -4178,18 +4210,23 @@
   }
 
   // ── Selection ─────────────────────────────────────────────────────────────
-  // While a batch job is running, the SELECTION itself must stay frozen --
-  // browsing/filtering the list is still fine (that never touches
-  // state.selected/clientState.selected), only the actual set of selected
-  // ids is locked until the run finishes or is cancelled. _currentJobId is
-  // the one shared flag every job type (build/test/remove/ignore/include/
-  // registry-apply/...) already sets via openLog() and clears on
-  // completion -- reusing it here rather than adding a separate "batch
-  // running" flag that could drift out of sync with the real job state.
+  // While a batch job that actually OPERATES ON the current selection is
+  // running, the SELECTION itself must stay frozen -- browsing/filtering
+  // the list is still fine (that never touches state.selected/
+  // clientState.selected), only the actual set of selected ids is locked
+  // until that run finishes or is cancelled. Scoped to just these action
+  // names (not "any job at all") since multiple independent panels can now
+  // run concurrently -- an unrelated background job (an update-check, a
+  // registry apply, ...) must NOT also freeze the selection, only a job
+  // that genuinely consumes it.
+  const _SELECTION_LOCKING_ACTIONS = new Set(
+    ['build', 'test', 'fingerprint', 'run_container', 'stop', 'remove', 'mark_success']);
   function _selectionLocked() {
-    if (_currentJobId !== null) {
-      toast('Selection is locked while a job is running', 'err');
-      return true;
+    for (const panel of _logPanels.values()) {
+      if (panel.jobId && _SELECTION_LOCKING_ACTIONS.has(panel.action)) {
+        toast('Selection is locked while a job is running', 'err');
+        return true;
+      }
     }
     return false;
   }
@@ -4713,7 +4750,6 @@
       openLog(`${action} — ${ids.length} client image(s)`, res.job_id, action, onDone, jobMeta, keepLogs);
     } catch (e) {
       toast(`Failed to start ${action}: ${e.message}`, 'err');
-      localStorage.removeItem('pqc-active-job');
       if (onDone) onDone(true);
     }
   }
@@ -5044,7 +5080,6 @@
       openLog(`${action} — ${ids.length} source(s)`, res.job_id, action, onDone, jobMeta, keepLogs);
     } catch (e) {
       toast(`Failed to start ${action}: ${e.message}`, 'err');
-      localStorage.removeItem('pqc-active-job');
       if (onDone) onDone(true); // true = error, skip remaining
     }
   }
@@ -5079,7 +5114,6 @@
 
     function runNext(i) {
       if (i >= actions.length) {
-        localStorage.removeItem('pqc-active-job');
         if (document.getElementById('opt-deselect-after').checked) deselectAll();
         document.getElementById('btn-start').disabled = state.selected.size === 0;
         loadImages(state.page);
@@ -5091,7 +5125,6 @@
       const pending = actions.slice(i + 1);
       runAction(actions[i], ids, opts, (err, cancelled) => {
         if (err || cancelled) {
-          localStorage.removeItem('pqc-active-job');
           document.getElementById('btn-start').disabled = state.selected.size === 0;
         } else {
           runNext(i + 1);
@@ -6370,11 +6403,13 @@
   }
 
   // ── Log console (SSE) ─────────────────────────────────────────────────────
-  let _es = null;
-  let _currentJobId = null;
-  let _wasCancelled = false;
-  let _timerInterval = null;
-  let _batchStart = null; // persists across chained (keepLogs=true) openLog() calls, so Build→Test→Fingerprint shows one continuous elapsed time instead of restarting per action
+  // Each concurrently-running (or just-finished, until closed) job gets its
+  // own .log-panel, tracked here by a synthetic panel id -- NOT by jobId,
+  // since a chained action (Build→Test→Fingerprint, keepLogs=true) reuses
+  // the SAME panel across multiple different jobIds, one per phase.
+  let _logPanels = new Map(); // panelId -> panel state (see _createLogPanel)
+  let _lastPanelId = null;    // most recently opened panel; keepLogs=true targets this one
+  let _panelSeq = 0;
 
   function _fmtElapsed(ms) {
     const s = Math.floor(ms / 1000);
@@ -6384,110 +6419,208 @@
     if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     return `${m}:${String(sec).padStart(2, '0')}`;
   }
-  // jobMeta = { pending_actions, image_ids, opts, run_name } — save to localStorage when set
+
+  // Keyed by jobId (server-assigned, stable across a reload), NOT by the
+  // synthetic panel id -- panel ids reset to log-panel-1, -2, ... on every
+  // fresh page load, so a panel id saved before a reload would never match
+  // the new panel a post-reload reconnect creates, leaving the old entry
+  // stuck in localStorage forever instead of being cleared on [DONE].
+  function _saveActiveJob(jobId, job) {
+    let jobs = {};
+    try { jobs = JSON.parse(localStorage.getItem('pqc-active-jobs') || '{}'); } catch { }
+    jobs[jobId] = job;
+    localStorage.setItem('pqc-active-jobs', JSON.stringify(jobs));
+  }
+
+  function _removeSavedJob(jobId) {
+    let jobs = {};
+    try { jobs = JSON.parse(localStorage.getItem('pqc-active-jobs') || '{}'); } catch { }
+    delete jobs[jobId];
+    if (Object.keys(jobs).length === 0) localStorage.removeItem('pqc-active-jobs');
+    else localStorage.setItem('pqc-active-jobs', JSON.stringify(jobs));
+  }
+
+  function _createLogPanel() {
+    const id = `log-panel-${++_panelSeq}`;
+    const root = document.createElement('div');
+    root.className = 'log-panel';
+    root.id = id;
+    root.innerHTML = `
+      <div class="log-header">
+        <div class="log-dot running"></div>
+        <span class="log-title">Job output</span>
+        <span class="log-progress"></span>
+        <span class="log-elapsed" style="font-size:11px;font-family:var(--mono);color:var(--muted2)"></span>
+        <span class="log-status" style="margin-left:auto;color:var(--muted2)">Running…</span>
+        <button class="btn btn-warning btn-sm btn-cancel-job" style="display:none"
+          title="Stop after current source">■ Cancel</button>
+        <button class="btn btn-ghost btn-sm btn-collapse-log" title="Collapse">▼</button>
+        <button class="btn btn-ghost btn-sm btn-close-log" title="Close">✕</button>
+      </div>
+      <div class="log-body"></div>`;
+    document.getElementById('log-console').appendChild(root);
+    document.getElementById('log-console').classList.add('open');
+
+    const panel = {
+      es: null, jobId: null, wasCancelled: false,
+      timerInterval: null, batchStart: null,
+      passCount: 0, failCount: 0,
+      el: {
+        root,
+        title: root.querySelector('.log-title'),
+        status: root.querySelector('.log-status'),
+        progress: root.querySelector('.log-progress'),
+        elapsed: root.querySelector('.log-elapsed'),
+        dot: root.querySelector('.log-dot'),
+        body: root.querySelector('.log-body'),
+        cancelBtn: root.querySelector('.btn-cancel-job'),
+        collapseBtn: root.querySelector('.btn-collapse-log'),
+        closeBtn: root.querySelector('.btn-close-log'),
+      },
+    };
+
+    panel.el.collapseBtn.addEventListener('click', () => {
+      const collapsed = root.classList.toggle('collapsed');
+      panel.el.collapseBtn.textContent = collapsed ? '▲' : '▼';
+      panel.el.collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
+    });
+    panel.el.closeBtn.addEventListener('click', () => {
+      if (panel.es) { panel.es.close(); panel.es = null; }
+      if (panel.timerInterval) { clearInterval(panel.timerInterval); panel.timerInterval = null; }
+      _logPanels.delete(id);
+      if (_lastPanelId === id) _lastPanelId = null;
+      if (panel.jobId) _removeSavedJob(panel.jobId);
+      root.remove();
+      if (_logPanels.size === 0) document.getElementById('log-console').classList.remove('open');
+    });
+    panel.el.cancelBtn.addEventListener('click', async () => {
+      if (!panel.jobId) return;
+      panel.el.cancelBtn.disabled = true;
+      panel.el.status.textContent = 'Cancelling…';
+      try {
+        await api(`/api/cancel/${panel.jobId}`, { method: 'POST' });
+      } catch (e) {
+        toast(`Cancel failed: ${e.message}`, 'err');
+        panel.el.cancelBtn.disabled = false;
+        panel.el.status.textContent = 'Running…';
+      }
+    });
+
+    _logPanels.set(id, panel);
+    return { id, panel };
+  }
+
+  // jobMeta = { pending_actions, image_ids, opts, run_name } — saved for
+  // reconnect-after-reload when set. keepLogs=true reuses the panel from
+  // the immediately preceding openLog() call (a chained Build→Test→
+  // Fingerprint sequence); otherwise a fresh, independent panel is created
+  // so a new action never clobbers one that's still streaming.
   function openLog(title, jobId, action, onDone = null, jobMeta = null, keepLogs = false) {
-    _currentJobId = jobId;
-    _wasCancelled = false;
-
-    const elapsedEl = document.getElementById('log-elapsed');
-    const prevTitle = document.getElementById('log-title').textContent;
-    const prevTime = elapsedEl.textContent;
-
-    if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
-    if (!keepLogs || _batchStart === null) {
-      _batchStart = Date.now();
+    let id, panel;
+    if (keepLogs && _lastPanelId && _logPanels.has(_lastPanelId)) {
+      id = _lastPanelId;
+      panel = _logPanels.get(id);
+    } else {
+      ({ id, panel } = _createLogPanel());
     }
-    elapsedEl.textContent = _fmtElapsed(Date.now() - _batchStart);
-    _timerInterval = setInterval(() => {
-      elapsedEl.textContent = _fmtElapsed(Date.now() - _batchStart);
+    _lastPanelId = id;
+
+    const prevTitle = panel.el.title.textContent;
+    const prevTime = panel.el.elapsed.textContent;
+
+    if (panel.timerInterval) { clearInterval(panel.timerInterval); panel.timerInterval = null; }
+    if (!keepLogs || panel.batchStart === null) {
+      panel.batchStart = Date.now();
+    }
+    panel.el.elapsed.textContent = _fmtElapsed(Date.now() - panel.batchStart);
+    panel.timerInterval = setInterval(() => {
+      panel.el.elapsed.textContent = _fmtElapsed(Date.now() - panel.batchStart);
     }, 1000);
 
-    const cancelBtn = document.getElementById('btn-cancel-job');
     const cancellable = ['build', 'test', 'fingerprint'].includes(action);
-    cancelBtn.style.display = cancellable ? '' : 'none';
-    cancelBtn.disabled = false;
+    panel.el.cancelBtn.style.display = cancellable ? '' : 'none';
+    panel.el.cancelBtn.disabled = false;
 
-    const con = document.getElementById('log-console');
-    const body = document.getElementById('log-body');
-    const dot = document.getElementById('log-dot');
-    document.getElementById('log-title').textContent = title;
-    document.getElementById('log-status').textContent = 'Running…';
-    document.getElementById('log-progress').textContent = '';
-    if (keepLogs && body.children.length > 0) {
+    panel.el.title.textContent = title;
+    panel.el.title.title = title; // full text on hover, since the header truncates long titles
+    panel.el.status.textContent = 'Running…';
+    panel.el.progress.textContent = '';
+    if (keepLogs && panel.el.body.children.length > 0) {
       const sep = document.createElement('div');
       sep.className = 'log-phase-sep';
       sep.textContent = `── ${prevTitle}  ·  ${prevTime} ──────────────────────────────`;
-      body.appendChild(sep);
-      body.scrollTop = body.scrollHeight;
+      panel.el.body.appendChild(sep);
+      panel.el.body.scrollTop = panel.el.body.scrollHeight;
     } else {
-      body.innerHTML = '';
+      panel.el.body.innerHTML = '';
     }
-    dot.className = 'running';
-    con.classList.add('open');
-    con.classList.remove('collapsed');
-    document.getElementById('btn-collapse-log').textContent = '▼';
+    panel.el.dot.className = 'log-dot running';
+    panel.el.root.classList.remove('collapsed');
+    panel.el.collapseBtn.textContent = '▼';
+    panel.wasCancelled = false;
+    panel.passCount = 0;
+    panel.failCount = 0;
+    panel.jobId = jobId;
+    panel.action = action;
 
     if (jobMeta) {
-      localStorage.setItem('pqc-active-job', JSON.stringify({
+      _saveActiveJob(jobId, {
         job_id: jobId, title, action,
         pending_actions: jobMeta.pending_actions || [],
         image_ids: jobMeta.image_ids || [],
         opts: jobMeta.opts || {},
         run_name: jobMeta.run_name || '',
-      }));
+      });
     }
 
-    if (_es) { _es.close(); _es = null; }
-    _es = new EventSource(`/api/stream/${jobId}`);
+    if (panel.es) { panel.es.close(); panel.es = null; }
+    panel.es = new EventSource(`/api/stream/${jobId}`);
 
-    let lineCount = 0, passCount = 0, failCount = 0;
-
-    _es.onmessage = e => {
+    panel.es.onmessage = e => {
       const line = e.data;
       if (line === '[DONE]') {
-        _es.close(); _es = null;
-        _currentJobId = null;
-        localStorage.removeItem('pqc-active-job');
-        dot.className = _wasCancelled ? 'done-warn' : (failCount > 0 ? 'done-fail' : 'done-ok');
-        cancelBtn.style.display = 'none';
-        if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
-        if (_wasCancelled) {
-          document.getElementById('log-status').textContent = 'Interrupted';
+        panel.es.close(); panel.es = null;
+        panel.jobId = null;
+        _removeSavedJob(jobId);
+        panel.el.dot.className = 'log-dot ' + (panel.wasCancelled ? 'done-warn' : (panel.failCount > 0 ? 'done-fail' : 'done-ok'));
+        panel.el.cancelBtn.style.display = 'none';
+        if (panel.timerInterval) { clearInterval(panel.timerInterval); panel.timerInterval = null; }
+        if (panel.wasCancelled) {
+          panel.el.status.textContent = 'Interrupted';
           toast(`${action} interrupted by user`, 'info');
         } else {
-          document.getElementById('log-status').textContent = 'Done';
+          panel.el.status.textContent = 'Done';
           toast(`${action} finished`, 'ok');
         }
-        if (onDone) { onDone(false, _wasCancelled); } else { loadImages(state.page); loadStats(); }
+        if (onDone) { onDone(false, panel.wasCancelled); } else { loadImages(state.page); loadStats(); }
         return;
       }
       if (line.startsWith('[CANCELLED]')) {
-        _wasCancelled = true;
-        document.getElementById('log-status').textContent = 'Interrupted…';
+        panel.wasCancelled = true;
+        panel.el.status.textContent = 'Interrupted…';
         const div = document.createElement('div');
         div.style.color = 'var(--warning)';
         div.style.fontWeight = '600';
         div.textContent = '⚠ ' + line.replace(/^\[CANCELLED\]\s*/, '') + ' — results saved up to this point.';
-        body.appendChild(div);
-        body.scrollTop = body.scrollHeight;
+        panel.el.body.appendChild(div);
+        panel.el.body.scrollTop = panel.el.body.scrollHeight;
         return;
       }
       if (line.startsWith('[ERROR]')) {
-        _es.close(); _es = null;
-        _currentJobId = null;
-        localStorage.removeItem('pqc-active-job');
-        dot.className = 'done-fail';
-        cancelBtn.style.display = 'none';
-        if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
-        document.getElementById('log-status').textContent = 'Lost';
+        panel.es.close(); panel.es = null;
+        panel.jobId = null;
+        _removeSavedJob(jobId);
+        panel.el.dot.className = 'log-dot done-fail';
+        panel.el.cancelBtn.style.display = 'none';
+        if (panel.timerInterval) { clearInterval(panel.timerInterval); panel.timerInterval = null; }
+        panel.el.status.textContent = 'Lost';
         const div = document.createElement('div');
         div.className = 'log-err';
         div.innerHTML = linkifyLog(line);
-        body.appendChild(div);
+        panel.el.body.appendChild(div);
         if (onDone) onDone(true);
         return;
       }
-      lineCount++;
       const div = document.createElement('div');
       if (line.startsWith('ERROR')) div.className = 'log-err';
       else if (line.includes('PASS') || line.includes('OK') || line.includes('STOPPED'))
@@ -6498,54 +6631,61 @@
       // Track progress from "[n/N]" lines
       const m = line.match(/\[(\d+)\/(\d+)\]/);
       if (m) {
-        document.getElementById('log-progress').textContent = `${m[1]} / ${m[2]}`;
+        panel.el.progress.textContent = `${m[1]} / ${m[2]}`;
       }
-      if (line.includes('PASS') || line.includes('OK  ')) passCount++;
-      if (line.includes('FAIL') || line.includes('FAILED')) failCount++;
+      if (line.includes('PASS') || line.includes('OK  ')) panel.passCount++;
+      if (line.includes('FAIL') || line.includes('FAILED')) panel.failCount++;
 
       div.innerHTML = linkifyLog(line);
-      body.appendChild(div);
-      body.scrollTop = body.scrollHeight;
+      panel.el.body.appendChild(div);
+      panel.el.body.scrollTop = panel.el.body.scrollHeight;
     };
 
-    _es.onerror = () => {
-      if (_es) { _es.close(); _es = null; }
-      dot.className = 'done-warn';
-      if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
-      document.getElementById('log-status').textContent = 'Connection lost';
+    panel.es.onerror = () => {
+      if (panel.es) { panel.es.close(); panel.es = null; }
+      panel.el.dot.className = 'log-dot done-warn';
+      if (panel.timerInterval) { clearInterval(panel.timerInterval); panel.timerInterval = null; }
+      panel.el.status.textContent = 'Connection lost';
     };
   }
 
   // ── SSE reconnect after page refresh ─────────────────────────────────────
+  // Reconnects to EVERY job still recorded in pqc-active-jobs, each in its
+  // own fresh panel (keepLogs left at its default false) -- a page reload
+  // while, say, a batch AND an update-check were both running should bring
+  // back both, not just whichever happened to be saved last.
   async function tryReconnect() {
-    const saved = JSON.parse(localStorage.getItem('pqc-active-job') || 'null');
-    if (!saved) return;
+    let jobs = {};
+    try { jobs = JSON.parse(localStorage.getItem('pqc-active-jobs') || '{}'); } catch { }
+    const entries = Object.values(jobs);
+    if (!entries.length) return;
 
-    toast(`Reconnecting to ${saved.action} job…`, 'info');
+    toast(`Reconnecting to ${entries.length} job${entries.length > 1 ? 's' : ''}…`, 'info');
 
-    const { pending_actions = [], image_ids = [], opts = {}, run_name = '' } = saved;
+    for (const saved of entries) {
+      const { pending_actions = [], image_ids = [], opts = {}, run_name = '' } = saved;
 
-    function runPending(i) {
-      if (i >= pending_actions.length) {
-        localStorage.removeItem('pqc-active-job');
-        loadImages(state.page);
-        loadStats();
-        loadRuns();
-        if (pending_actions.length > 0) toast('All actions completed', 'ok');
-        return;
-      }
-      const pending = pending_actions.slice(i + 1);
-      runAction(pending_actions[i], image_ids, opts, (err, cancelled) => {
-        if (err || cancelled) { localStorage.removeItem('pqc-active-job'); }
-        else { runPending(i + 1); }
-      }, run_name, { pending_actions: pending, image_ids, opts, run_name });
+      const runPending = i => {
+        if (i >= pending_actions.length) {
+          loadImages(state.page);
+          loadStats();
+          loadRuns();
+          if (pending_actions.length > 0) toast('All actions completed', 'ok');
+          return;
+        }
+        const pending = pending_actions.slice(i + 1);
+        runAction(pending_actions[i], image_ids, opts, (err, cancelled) => {
+          if (!err && !cancelled) runPending(i + 1);
+        }, run_name, { pending_actions: pending, image_ids, opts, run_name });
+      };
+
+      // Reconnect to this job's existing stream; jobMeta stays null so the
+      // already-persisted entry isn't rewritten here -- openLog's own
+      // [DONE]/[ERROR] handling removes it once this phase actually ends.
+      openLog(saved.title + ' ↩', saved.job_id, saved.action, (err, cancelled) => {
+        if (!err && !cancelled) runPending(0);
+      }, null);
     }
-
-    // Reconnect to existing stream; don't re-save to localStorage (already set)
-    openLog(saved.title + ' ↩', saved.job_id, saved.action, (err, cancelled) => {
-      if (!err && !cancelled) runPending(0);
-      else localStorage.removeItem('pqc-active-job');
-    }, null /* don't overwrite localStorage */);
   }
 
   // ── Detail drawer ─────────────────────────────────────────────────────────
@@ -6751,14 +6891,14 @@
     return '';
   }
 
-  // Opens the shared #detail-drawer instead of reusing #log-console --
-  // confirmed live this was a real bug: #log-console is also the LIVE view
-  // for a currently-running batch (openLog() keeps writing streamed output
-  // into the same #log-body/#log-title/#log-dot elements), so viewing a
-  // saved run's log while a batch is running clobbered the running view
-  // with the saved one, with no way back to it short of a page reload.
-  // The drawer is a separate, independent panel, so both can be open/visible
-  // at once without either overwriting the other. Also runs wider and lower
+  // Opens the shared #detail-drawer instead of reusing #log-console. This
+  // is a static, read-only view of an already-finished run's saved log
+  // text -- no EventSource, no cancel/collapse controls, nothing #log-
+  // console's live .log-panel machinery (see openLog()) is built for --
+  // so a separate, simpler panel is the right shape regardless of whether
+  // any job happens to be running concurrently (each such job already gets
+  // its own independent .log-panel and can't be clobbered by this). Also
+  // runs wider and lower
   // than the drawer's normal image-detail use (over the report list, not
   // over the tab's own header/filter row above it) -- top is computed from
   // the report table's actual on-screen position rather than hardcoded,
@@ -7601,19 +7741,9 @@
   document.getElementById('btn-mark-success').addEventListener('click', markSuccess);
   document.getElementById('mnu-ignore').addEventListener('click', ignoreSelected);
 
-  document.getElementById('btn-collapse-log').addEventListener('click', () => {
-    const con = document.getElementById('log-console');
-    const btn = document.getElementById('btn-collapse-log');
-    const collapsed = con.classList.toggle('collapsed');
-    btn.textContent = collapsed ? '▲' : '▼';
-    btn.title = collapsed ? 'Expand' : 'Collapse';
-  });
-  document.getElementById('btn-close-log').addEventListener('click', () => {
-    const con = document.getElementById('log-console');
-    con.classList.remove('open', 'collapsed');
-    document.getElementById('btn-collapse-log').textContent = '▼';
-    if (_es) { _es.close(); _es = null; }
-  });
+  // Collapse/close/cancel are now wired per-panel at creation time in
+  // _createLogPanel() -- see the "Log console (SSE)" section above --
+  // since each concurrently-open job has its own set of these buttons.
 
   document.getElementById('btn-close-detail').addEventListener('click', () =>
     document.getElementById('detail-drawer').classList.remove('open'));
@@ -7815,20 +7945,6 @@
       loadStats();
     } catch (e) {
       toast(`Init failed: ${e.message}`, 'err');
-    }
-  });
-
-  document.getElementById('btn-cancel-job').addEventListener('click', async () => {
-    if (!_currentJobId) return;
-    const btn = document.getElementById('btn-cancel-job');
-    btn.disabled = true;
-    document.getElementById('log-status').textContent = 'Cancelling…';
-    try {
-      await api(`/api/cancel/${_currentJobId}`, { method: 'POST' });
-    } catch (e) {
-      toast(`Cancel failed: ${e.message}`, 'err');
-      btn.disabled = false;
-      document.getElementById('log-status').textContent = 'Running…';
     }
   });
 
