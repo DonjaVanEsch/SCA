@@ -651,11 +651,39 @@ The following **common languages** are not yet covered. For each, add:
 
 Rust, Ruby, and Kotlin were the next three priority languages and are now all fully implemented — see their own sections under "What is already covered" above, plus the general lessons Rust's `msrv_repair.py`/BuildKit-cache work surfaced in "Conventions to follow when adding a new language" below (it correctly predicted Ruby's own Bundler/Gemfile.lock situation would carry the same "unpinned transitive dependency drifts over time" risk class, though in practice Ruby's per-image Gemfiles pin exact versions directly rather than needing an equivalent repair mechanism). Kotlin's own biggest surprise wasn't a dependency-drift risk but a version-COMPATIBILITY one: a framework's latest patch can require a newer language compiler than an older-but-still-tracked language line can accept — worth checking for explicitly (not just assuming "latest patch always resolves cleanly") on any future language where a framework and the language itself are both independently versioned artifacts on the same package registry (as Kotlin/Ktor both are, via Maven Central).
 
+**Note on C#**: already fully covered — see ".NET" under "What is already covered" above (5th language added, 825 images, `System.Security.Cryptography.PQC`/BouncyCastle.Cryptography/NSec.Cryptography/LibOQS.NET). Not listed again below.
+
 #### Swift
 - **Lang versions**: 5.9, 5.10, 6.0
 - **Frameworks**: Vapor (4.x), Hummingbird (2.x)
 - **Crypto libs**: `swift-crypto` (3.x), `CryptoKit` (built-in)
 - **Base image**: `swift:{version}`
+
+#### Scala
+- **Lang versions**: 2.12, 2.13, 3.x (Scala 3 majors, e.g. 3.3 LTS, 3.4, 3.5)
+- **Frameworks**: Play Framework, http4s, Akka HTTP/Pekko HTTP
+- **Crypto libs**: JCA (built-in, shared with Java), BouncyCastle (same Maven coordinates as Java/Kotlin), Tink
+- **Base image**: no official Scala image — like Kotlin, build via a JDK base + a resolved `sbt`/Coursier install; language-version axis should be the Scala compiler version, not the JDK (same reasoning as Kotlin's own `_TOOLCHAIN` design)
+- **Watch for**: Scala 2 vs 3 is a real compiler/syntax break (not just a minor bump), similar in spirit to Kotlin's K1/K2 or Ktor's per-minor Kotlin pin — check whether each framework's own published artifacts are cross-built per Scala binary version (`_2.12`/`_2.13`/`_3`) before assuming a framework "supports" a given lang version
+
+#### Elixir
+- **Lang versions**: 1.14, 1.15, 1.16, 1.17, 1.18 (paired with an OTP/Erlang version — Elixir's own compatibility matrix ties each release to a supported OTP range, worth resolving live rather than hardcoding)
+- **Frameworks**: Phoenix (with or without LiveView), Plug (bare, analogous to using Ktor's routing without a full framework)
+- **Crypto libs**: `:crypto`/`:public_key` (built-in, Erlang-native), `ex_crypto`, `jose` (Elixir port of the same JOSE/JWT idea already used for Node's `jose`/`node-jose`)
+- **Base image**: `elixir:{version}` (official image, confirmed on Docker Hub)
+
+#### Dart
+- **Lang versions**: 2.19, 3.0 through current 3.x minors
+- **Frameworks**: `shelf` (bare middleware, confirmed on pub.dev), Dart Frog (built on shelf), Aqueduct (deprecated but real, useful as an older reference bucket the way NancyFx/Spark are for other languages)
+- **Crypto libs**: `pointycastle` (pure-Dart, closest analog to BouncyCastle), `cryptography` package, `crypto` (built-in hashing only, HMAC/SHA — narrower than the others)
+- **Base image**: `dart:{version}` (official image, confirmed on Docker Hub)
+
+#### C++
+- **Lang versions**: likely a compiler-version axis (GCC major.minor, e.g. 11-14) rather than a C++ standard axis, mirroring Kotlin's "compiler version, not runtime" decision — worth an explicit AskUserQuestion before committing, since either choice is defensible and this project has reversed a similar initial assumption before (Kotlin's own framework-count scope)
+- **Frameworks**: Drogon, Crow, Pistache
+- **Crypto libs**: OpenSSL (direct `libssl`/`libcrypto` calls, no wrapper), Botan, **liboqs itself** (liboqs is a native C library — C++ would be its most natural, lowest-friction consumer of any language in this project, unlike every other language's liboqs binding which has to bridge a foreign-function boundary)
+- **Base image**: `gcc:{version}` (official image, confirmed on Docker Hub) or `debian`/`ubuntu` + apt-installed toolchain
+- **Watch for**: no package-registry-style version resolution the way Maven/npm/crates.io/RubyGems work for every other language so far — CMake/vcpkg/Conan dependency pinning would need its own new resolution pattern, a genuinely new risk class not yet seen in this project
 
 ---
 
