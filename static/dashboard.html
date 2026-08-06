@@ -1306,6 +1306,17 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Same clearance #table-wrap/#report-table-wrap already give their own
+       scrollable content -- this panel (and .ref-hscroll below) never had
+       it, which is the actual overlap bug reported for the Reference/
+       Agility tabs. A separate attempt to fix this generically via a JS-
+       computed max-height on the whole .tab-panel double-counted the
+       clearance for tabs like Sources/Reports that already handle it here
+       (confirmed live via a screenshot: an empty gap sized like the
+       header/toolbar appeared above the log once BOTH mechanisms applied)
+       -- plain margin-bottom on the actual scrolling element is the
+       correct, already-proven pattern, not a wrapper-level max-height. */
+    margin-bottom: var(--dock-h);
   }
 
   .ref-grid {
@@ -1321,6 +1332,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    margin-bottom: var(--dock-h);
   }
 
   .ref-scroll-h {
@@ -7398,11 +7410,13 @@
     state.currentTab = name;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
-    // Re-apply the bottom-dock clearance to whichever panel just became
-    // active -- neither ResizeObserver (dock height, body size) fires on a
-    // plain tab switch, so without this an expanded log console would keep
-    // covering the newly-shown panel's own content until the NEXT resize.
-    if (window._setActiveTabMaxH) window._setActiveTabMaxH();
+    // Re-apply #tab-settings' own dock-clearance max-height if it's the tab
+    // just switched to -- neither ResizeObserver (dock height, body size)
+    // fires on a plain tab switch, so without this an expanded log console
+    // would keep covering Settings' content until the next resize. Every
+    // other tab's own margin-bottom:var(--dock-h) already tracks the var
+    // live via CSS, no JS re-application needed.
+    if (window._setDockH) window._setDockH();
     document.getElementById('pagination').style.display =
       (name === 'images' || name === 'reports' || name === 'client-reports' || (name === 'clients' && _clientView === 'images')) ? '' : 'none';
     if (name === 'images') renderPagination(state.total, state.page, state.pages, state.perPage);
@@ -8053,46 +8067,42 @@
   // #bottom-dock's height changes (pagination-only vs. log console open/
   // collapsed/expanded) but #detail-drawer is a separate fixed-position panel
   // that doesn't sit in the same flex column, so it needs the current dock
-  // height mirrored into a CSS var to know how much to leave clear at its own
-  // bottom edge. Every .tab-panel is a normal-flow flex item (not fixed like
-  // the drawer) that otherwise assumes the full viewport height is free --
-  // margin-bottom alone isn't enough to shrink it correctly, so this pins an
-  // explicit pixel max-height on whichever one is currently .active instead
-  // (originally only applied to #tab-settings; #tab-reference hit the exact
-  // same overlap -- its own per-language filter bar and cards rendering
-  // behind an expanded log console -- confirmed live, so this now covers
-  // every tab generically rather than needing a fresh one-off fix per tab).
-  // setActiveTabMaxH is also called from switchTab() itself, since changing
-  // tabs while the log is already open doesn't fire either ResizeObserver.
+  // height mirrored into a CSS var (--dock-h) to know how much to leave clear
+  // at its own bottom edge. Most tabs' own scrollable content element
+  // (#table-wrap, #report-table-wrap, .ref-scroll, .ref-hscroll, ...) already
+  // uses this same var as a plain margin-bottom -- the correct, general
+  // pattern, since those elements are already flex:1;min-height:0 and
+  // properly shrink to respect it.
+  //
+  // #tab-settings is the one exception: .settings-page has margin-bottom:
+  // var(--dock-h) too, but its inner .settings-body is NOT flex:1;min-
+  // height:0 (just overflow:auto), so it doesn't shrink to fit -- confirmed
+  // live, margin-bottom alone left it overlapping an expanded log console.
+  // Only #tab-settings gets this extra JS-computed max-height on top.
+  //
+  // A generic version of this (applied to whichever .tab-panel was active)
+  // was tried first, to fix the exact same overlap on #tab-reference too --
+  // but that DOUBLE-counted the dock clearance on every tab that already
+  // had it via margin-bottom above, rendering as an empty gap the size of
+  // the header+toolbar block above the log (confirmed live via a
+  // screenshot). Reference/Agility's real fix was adding margin-bottom to
+  // .ref-scroll/.ref-hscroll instead, matching every other tab -- not this.
   (function () {
     const dock = document.getElementById('bottom-dock');
     const body = document.getElementById('body');
+    const settingsPage = document.getElementById('tab-settings');
     if (!dock) return;
-    const setActiveTabMaxH = () => {
+    const setDockH = () => {
       const h = dock.offsetHeight;
       document.documentElement.style.setProperty('--dock-h', `${h}px`);
-      const activePanel = document.querySelector('.tab-panel.active');
-      if (activePanel && body) {
-        // body.clientHeight - h alone assumes the panel starts at the very
-        // top of the viewport -- true for Settings (no header/toolbar of
-        // its own above the fold there) but NOT for tabs like Sources,
-        // which sit below the header bar + filter/selection/build-test
-        // toolbar rows. Without subtracting the panel's own top offset,
-        // this over-allocated its max-height by exactly that amount,
-        // rendering as a large empty gap (the panel's own background)
-        // above the log console instead of a snug fit -- confirmed live
-        // via a screenshot showing the gap sized almost exactly like the
-        // header+toolbar block. getBoundingClientRect().top is measured
-        // fresh each call and reflects only ancestor/sibling layout, not
-        // this panel's own height, so it's safe to read before assigning.
-        const top = activePanel.getBoundingClientRect().top;
-        activePanel.style.maxHeight = `${window.innerHeight - h - top}px`;
+      if (settingsPage && body) {
+        settingsPage.style.maxHeight = `${body.clientHeight - h}px`;
       }
     };
-    window._setActiveTabMaxH = setActiveTabMaxH;
-    setActiveTabMaxH();
-    new ResizeObserver(setActiveTabMaxH).observe(dock);
-    new ResizeObserver(setActiveTabMaxH).observe(body);
+    window._setDockH = setDockH;
+    setDockH();
+    new ResizeObserver(setDockH).observe(dock);
+    new ResizeObserver(setDockH).observe(body);
   })();
 
   // ── Manual resize handles (log console height, detail drawer width) ────────
