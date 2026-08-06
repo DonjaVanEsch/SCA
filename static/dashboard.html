@@ -8073,7 +8073,20 @@
       document.documentElement.style.setProperty('--dock-h', `${h}px`);
       const activePanel = document.querySelector('.tab-panel.active');
       if (activePanel && body) {
-        activePanel.style.maxHeight = `${body.clientHeight - h}px`;
+        // body.clientHeight - h alone assumes the panel starts at the very
+        // top of the viewport -- true for Settings (no header/toolbar of
+        // its own above the fold there) but NOT for tabs like Sources,
+        // which sit below the header bar + filter/selection/build-test
+        // toolbar rows. Without subtracting the panel's own top offset,
+        // this over-allocated its max-height by exactly that amount,
+        // rendering as a large empty gap (the panel's own background)
+        // above the log console instead of a snug fit -- confirmed live
+        // via a screenshot showing the gap sized almost exactly like the
+        // header+toolbar block. getBoundingClientRect().top is measured
+        // fresh each call and reflects only ancestor/sibling layout, not
+        // this panel's own height, so it's safe to read before assigning.
+        const top = activePanel.getBoundingClientRect().top;
+        activePanel.style.maxHeight = `${window.innerHeight - h - top}px`;
       }
     };
     window._setActiveTabMaxH = setActiveTabMaxH;
