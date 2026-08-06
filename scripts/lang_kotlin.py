@@ -586,22 +586,65 @@ def _ksp_version(kotlin_resolved: str) -> str | None:
     return result
 
 
-_JACKSON_KOTLIN_LATEST: dict = {}
+# jackson-module-kotlin isn't a per-major registry axis (Spring Boot's own
+# Kotlin support doesn't pin a specific companion version the way it pins
+# kotlinVersion) -- previously always resolved to Maven Central's absolute
+# latest release, on the (wrong) assumption that "any reasonably current
+# release is compatible with whatever Jackson Boot pulls in transitively."
+# Confirmed wrong via a real build failure: jackson-module-kotlin declares
+# its own kotlin-stdlib dependency version via a <version.kotlin> POM
+# property that rises over time just like Ktor's own per-patch Kotlin pin
+# (2.10.0 -> 1.3.41, 2.13.0 -> 1.5.30, 2.15.0 -> 1.5.32, latest 2.22.1 ->
+# 2.1.21) -- resolving to latest against an old target line like Kotlin 1.3
+# or 1.7 pulled a 2.1.21 stdlib onto the classpath, which compileKotlin
+# then refused to read ("Class 'kotlin.KotlinVersion' was compiled with an
+# incompatible version of Kotlin. The binary version of its metadata is
+# 2.1.0, expected version is 1.1.16"). Same live per-patch walk as
+# _resolve_ktor() -- newest first, first version whose own pin doesn't
+# exceed the target line -- rather than a static table, since this drift
+# is dense enough (jackson-module-kotlin ships roughly one release per
+# Jackson patch) that a hand-sampled table would have the same
+# insufficient-granularity risk already proven wrong for Ktor.
+_JACKSON_KOTLIN_PIN_CACHE: dict = {}
+_JACKSON_KOTLIN_RESOLVE_CACHE: dict = {}
 
 
-def _jackson_kotlin_version() -> str:
-    """jackson-module-kotlin isn't a per-major registry axis (Spring Boot's own
-    Kotlin support doesn't pin a specific companion version the way it pins
-    kotlinVersion) -- any reasonably current release is compatible with the
-    Jackson Boot itself pulls in transitively, so this just resolves to
-    whatever is newest on Maven Central, fetched once and cached."""
-    if "v" in _JACKSON_KOTLIN_LATEST:
-        return _JACKSON_KOTLIN_LATEST["v"]
+def _jackson_kotlin_pin(version: str) -> str | None:
+    if version in _JACKSON_KOTLIN_PIN_CACHE:
+        return _JACKSON_KOTLIN_PIN_CACHE[version]
+    url = (f"https://repo1.maven.org/maven2/com/fasterxml/jackson/module/"
+           f"jackson-module-kotlin/{version}/jackson-module-kotlin-{version}.pom")
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+    except URLError:
+        result = None
+    else:
+        m = re.search(r"<version\.kotlin>([^<]+)</version\.kotlin>", text)
+        result = m.group(1) if m else None
+    _JACKSON_KOTLIN_PIN_CACHE[version] = result
+    return result
+
+
+def _resolve_jackson_kotlin(kotlin_resolved: str) -> str:
+    kotlin_line = ".".join(kotlin_resolved.split(".")[:2])
+    if kotlin_line in _JACKSON_KOTLIN_RESOLVE_CACHE:
+        return _JACKSON_KOTLIN_RESOLVE_CACHE[kotlin_line]
     group, artifact = _JACKSON_KOTLIN_COORD
-    versions = lang_java._fetch_maven_versions(group, artifact)
-    latest = versions[-1] if versions else "2.18.2"
-    _JACKSON_KOTLIN_LATEST["v"] = latest
-    return latest
+    versions = sorted(lang_java._fetch_maven_versions(group, artifact), key=_ver_key, reverse=True)
+    target = _ver_key(kotlin_line)
+    result = None
+    for v in versions:
+        pin = _jackson_kotlin_pin(v)
+        if pin is None:
+            continue  # couldn't determine this version's pin -- try the next-older one
+        if _ver_key(".".join(pin.split(".")[:2])) <= target:
+            result = v
+            break
+    if result is None:
+        result = versions[-1] if versions else "2.10.0"
+    _JACKSON_KOTLIN_RESOLVE_CACHE[kotlin_line] = result
+    return result
 
 
 # ── Pre-fetch ───────────────────────────────────────────────────────────────────
@@ -1085,7 +1128,7 @@ def _gradle_build_kts(kotlin_resolved: str, jdk: str, fw_name: str, fw_major: st
         fw_deps = (
             f'    implementation("org.springframework.boot:spring-boot-starter-web:{fw_resolved}")\n'
             f'    implementation("org.jetbrains.kotlin:kotlin-reflect:{kotlin_resolved}")\n'
-            f'    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:{_jackson_kotlin_version()}")\n'
+            f'    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:{_resolve_jackson_kotlin(kotlin_resolved)}")\n'
         )
 
     extra_plugins = ""
