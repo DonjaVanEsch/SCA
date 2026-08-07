@@ -108,88 +108,104 @@ _TOOLCHAIN: dict = {
 # just the lines whose OWN default toolchain tier already sits at Gradle
 # 9.6.0 (2.3/2.4) -- no per-framework Gradle-version override needed at all
 # once the registry itself only ever asks for those two lines.
+#
+# Every entry below is the SAME recurring bug class, found independently
+# three times: a framework's registry-tracked Kotlin-COMPILER-compatibility
+# floor is a completely separate axis from its own JVM-bytecode/Gradle-
+# toolchain floor, and satisfying one says nothing about the other. Keyed by
+# (fw_name, fw_major); the value is either a plain (jdk, gradle_tag) pair
+# (the override applies regardless of which Kotlin line is paired with it,
+# e.g. Micronaut 5's JDK25 floor holds for every Kotlin line that reaches
+# it) or a {kotlin_ver: (jdk, gradle_tag)} dict (the override applies only
+# to specific lines -- every OTHER line registered as compatible with that
+# framework/major already meets its floor via _TOOLCHAIN's own default).
+_TOOLCHAIN_OVERRIDES: dict = {
+    # Micronaut 5.x's own floor is JDK 25 (confirmed both in the Java
+    # registry's own "Java 25 baseline" release-blog finding and via a real
+    # Kotlin-side build failure: "Dependency resolution is looking for a
+    # library compatible with JVM runtime version 21, but 'io.micronaut:
+    # micronaut-http-server-netty:5.1.10' is only compatible with JVM
+    # runtime version 25 or newer") -- no tracked Kotlin line's own default
+    # toolchain tier reaches JDK 25 (the highest is 21), so this major needs
+    # its own override the same way Quarkus needed a Gradle-version
+    # override. gradle:9.6.0-jdk25 and eclipse-temurin:25-jre both confirmed
+    # real via Docker Hub. Applies regardless of Kotlin line (only 2.3/2.4
+    # are even registered as Micronaut-5-compatible, per the 2.2 JDK24/25
+    # conflict already excluded at the registry level).
+    ("Micronaut", "5"): ("25", "9.6.0-jdk25"),
+
+    # Quarkus majors 1/2's own Gradle plugin is EOL and was never updated
+    # for a Gradle this new -- two separate real, confirmed failures, not
+    # one: major 1's latest patch (1.13.7.Final, ~2021) calls
+    # org.gradle.api.plugins.JavaPluginConvention, removed outright at
+    # Gradle 9.0 ("org/gradle/api/plugins/JavaPluginConvention ... >
+    # org.gradle.api.plugins.JavaPluginConvention"), and ALSO fails under
+    # Gradle 8.14.2 with a different removed-API error ('java.io.File
+    # org.gradle.api.file.SourceDirectorySet.getOutputDir()'); major 2's
+    # latest patch (2.16.12.Final, 2023-10-16) fails under Gradle 9.6.0
+    # specifically with "Cannot add a configuration with name
+    # 'integrationTestImplementation' as a configuration with that name
+    # already exists" (a real, documented Quarkus Gradle-plugin bug --
+    # quarkusio/quarkus's own issue tracker -- tied to newer Gradle's
+    # auto-registered test-suite configurations, never backported to the
+    # already-EOL 2.x line). Confirmed via a real isolated build+run+curl
+    # that Gradle 7.6.4 (old enough to predate both removed APIs and the
+    # test-suite auto-registration change, but still new enough to run this
+    # project's own Kotlin 2.3/2.4 KGP releases cleanly) fixes both, for
+    # both majors, with zero code changes beyond the toolchain pair itself
+    # -- gradle:7.6.4-jdk11 and eclipse-temurin:11-jre both confirmed real
+    # via Docker Hub. jdk is downgraded to 11 alongside (not left at 21) so
+    # the Gradle daemon's own bundled JDK and the jvmToolchain() compile
+    # target match exactly -- avoids relying on Gradle's toolchain auto-
+    # download reaching the network during the image build, which every
+    # other combo in this registry already avoids by construction.
+    ("Quarkus", "1"): ("11", "7.6.4-jdk11"),
+    ("Quarkus", "2"): ("11", "7.6.4-jdk11"),
+
+    # Spring Boot 3 has required JDK >=17 since its very first release (a
+    # deliberate baseline raise from Boot 2's Java 8, not something that
+    # crept in at a later patch) -- confirmed via a real Gradle Module
+    # Metadata variant-matching failure resolving Spring Boot 3 (always
+    # resolved to its own absolute latest patch, 3.5.16, same as every
+    # other framework without Ktor/http4k-style per-patch drift) against
+    # Kotlin 1.7's own default toolchain tier (JDK 11): "Variant
+    # 'runtimeElements' ... declares a component compatible with Java 17
+    # and the consumer needed a component compatible with Java 11". Kotlin
+    # 1.7 (June 2022) already postdates JDK 17's release and kotlinc itself
+    # never needed more than JDK 8, so this is just unused headroom, the
+    # same reasoning already applied when 1.5 was moved off the 5.6.4/JDK8
+    # tier. Every OTHER Kotlin line registered as Spring-Boot-3-compatible
+    # (1.8 onward) already defaults to JDK 17+, so this override is needed
+    # for 1.7 only -- hence the per-kotlin_ver dict here, unlike Micronaut/
+    # Quarkus above where the whole major needs it regardless of line.
+    ("Spring Boot", "3"): {"1.7": ("17", "7.6.4-jdk17")},
+
+    # http4k v6 (Community Edition) set its minimum JVM target to 21 for
+    # the WHOLE major from its very first release -- a deliberate,
+    # documented decision ("From v6, http4k CE will set its minimum
+    # supported target JVM version to 21", http4k.org/news/http4k-v6-and-
+    # ee/), not something that crept in at a later checkpoint. Confirmed
+    # two ways, not assumed: a real runtime crash (UnsupportedClassVersion
+    # Error: org/http4k/routing/RoutingHttpHandler has been compiled by a
+    # more recent version of the Java Runtime (class file version 65.0),
+    # this version only recognizes up to 61.0 -- 65=JDK21, 61=JDK17)
+    # resolving http4k 6's own Kotlin-2.0 checkpoint (6.0.1.0) against
+    # Kotlin 2.0's default toolchain tier (JDK 17); and directly inspecting
+    # that checkpoint's own compiled RoutingHttpHandler.class bytes (cafe
+    # babe 0000 0041), confirming major version 0x41=65 regardless of which
+    # Kotlin compiler built it. Every OTHER Kotlin line registered as
+    # http4k-6-compatible (2.1 onward) already defaults to JDK 21+, so this
+    # override is needed for 2.0 only -- reuses Kotlin 2.1's own already-
+    # proven Gradle tag rather than inventing a new one.
+    ("http4k", "6"): {"2.0": ("21", "8.10.2-jdk21")},
+}
+
+
 def _toolchain(kotlin_ver: str, fw_name: str = "", fw_major: str = "") -> tuple:
-    jdk, gradle_tag = _TOOLCHAIN[kotlin_ver]
-    if fw_name == "Micronaut" and fw_major == "5":
-        # Micronaut 5.x's own floor is JDK 25 (confirmed both in the Java
-        # registry's own "Java 25 baseline" release-blog finding and via a
-        # real Kotlin-side build failure here: "Dependency resolution is
-        # looking for a library compatible with JVM runtime version 21,
-        # but 'io.micronaut:micronaut-http-server-netty:5.1.10' is only
-        # compatible with JVM runtime version 25 or newer") -- no tracked
-        # Kotlin line's own default toolchain tier reaches JDK 25 (the
-        # highest is 21), so this major needs its own override the same
-        # way Quarkus needed a Gradle-version override. gradle:9.6.0-jdk25
-        # and eclipse-temurin:25-jre both confirmed real via Docker Hub.
-        jdk, gradle_tag = "25", "9.6.0-jdk25"
-    elif fw_name == "Quarkus" and fw_major in ("1", "2"):
-        # Quarkus majors 1/2's own Gradle plugin is EOL and was never
-        # updated for a Gradle this new -- two separate real, confirmed
-        # failures, not one: major 1's latest patch (1.13.7.Final, ~2021)
-        # calls org.gradle.api.plugins.JavaPluginConvention, removed
-        # outright at Gradle 9.0 ("org/gradle/api/plugins/
-        # JavaPluginConvention ... > org.gradle.api.plugins.
-        # JavaPluginConvention"), and ALSO fails under Gradle 8.14.2 with a
-        # different removed-API error ('java.io.File org.gradle.api.file.
-        # SourceDirectorySet.getOutputDir()'); major 2's latest patch
-        # (2.16.12.Final, 2023-10-16) fails under Gradle 9.6.0 specifically
-        # with "Cannot add a configuration with name
-        # 'integrationTestImplementation' as a configuration with that
-        # name already exists" (a real, documented Quarkus Gradle-plugin
-        # bug -- quarkusio/quarkus's own issue tracker -- tied to newer
-        # Gradle's auto-registered test-suite configurations, never
-        # backported to the already-EOL 2.x line). Confirmed via a real
-        # isolated build+run+curl that Gradle 7.6.4 (old enough to predate
-        # both removed APIs and the test-suite auto-registration change,
-        # but still new enough to run this project's own Kotlin 2.3/2.4
-        # KGP releases cleanly) fixes both, for both majors, with zero
-        # code changes beyond the toolchain pair itself -- gradle:7.6.4-
-        # jdk11 and eclipse-temurin:11-jre both confirmed real via Docker
-        # Hub. jdk is downgraded to 11 alongside (not left at 21) so the
-        # Gradle daemon's own bundled JDK and the jvmToolchain() compile
-        # target match exactly -- avoids relying on Gradle's toolchain
-        # auto-download reaching the network during the image build,
-        # which every other combo in this registry already avoids by
-        # construction.
-        jdk, gradle_tag = "11", "7.6.4-jdk11"
-    elif fw_name == "Spring Boot" and fw_major == "3" and kotlin_ver == "1.7":
-        # Spring Boot 3 has required JDK >=17 since its very first release
-        # (a deliberate baseline raise from Boot 2's Java 8, not something
-        # that crept in at a later patch) -- confirmed via a real Gradle
-        # Module Metadata variant-matching failure resolving Spring Boot 3
-        # (always resolved to its own absolute latest patch, 3.5.16, same
-        # as every other framework without Ktor/http4k-style per-patch
-        # drift) against Kotlin 1.7's own default toolchain tier (JDK 11):
-        # "Variant 'runtimeElements' ... declares a component compatible
-        # with Java 17 and the consumer needed a component compatible
-        # with Java 11". Kotlin 1.7 (June 2022) already postdates JDK 17's
-        # release and kotlinc itself never needed more than JDK 8, so this
-        # is just unused headroom, the same reasoning already applied when
-        # 1.5 was moved off the 5.6.4/JDK8 tier. Every OTHER Kotlin line
-        # registered as Spring-Boot-3-compatible (1.8 onward) already
-        # defaults to JDK 17+, so this override is needed for 1.7 only.
-        jdk, gradle_tag = "17", "7.6.4-jdk17"
-    elif fw_name == "http4k" and fw_major == "6" and kotlin_ver == "2.0":
-        # http4k v6 (Community Edition) set its minimum JVM target to 21
-        # for the WHOLE major from its very first release -- a deliberate,
-        # documented decision ("From v6, http4k CE will set its minimum
-        # supported target JVM version to 21", http4k.org/news/http4k-v6-
-        # and-ee/), not something that crept in at a later checkpoint.
-        # Confirmed two ways, not assumed: a real runtime crash
-        # (UnsupportedClassVersionError: org/http4k/routing/
-        # RoutingHttpHandler has been compiled by a more recent version of
-        # the Java Runtime (class file version 65.0), this version only
-        # recognizes up to 61.0 -- 65=JDK21, 61=JDK17) resolving http4k 6's
-        # own Kotlin-2.0 checkpoint (6.0.1.0) against Kotlin 2.0's default
-        # toolchain tier (JDK 17); and directly inspecting that checkpoint's
-        # own compiled RoutingHttpHandler.class bytes (cafe babe 0000 0041),
-        # confirming major version 0x41=65 regardless of which Kotlin
-        # compiler built it. Every OTHER Kotlin line registered as
-        # http4k-6-compatible (2.1 onward) already defaults to JDK 21+, so
-        # this override is needed for 2.0 only -- reuses Kotlin 2.1's own
-        # already-proven Gradle tag rather than inventing a new one.
-        jdk, gradle_tag = "21", "8.10.2-jdk21"
-    return jdk, gradle_tag
+    override = _TOOLCHAIN_OVERRIDES.get((fw_name, fw_major))
+    if isinstance(override, dict):
+        override = override.get(kotlin_ver)
+    return override or _TOOLCHAIN[kotlin_ver]
 
 
 # Two separate Gradle/Kotlin-tooling era boundaries, confirmed via real build
